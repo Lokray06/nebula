@@ -1,6 +1,6 @@
 # Nebula: High-Level Expressiveness, Native Performance.
 
-![Nebula Logo Placeholder](https://placehold.co/800x200/4CAF50/FFFFFF?text=Nebula+Language)
+![Nebula Logo Placeholder](https://placehold.co/800x200/020202/FFFFFF?text=Nebula)
 
 Nebula is a modern, statically-typed, object-oriented programming language designed for developers who demand both the elegant syntax of high-level languages and the raw speed of native code. By intelligently transpiling directly to optimized C/C++, Nebula empowers you to build performant, reliable, and portable applications without compromising on developer experience.
 
