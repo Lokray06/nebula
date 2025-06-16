@@ -1,0 +1,31 @@
+· Arrays: declaration
+string[] nums = {"1","2","3","4","5"};
+
+
+foreach(Type elementy in someList)
+{
+    elenty.sfslkjg;
+}
+
+implement struct > same syntax
+implement enums > same syntax
+
+alias int integer;
+
+alias Console.println println;
+
+int[] a = 2;
+a = {1,2,3,4,5}
+
+
+implement multithreading: wait, notify (?)
+
+write the NDK
+
+far far future:
+    write os dependent api(win32, wayland, x11) -> write graphics library: RADIANCE
+
+
+
+    const add = (a, b) => a + b;
+    const add(a,b);

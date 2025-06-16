@@ -1,0 +1,10 @@
+namespace Tests
+{
+    public class Simplest
+    {
+        void main()
+        {
+            System.out.println("Hello world");
+        }
+    }
+}

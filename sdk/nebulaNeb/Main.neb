@@ -1,0 +1,55 @@
+import nebula.io.Console;
+import nebula.core.Object; // Add this line
+
+namespace Program
+{
+    class Test
+    {
+        static void main()
+        {
+            Object testObject = new Object();
+            Console.print("Hello from Nebula!");
+            Console.println(testObject.toString());
+
+            int b = 1;
+            int a = b;
+            
+            a++;
+            a -= 2;
+            a %= 2;
+            
+            for(int i = 0; i<1000000000; i++)
+            {
+                
+            }
+
+            int c = 2;
+            switch(c)
+            {
+                case 1:
+                    Console.print(true);
+                case 2:
+                    Console.print("dasfañsldkfñlakjsdf");
+            }
+
+            Console.println(someFunc(a)+a);
+            Console.println(true);
+            Console.println(5>2);          
+            someFunc(2);
+        }
+
+        static int someFunc(int a)
+        {
+            if(a > 1)
+            {
+                Console.println(true);
+                //Can not retrurn yet, TODO: Force return if not void
+                return -1;
+            }
+            else
+            {
+                return -1;
+            }
+        }
+    }
+}

@@ -1,0 +1,24 @@
+namespace nebula.core
+{
+    // The root of all Nebula classes. All classes implicitly inherit from Object.
+    class Object
+    {
+        public bool operator==(Object other)
+        {
+            if(other is Object)//is is a keyword that compares the types of both objects
+            {
+                return this == (other); // Default reference comparison
+            }
+        }
+
+        public string hashCode()
+        {
+            return "0"; // Return the actual hashcode (maybe the instance's memory address)
+        }
+
+        public string toString()
+        {
+            return hashCode(); //The default implementation is this, but can be overriden
+        }
+    }
+}
