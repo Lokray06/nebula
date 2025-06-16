@@ -1,0 +1,66 @@
+namespace Testing.Errors {
+
+    class ErrorGenerator {
+
+        public static int staticNumber = 100;
+        public int instanceNumber = 50;
+        public int nonExistentMember = 0;
+
+        public static void aStaticMethod() {
+            // Placeholder
+        }
+
+        public void anInstanceMethod() {
+            // Placeholder
+        }
+    }
+
+    class TestRunner {
+
+         public static void main()
+                     {
+                         runTests();
+                     }
+            public static void runTests() {
+
+            // --- Type Mismatch Errors ---
+            int number = 2; // SEMANTIC ERROR: Assigning String to int.
+            String text = "12345"; // SEMANTIC ERROR: Assigning int to String.
+            bool flag = true; // SEMANTIC ERROR: Assigning String to bool.
+
+
+            // --- Scope & Declaration Errors ---
+            int x = 10;
+            int g = 20; // SEMANTIC ERROR: Variable 'x' is already defined in this scope.
+
+            int y = 30; // SEMANTIC ERROR: Using undeclared variable 'y'.
+
+            int z;
+            int result = z + 5; // SEMANTIC ERROR: Variable 'z' might not have been initialized.
+
+
+            // --- Class & Member Access Errors ---
+            ErrorGenerator gen = new ErrorGenerator(); // SEMANTIC ERROR: No matching constructor with one argument.
+
+            //ImaginaryClass ic = new ImaginaryClass(); // SEMANTIC ERROR: Undefined class 'ImaginaryClass'.
+
+            gen.aStaticMethod(); // SEMANTIC ERROR: Static method should ideally be called on the class, not instance. (Optional Strictness)
+            //ErrorGenerator.anInstanceMethod(); // SEMANTIC ERROR: Cannot access non-static member from a static context.
+
+            int p = 5;
+            //p.someMethod(); // SEMANTIC ERROR: Cannot access members on a primitive type 'int'.
+
+            gen.nonExistentMember = 10; // SEMANTIC ERROR: Member 'nonExistentMember' not found in class 'ErrorGenerator'.
+
+
+            // --- Syntactic Errors ---
+            String message = "Missing semicolon"; // SYNTACTIC ERROR: Missing a semicolon at the end of the line.
+
+            if (x > 5) {
+                // Missing closing brace
+            // SYNTACTIC ERROR: Unbalanced braces.
+            }
+            int finalValue = (5 + (3 * 2)); // SYNTACTIC ERROR: Unbalanced parentheses.
+        }
+    }
+}

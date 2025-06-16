@@ -1,0 +1,21 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/include",
+                "/usr/local/include",
+                "/usr/lib/clang/19/include",
+                "/usr/lib/gcc/x86_64-pc-linux-gnu/15.1.1/include",
+                "/usr/lib/gcc/x86_64-pc-linux-gnu/15.1.1/include-fixed"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/clang++",  // or "/usr/bin/g++" if you prefer
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-clang-x64"
+        }
+    ],
+    "version": 4
+}

@@ -1,0 +1,25 @@
+import nebula.core.Object;
+
+namespace nebula.io
+{
+    class Console
+    {
+        //All these should be compiled as a wrapper of sdt::cout 
+        public static void print(Object anything) { /* ... */ }
+        public static void print(string anyString) { /* ... */ }
+        public static void print(char character) { /* ... */ }
+        public static void print(int number) { /* ... */ }
+        public static void print(bool booleanValue) { /* ... */ }
+        public static void print(float floatValue) { /* ... */ }
+        public static void print(double doubleValue) { /* ... */ }
+
+        //All these should be compiled as a wrapper of sdt::cout std::endl
+        public static void println(Object anything) { /* ... */ }
+        public static void println(string anyString) { /* ... */ }
+        public static void println(char character) { /* ... */ }
+        public static void println(int number) { /* ... */ }
+        public static void println(bool booleanValue) { /* ... */ }
+        public static void println(float floatValue) { /* ... */ }
+        public static void println(double doubleValue) { /* ... */ }
+    }
+}

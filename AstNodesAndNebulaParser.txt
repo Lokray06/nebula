@@ -1,0 +1,3240 @@
+--- Directory Tree for: ast ---
+Located at: /home/juanpa/dev/java/nebula/transpiler/src/main/java/com/juanpa/nebula/transpiler/ast
+
+/home/juanpa/dev/java/nebula/transpiler/src/main/java/com/juanpa/nebula/transpiler/ast
+├── ASTNode.java
+├── ASTVisitor.java
+├── declarations
+│   ├── ClassDeclaration.java
+│   ├── ConstructorDeclaration.java
+│   ├── FieldDeclaration.java
+│   ├── ImportDirective.java
+│   ├── MethodDeclaration.java
+│   └── NamespaceDeclaration.java
+├── expressions
+│   ├── AssignmentExpression.java
+│   ├── BinaryExpression.java
+│   ├── CallExpression.java
+│   ├── DotExpression.java
+│   ├── Expression.java
+│   ├── IdentifierExpression.java
+│   ├── LiteralExpression.java
+│   ├── NewExpression.java
+│   ├── PostfixUnaryExpression.java
+│   ├── ThisExpression.java
+│   └── UnaryExpression.java
+├── Program.java
+└── statements
+    ├── BlockStatement.java
+    ├── ExpressionStatement.java
+    ├── ForStatement.java
+    ├── IfStatement.java
+    ├── ReturnStatement.java
+    ├── Statement.java
+    ├── SwitchCase.java
+    ├── SwitchStatement.java
+    ├── VariableDeclarationStatement.java
+    └── WhileStatement.java
+
+4 directories, 30 files
+
+--- File Contents (Recursive) ---
+Program.java:
+[AND the contents]
+// File: src/main/java/com/juanpa/nebula/transpiler/ast/Program.java
+
+package com.juanpa.nebula.transpiler.ast;
+
+import com.juanpa.nebula.transpiler.ast.declarations.NamespaceDeclaration;
+import com.juanpa.nebula.transpiler.ast.declarations.ImportDirective; // Changed: Import ImportDirective
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * The root AST node representing an entire Nebula program.
+ * Contains a list of namespace declarations.
+ */
+public class Program implements ASTNode
+{
+	private final List<ImportDirective> importDirectives; // Changed: List of import directives
+	private final List<NamespaceDeclaration> namespaceDeclarations; // List of namespace declarations
+
+	public Program()
+	{
+		this.importDirectives = new ArrayList<>(); // Initialize the list
+		this.namespaceDeclarations = new ArrayList<>();
+	}
+
+	public List<ImportDirective> getImportDirectives()
+	{ // Changed: Getter for import directives
+		return Collections.unmodifiableList(importDirectives);
+	}
+
+	public void addImportDirective(ImportDirective directive)
+	{ // Changed: Add import directive
+		this.importDirectives.add(directive);
+	}
+
+	public List<NamespaceDeclaration> getNamespaceDeclarations()
+	{
+		return Collections.unmodifiableList(namespaceDeclarations);
+	}
+
+	public void addNamespace(NamespaceDeclaration namespaceDecl)
+	{
+		this.namespaceDeclarations.add(namespaceDecl);
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitProgram(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder();
+		for(ImportDirective directive : importDirectives)
+		{
+			sb.append(directive.toString()).append("\n");
+		}
+		if(!importDirectives.isEmpty() && !namespaceDeclarations.isEmpty())
+		{
+			sb.append("\n"); // Add a newline to separate imports from namespaces
+		}
+		for(NamespaceDeclaration namespaceDecl : namespaceDeclarations)
+		{
+			sb.append(namespaceDecl.toString()).append("\n");
+		}
+		return sb.toString();
+	}
+}
+
+ASTVisitor.java:
+[AND the contents]
+// File: src/main/java/com/juanpa/nebula/transpiler/ast/ASTVisitor.java
+
+package com.juanpa.nebula.transpiler.ast;
+
+import com.juanpa.nebula.transpiler.ast.declarations.ClassDeclaration;
+import com.juanpa.nebula.transpiler.ast.declarations.ConstructorDeclaration;
+import com.juanpa.nebula.transpiler.ast.declarations.FieldDeclaration;
+import com.juanpa.nebula.transpiler.ast.declarations.MethodDeclaration;
+import com.juanpa.nebula.transpiler.ast.declarations.NamespaceDeclaration;
+import com.juanpa.nebula.transpiler.ast.declarations.ImportDirective;
+import com.juanpa.nebula.transpiler.ast.expressions.AssignmentExpression;
+import com.juanpa.nebula.transpiler.ast.expressions.BinaryExpression;
+import com.juanpa.nebula.transpiler.ast.expressions.CallExpression;
+import com.juanpa.nebula.transpiler.ast.expressions.DotExpression;
+import com.juanpa.nebula.transpiler.ast.expressions.Expression;
+import com.juanpa.nebula.transpiler.ast.expressions.IdentifierExpression;
+import com.juanpa.nebula.transpiler.ast.expressions.LiteralExpression;
+import com.juanpa.nebula.transpiler.ast.expressions.NewExpression;
+import com.juanpa.nebula.transpiler.ast.expressions.PostfixUnaryExpression;
+import com.juanpa.nebula.transpiler.ast.expressions.ThisExpression;
+import com.juanpa.nebula.transpiler.ast.expressions.UnaryExpression;
+import com.juanpa.nebula.transpiler.ast.statements.BlockStatement;
+import com.juanpa.nebula.transpiler.ast.statements.ExpressionStatement;
+import com.juanpa.nebula.transpiler.ast.statements.ForStatement;
+import com.juanpa.nebula.transpiler.ast.statements.IfStatement;
+import com.juanpa.nebula.transpiler.ast.statements.ReturnStatement;
+import com.juanpa.nebula.transpiler.ast.statements.VariableDeclarationStatement;
+import com.juanpa.nebula.transpiler.ast.statements.WhileStatement;
+import com.juanpa.nebula.transpiler.ast.statements.SwitchStatement; // Import SwitchStatement
+import com.juanpa.nebula.transpiler.ast.statements.SwitchCase;     // Import SwitchCase
+
+
+/**
+ * Interface for the Visitor pattern that allows AST traversal.
+ * Each `visit` method corresponds to a specific AST node type.
+ * The generic type `R` represents the return value type of the `visit` methods.
+ * For expressions, `R` would be the expression's type (e.g., `Type` in semantic analysis).
+ * For declarations and statements, which do not produce a value, `R` could be `Void`.
+ */
+public interface ASTVisitor<R>
+{
+	// --- Directives ---
+	R visitImportDirective(ImportDirective directive);
+
+	// --- Declarations ---
+	R visitProgram(Program program);
+
+	R visitNamespaceDeclaration(NamespaceDeclaration declaration);
+
+	R visitClassDeclaration(ClassDeclaration declaration);
+
+	R visitMethodDeclaration(MethodDeclaration declaration);
+
+	R visitConstructorDeclaration(ConstructorDeclaration declaration);
+
+	R visitFieldDeclaration(FieldDeclaration declaration);
+
+	// --- Statements ---
+	R visitBlockStatement(BlockStatement statement);
+
+	R visitExpressionStatement(ExpressionStatement statement);
+
+	R visitIfStatement(IfStatement statement);
+
+	R visitWhileStatement(WhileStatement statement);
+
+	R visitForStatement(ForStatement statement);
+
+	R visitReturnStatement(ReturnStatement statement);
+
+	R visitVariableDeclarationStatement(VariableDeclarationStatement statement);
+
+	R visitSwitchStatement(SwitchStatement statement); // Added for SwitchStatement
+
+	R visitSwitchCase(SwitchCase switchCase);         // Added for SwitchCase
+
+	// --- Expressions ---
+	R visitBinaryExpression(BinaryExpression expression);
+
+	R visitUnaryExpression(UnaryExpression expression);
+
+	R visitLiteralExpression(LiteralExpression expression);
+
+	R visitIdentifierExpression(IdentifierExpression expression);
+
+	R visitAssignmentExpression(AssignmentExpression expression);
+
+	R visitCallExpression(CallExpression expression);
+
+	R visitDotExpression(DotExpression expression);
+
+	R visitThisExpression(ThisExpression expression);
+
+	R visitNewExpression(NewExpression expression);
+
+	R visitPostfixUnaryExpression(PostfixUnaryExpression expression);
+}
+
+expressions/CallExpression.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/expressions/CallExpression.java
+
+package com.juanpa.nebula.transpiler.ast.expressions;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.lexer.Token;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * AST node representing a function or method call.
+ * Includes the expression representing the callable entity (e.g., identifier, dot expression)
+ * and a list of argument expressions.
+ */
+public class CallExpression implements Expression
+{
+	private final Expression callee; // The expression being called (e.g., IdentifierExpression, DotExpression)
+	private final Token paren;       // The opening parenthesis token (for error reporting)
+	private final List<Expression> arguments;
+
+	public CallExpression(Expression callee, Token paren, List<Expression> arguments)
+	{
+		this.callee = callee;
+		this.paren = paren;
+		this.arguments = new ArrayList<>(arguments); // Defensive copy
+	}
+
+	public Expression getCallee()
+	{
+		return callee;
+	}
+
+	public Token getParen()
+	{
+		return paren;
+	}
+
+	public List<Expression> getArguments()
+	{
+		return Collections.unmodifiableList(arguments);
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitCallExpression(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder();
+		sb.append("(").append(callee);
+		sb.append(")"); // Closing parenthesis from parser
+		sb.append("("); // Opening parenthesis for arguments
+		for(int i = 0; i < arguments.size(); i++)
+		{
+			sb.append(arguments.get(i));
+			if(i < arguments.size() - 1)
+			{
+				sb.append(", ");
+			}
+		}
+		sb.append(")"); // Closing parenthesis for arguments
+		return sb.toString();
+	}
+
+	@Override
+	public Token getFirstToken()
+	{
+		return callee.getFirstToken(); // The first token is the first token of the callee expression
+	}
+}
+expressions/UnaryExpression.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/expressions/UnaryExpression.java
+
+package com.juanpa.nebula.transpiler.ast.expressions;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.lexer.Token;
+
+/**
+ * AST node representing a unary operation (e.g., !a, -b).
+ * It has an operator token and a single operand expression.
+ */
+public class UnaryExpression implements Expression
+{
+	private final Token operator; // The unary operator token (e.g., BANG, MINUS)
+	private final Expression right; // The operand expression
+
+	public UnaryExpression(Token operator, Expression right)
+	{
+		this.operator = operator;
+		this.right = right;
+	}
+
+	public Token getOperator()
+	{
+		return operator;
+	}
+
+	public Expression getRight()
+	{
+		return right;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitUnaryExpression(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		return "(" + operator.getLexeme() + right + ")";
+	}
+
+	@Override
+	public Token getFirstToken()
+	{
+		return operator; // The first token of a unary expression is its operator
+	}
+}
+expressions/LiteralExpression.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/expressions/LiteralExpression.java
+
+package com.juanpa.nebula.transpiler.ast.expressions;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.lexer.TokenType;
+
+/**
+ * AST node representing a literal value (e.g., 123, "hello", true, 3.14).
+ * Holds the literal value and its corresponding token.
+ */
+public class LiteralExpression implements Expression
+{
+	private final Object value; // The actual literal value (e.g., Integer, String, Boolean, Double)
+	private final Token literalToken; // The token representing the literal
+
+	public LiteralExpression(Object value, Token literalToken)
+	{
+		this.value = value;
+		this.literalToken = literalToken;
+	}
+
+	public Object getValue()
+	{
+		return value;
+	}
+
+	public Token getLiteralToken()
+	{
+		return literalToken;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitLiteralExpression(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		// For string literals, include quotes in the output for clarity
+		if(literalToken.getType() == TokenType.STRING_LITERAL)
+		{
+			return "\"" + value + "\"";
+		}
+		return value.toString();
+	}
+
+	@Override
+	public Token getFirstToken()
+	{
+		return literalToken;
+	}
+}
+expressions/NewExpression.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/expressions/NewExpression.java
+
+package com.juanpa.nebula.transpiler.ast.expressions;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.lexer.TokenType;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * AST node representing a 'new' object instantiation expression.
+ * Includes the 'new' keyword, the expression representing the class name (can be qualified),
+ * and a list of argument expressions for the constructor.
+ */
+public class NewExpression implements Expression
+{
+	private final Token newKeyword; // The 'new' keyword token
+	private final Expression classNameExpression; // The class name (Identifier or DotExpression)
+	private final List<Expression> arguments;
+
+	public NewExpression(Token newKeyword, Expression classNameExpression, List<Expression> arguments)
+	{
+		if(newKeyword.getType() != TokenType.NEW)
+		{
+			throw new IllegalArgumentException("Keyword for NewExpression must be TokenType.NEW.");
+		}
+		this.newKeyword = newKeyword;
+		this.classNameExpression = classNameExpression;
+		this.arguments = new ArrayList<>(arguments); // Defensive copy
+	}
+
+	public Token getNewKeyword()
+	{
+		return newKeyword;
+	}
+
+	public Expression getClassNameExpression()
+	{
+		return classNameExpression;
+	}
+
+	public List<Expression> getArguments()
+	{
+		return Collections.unmodifiableList(arguments);
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitNewExpression(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder();
+		sb.append("new ").append(classNameExpression);
+		sb.append("(");
+		for(int i = 0; i < arguments.size(); i++)
+		{
+			sb.append(arguments.get(i));
+			if(i < arguments.size() - 1)
+			{
+				sb.append(", ");
+			}
+		}
+		sb.append(")");
+		return sb.toString();
+	}
+
+	@Override
+	public Token getFirstToken()
+	{
+		return newKeyword; // The 'new' keyword is the first token
+	}
+
+	public Expression getClassName()
+	{
+		return classNameExpression;
+	}
+}
+expressions/DotExpression.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/expressions/DotExpression.java
+
+package com.juanpa.nebula.transpiler.ast.expressions;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.semantics.Symbol; // Import Symbol
+
+/**
+ * AST node representing a member access expression (e.g., object.property, Namespace.Class.staticMethod).
+ * It has a left-hand side expression (the object/namespace) and an identifier for the member.
+ */
+public class DotExpression implements Expression
+{
+	private final Expression left; // The left-hand side (e.g., IdentifierExpression for object, DotExpression for qualified name)
+	private final Token dotToken; // The dot operator token
+	private final Token memberName; // The identifier token for the member name (field, method, nested class)
+
+	// Semantic information to be filled during semantic analysis
+	private Symbol resolvedSymbol;
+
+	public DotExpression(Expression left, Token dotToken, Token memberName)
+	{
+		this.left = left;
+		this.dotToken = dotToken;
+		this.memberName = memberName;
+	}
+
+	public Expression getLeft()
+	{
+		return left;
+	}
+
+	public Token getDotToken()
+	{
+		return dotToken;
+	}
+
+	public Token getMemberName()
+	{
+		return memberName;
+	}
+
+	public Symbol getResolvedSymbol()
+	{
+		return resolvedSymbol;
+	}
+
+	public void setResolvedSymbol(Symbol resolvedSymbol)
+	{
+		this.resolvedSymbol = resolvedSymbol;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitDotExpression(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		// Example: ((Com.MyCompany).App) or (obj.field)
+		return "(" + left + "." + memberName.getLexeme() + ")";
+	}
+
+	@Override
+	public Token getFirstToken()
+	{
+		return left.getFirstToken(); // The first token is the first token of the left expression
+	}
+}
+
+expressions/BinaryExpression.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/expressions/BinaryExpression.java
+
+package com.juanpa.nebula.transpiler.ast.expressions;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.lexer.Token;
+
+/**
+ * AST node representing a binary operation (e.g., a + b, x == y, c && d).
+ * It has a left operand, an operator token, and a right operand.
+ */
+public class BinaryExpression implements Expression {
+	private final Expression left;
+	private final Token operator; // The binary operator token (e.g., PLUS, MINUS, EQUAL_EQUAL)
+	private final Expression right;
+
+	public BinaryExpression(Expression left, Token operator, Expression right) {
+		this.left = left;
+		this.operator = operator;
+		this.right = right;
+	}
+
+	public Expression getLeft() {
+		return left;
+	}
+
+	public Token getOperator() {
+		return operator;
+	}
+
+	public Expression getRight() {
+		return right;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor) {
+		return visitor.visitBinaryExpression(this);
+	}
+
+	@Override
+	public String toString() {
+		return "(" + left + " " + operator.getLexeme() + " " + right + ")";
+	}
+
+	@Override
+	public Token getFirstToken() {
+		return left.getFirstToken(); // The first token of a binary expression is its left operand's first token
+	}
+}
+expressions/IdentifierExpression.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/expressions/IdentifierExpression.java
+
+package com.juanpa.nebula.transpiler.ast.expressions;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.lexer.TokenType;
+
+/**
+ * AST node representing an identifier (e.g., a variable name, class name, method name).
+ */
+public class IdentifierExpression implements Expression {
+	private final Token name; // The IDENTIFIER token
+
+	public IdentifierExpression(Token name) {
+		if (name.getType() != TokenType.IDENTIFIER) {
+			throw new IllegalArgumentException("Token for IdentifierExpression must be an IDENTIFIER.");
+		}
+		this.name = name;
+	}
+
+	public Token getName() {
+		return name;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor) {
+		return visitor.visitIdentifierExpression(this);
+	}
+
+	@Override
+	public String toString() {
+		return name.getLexeme();
+	}
+
+	@Override
+	public Token getFirstToken() {
+		return name;
+	}
+}
+expressions/Expression.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/expressions/Expression.java
+
+package com.juanpa.nebula.transpiler.ast.expressions;
+
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+import com.juanpa.nebula.transpiler.lexer.Token;
+
+/**
+ * Base interface for all expression nodes in the Abstract Syntax Tree (AST).
+ * Expressions are parts of the program that produce a value.
+ */
+public interface Expression extends ASTNode
+{
+	/**
+	 * Returns the first token that constitutes this expression.
+	 * Useful for error reporting to pinpoint the exact location of a semantic error.
+	 *
+	 * @return The first Token of this expression.
+	 */
+	Token getFirstToken();
+}
+expressions/PostfixUnaryExpression.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/expressions/PostfixUnaryExpression.java
+
+package com.juanpa.nebula.transpiler.ast.expressions;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.lexer.Token;
+
+/**
+ * AST node representing a postfix unary operation (e.g., x++, y--).
+ * It has an operand expression and a postfix operator token.
+ */
+public class PostfixUnaryExpression implements Expression
+{
+	private final Expression operand; // The expression being operated on (must be assignable)
+	private final Token operator;    // The postfix operator token (e.g., PLUS_PLUS, MINUS_MINUS)
+
+	public PostfixUnaryExpression(Expression operand, Token operator)
+	{
+		this.operand = operand;
+		this.operator = operator;
+	}
+
+	public Expression getOperand()
+	{
+		return operand;
+	}
+
+	public Token getOperator()
+	{
+		return operator;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitPostfixUnaryExpression(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		return "(" + operand + operator.getLexeme() + ")";
+	}
+
+	@Override
+	public Token getFirstToken()
+	{
+		return operand.getFirstToken(); // The first token is the first token of the operand
+	}
+}
+expressions/ThisExpression.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/expressions/ThisExpression.java
+
+package com.juanpa.nebula.transpiler.ast.expressions;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.lexer.TokenType;
+
+/**
+ * AST node representing the 'this' keyword.
+ * Represents a reference to the current instance of the class.
+ */
+public class ThisExpression implements Expression
+{
+	private final Token keyword; // The 'this' keyword token
+
+	public ThisExpression(Token keyword)
+	{
+		if(keyword.getType() != TokenType.THIS)
+		{
+			throw new IllegalArgumentException("Keyword for ThisExpression must be TokenType.THIS.");
+		}
+		this.keyword = keyword;
+	}
+
+	public Token getKeyword()
+	{
+		return keyword;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitThisExpression(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		return "this";
+	}
+
+	@Override
+	public Token getFirstToken()
+	{
+		return keyword; // The 'this' keyword itself is the first token
+	}
+}
+expressions/AssignmentExpression.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/expressions/AssignmentExpression.java
+
+package com.juanpa.nebula.transpiler.ast.expressions;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.lexer.TokenType;
+
+/**
+ * AST node representing an assignment operation (e.g., x = 10, obj.property = value, x += 5).
+ * It holds the target expression (what's being assigned to), the operator, and the value expression.
+ */
+public class AssignmentExpression implements Expression
+{
+	private final Expression target; // The left-hand side of the assignment (e.g., IdentifierExpression, DotExpression)
+	private final Token operator;    // The assignment operator token (e.g., ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN)
+	private final Expression value;  // The right-hand side expression
+
+	/**
+	 * Constructor for AssignmentExpression.
+	 *
+	 * @param target   The expression representing the target of the assignment.
+	 * @param operator The assignment operator token.
+	 * @param value    The expression whose value is being assigned.
+	 */
+	public AssignmentExpression(Expression target, Token operator, Expression value)
+	{
+		// Basic validation for the operator type (can be expanded)
+		if(!isAssignmentOperator(operator.getType()))
+		{
+			throw new IllegalArgumentException("Invalid token type for assignment operator: " + operator.getType());
+		}
+		this.target = target;
+		this.operator = operator;
+		this.value = value;
+	}
+
+	private boolean isAssignmentOperator(TokenType type)
+	{
+		return type == TokenType.ASSIGN || type == TokenType.PLUS_ASSIGN ||
+				type == TokenType.MINUS_ASSIGN || type == TokenType.STAR_ASSIGN ||
+				type == TokenType.SLASH_ASSIGN || type == TokenType.MODULO_ASSIGN;
+	}
+
+	public Expression getTarget()
+	{
+		return target;
+	}
+
+	public Token getOperator()
+	{
+		return operator;
+	}
+
+	public Expression getValue()
+	{
+		return value;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitAssignmentExpression(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		return "(" + target + " " + operator.getLexeme() + " " + value + ")";
+	}
+
+	@Override
+	public Token getFirstToken()
+	{
+		return target.getFirstToken(); // The first token is the first token of the target expression
+	}
+}
+ASTNode.java:
+[AND the contents]
+package com.juanpa.nebula.transpiler.ast;
+
+/**
+ * Base interface for all nodes in the Abstract Syntax Tree (AST).
+ * All elements that form the structured representation of the program
+ * will implement this interface.
+ */
+public interface ASTNode
+{
+	/**
+	 * Accepts an ASTVisitor to traverse this node.
+	 * This is part of the Visitor design pattern, allowing operations to be
+	 * performed on the AST nodes without modifying the node classes themselves.
+	 *
+	 * @param visitor The ASTVisitor instance.
+	 * @param <R>     The return type of the visitor's visit methods.
+	 * @return The result of the visitor's operation.
+	 */
+	<R> R accept(ASTVisitor<R> visitor);
+}
+
+declarations/MethodDeclaration.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/declarations/MethodDeclaration.java
+package com.juanpa.nebula.transpiler.ast.declarations;
+
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+import com.juanpa.nebula.transpiler.ast.ASTVisitor; // Import ASTVisitor
+import com.juanpa.nebula.transpiler.ast.statements.BlockStatement;
+import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.lexer.TokenType;
+
+import java.util.ArrayList; // Import ArrayList
+import java.util.List;
+import java.util.stream.Collectors; // Import Collectors
+
+/**
+ * AST node representing a method declaration within a class.
+ * This includes the method's name, return type, parameters, and its body (a block statement).
+ */
+public class MethodDeclaration implements ASTNode
+{
+	private final List<Token> modifiers; // e.g., PUBLIC, STATIC
+	private final Token returnType;      // e.g., VOID, INT, String, IDENTIFIER for custom types
+	private final Token name;            // IDENTIFIER token for the method name
+	private final List<Token> parameters; // For simplicity, just tokens for now; later, will be Parameter AST nodes
+	private final BlockStatement body;   // The method's code block
+
+	public MethodDeclaration(List<Token> modifiers, Token returnType, Token name, List<Token> parameters, BlockStatement body)
+	{
+		this.modifiers = new ArrayList<>(modifiers); // Make a copy
+		this.returnType = returnType;
+		if(name.getType() != TokenType.IDENTIFIER)
+		{
+			throw new IllegalArgumentException("Method name must be an IDENTIFIER token.");
+		}
+		this.name = name;
+		this.parameters = new ArrayList<>(parameters); // Make a copy
+		this.body = body;
+	}
+
+	public List<Token> getModifiers()
+	{
+		return modifiers;
+	}
+
+	public Token getReturnType()
+	{
+		return returnType;
+	}
+
+	public Token getName()
+	{
+		return name;
+	}
+
+	public List<Token> getParameters()
+	{
+		return parameters;
+	}
+
+	public BlockStatement getBody()
+	{
+		return body;
+	}
+
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		String mods = modifiers.isEmpty() ? "" : modifiers.stream()
+				.map(Token::getLexeme)
+				.collect(Collectors.joining(" ")) + " ";
+		sb.append(mods).append(returnType.getLexeme()).append(" ").append(name.getLexeme())
+				.append("(").append(formatParameters(parameters)).append(") {\n");
+		sb.append(indent(body.toString(), 1)); // Indent the body
+		sb.append("}\n");
+		return sb.toString();
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor) {
+		return visitor.visitMethodDeclaration(this);
+	}
+
+	private String formatParameters(List<Token> params) {
+		if (params.isEmpty()) return "";
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < params.size(); i += 2) { // Assuming pairs of (type, name)
+			sb.append(params.get(i).getLexeme()).append(" ").append(params.get(i+1).getLexeme());
+			if (i + 2 < params.size()) {
+				sb.append(", ");
+			}
+		}
+		return sb.toString();
+	}
+
+	private String indent(String text, int level) {
+		StringBuilder indentedText = new StringBuilder();
+		String prefix = "  ".repeat(level);
+		for (String line : text.split("\n")) {
+			indentedText.append(prefix).append(line).append("\n");
+		}
+		return indentedText.toString();
+	}
+}
+
+
+declarations/ClassDeclaration.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/declarations/ClassDeclaration.java
+
+package com.juanpa.nebula.transpiler.ast.declarations;
+
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.ast.expressions.IdentifierExpression;
+import com.juanpa.nebula.transpiler.lexer.Token;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * AST node representing a class declaration.
+ * Holds the class's name, its modifiers, and lists of its members (fields, constructors, methods).
+ */
+public class ClassDeclaration implements ASTNode
+{
+	private final Token name;
+	private final List<Token> modifiers; // e.g., PUBLIC, PRIVATE, STATIC, etc.
+	private final List<FieldDeclaration> fields;
+	private final List<ConstructorDeclaration> constructors;
+	private final List<MethodDeclaration> methods;
+
+	public ClassDeclaration(Token name)
+	{
+		this.name = name;
+		this.modifiers = new ArrayList<>();
+		this.fields = new ArrayList<>();
+		this.constructors = new ArrayList<>();
+		this.methods = new ArrayList<>();
+	}
+
+	public Token getName()
+	{
+		return name;
+	}
+
+	/**
+	 * Returns the class name as an IdentifierExpression.
+	 * Useful for semantic analysis which expects Expressions for name resolution.
+	 */
+	public IdentifierExpression getNameExpression() {
+		return new IdentifierExpression(name);
+	}
+
+	public List<Token> getModifiers()
+	{
+		return Collections.unmodifiableList(modifiers);
+	}
+
+	public void addModifier(Token modifier)
+	{
+		this.modifiers.add(modifier);
+	}
+
+	public List<FieldDeclaration> getFields()
+	{
+		return Collections.unmodifiableList(fields);
+	}
+
+	public void addField(FieldDeclaration field)
+	{
+		this.fields.add(field);
+	}
+
+	public List<ConstructorDeclaration> getConstructors()
+	{
+		return Collections.unmodifiableList(constructors);
+	}
+
+	public void addConstructor(ConstructorDeclaration constructor)
+	{
+		this.constructors.add(constructor);
+	}
+
+	public List<MethodDeclaration> getMethods()
+	{
+		return Collections.unmodifiableList(methods);
+	}
+
+	public void addMethod(MethodDeclaration method)
+	{
+		this.methods.add(method);
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitClassDeclaration(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder();
+		sb.append("  Class '").append(name.getLexeme()).append("' {\n");
+		modifiers.forEach(mod -> sb.append("    ").append(mod.getLexeme()).append(" "));
+		// Append fields
+		for (FieldDeclaration field : fields)
+		{
+			sb.append("    ").append(field.toString().replace("\n", "\n    ")).append("\n");
+		}
+		// Append constructors
+		for (ConstructorDeclaration constructor : constructors)
+		{
+			sb.append("    ").append(constructor.toString().replace("\n", "\n    ")).append("\n");
+		}
+		// Append methods
+		for (MethodDeclaration method : methods)
+		{
+			sb.append("    ").append(method.toString().replace("\n", "\n    ")).append("\n");
+		}
+		sb.append("  }");
+		return sb.toString();
+	}
+}
+
+declarations/NamespaceDeclaration.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/declarations/NamespaceDeclaration.java
+
+package com.juanpa.nebula.transpiler.ast.declarations;
+
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.ast.expressions.Expression; // Import Expression
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * AST node representing a namespace declaration.
+ * Holds the qualified name of the namespace and a list of classes declared within it.
+ */
+public class NamespaceDeclaration implements ASTNode
+{
+	private final Expression nameExpression; // Represents the qualified name (e.g., Com.MyCompany.App)
+	private final List<ClassDeclaration> classes; // Stores class declarations within this namespace
+
+	/**
+	 * Constructor for NamespaceDeclaration.
+	 * @param nameExpression The expression representing the qualified name of the namespace.
+	 */
+	public NamespaceDeclaration(Expression nameExpression)
+	{
+		this.nameExpression = nameExpression;
+		this.classes = new ArrayList<>();
+	}
+
+	/**
+	 * Returns the expression representing the qualified name of the namespace.
+	 * This is used by the SemanticAnalyzer to resolve the full namespace path.
+	 * @return The Expression node for the namespace's name.
+	 */
+	public Expression getNameExpression()
+	{
+		return nameExpression;
+	}
+
+	/**
+	 * Returns an unmodifiable list of class declarations within this namespace.
+	 * This method name is chosen to be consistent with SemanticAnalyzer's usage.
+	 * @return A list of ClassDeclaration AST nodes.
+	 */
+	public List<ClassDeclaration> getClassDeclarations() // Corrected method name for consistency
+	{
+		return Collections.unmodifiableList(classes);
+	}
+
+	/**
+	 * Adds a ClassDeclaration to this namespace.
+	 * @param classDecl The ClassDeclaration to add.
+	 */
+	public void addClass(ClassDeclaration classDecl)
+	{
+		this.classes.add(classDecl);
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitNamespaceDeclaration(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder();
+		sb.append("  Namespace '").append(nameExpression).append("' {\n");
+		for (ClassDeclaration classDecl : classes)
+		{
+			// Indent the class declarations for better readability in AST printout
+			sb.append(classDecl.toString().replace("\n", "\n  ")).append("\n");
+		}
+		sb.append("  }");
+		return sb.toString();
+	}
+}
+
+declarations/ConstructorDeclaration.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/declarations/ConstructorDeclaration.java
+
+package com.juanpa.nebula.transpiler.ast.declarations;
+
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+import com.juanpa.nebula.transpiler.ast.ASTVisitor; // Import ASTVisitor
+import com.juanpa.nebula.transpiler.ast.statements.BlockStatement;
+import com.juanpa.nebula.transpiler.lexer.Token;
+
+import java.util.ArrayList; // Import ArrayList
+import java.util.List;
+import java.util.stream.Collectors; // Import Collectors
+
+/**
+ * AST node representing a constructor declaration.
+ * Constructors do not have a return type and their name matches the class name.
+ */
+public class ConstructorDeclaration implements ASTNode
+{
+	private final List<Token> modifiers; // e.g., PUBLIC, PRIVATE
+	private final Token name;            // The constructor name (should match class name)
+	private final List<Token> parameters; // For simplicity, just tokens for now
+	private final BlockStatement body;
+
+	public ConstructorDeclaration(List<Token> modifiers, Token name, List<Token> parameters, BlockStatement body)
+	{
+		this.modifiers = new ArrayList<>(modifiers); // Make a copy
+		this.name = name;
+		this.parameters = new ArrayList<>(parameters); // Make a copy
+		this.body = body;
+	}
+
+	public List<Token> getModifiers()
+	{
+		return modifiers;
+	}
+
+	public Token getName()
+	{
+		return name;
+	}
+
+	public List<Token> getParameters()
+	{
+		return parameters;
+	}
+
+	public BlockStatement getBody()
+	{
+		return body;
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder();
+		String mods = modifiers.isEmpty() ? "" : modifiers.stream()
+				.map(Token::getLexeme)
+				.collect(Collectors.joining(" ")) + " ";
+		sb.append(mods).append(name.getLexeme());
+		sb.append("(").append(formatParameters(parameters)).append(") {\n");
+		sb.append(indent(body.toString(), 1)); // Indent body
+		sb.append("}\n");
+		return sb.toString();
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor) {
+		return visitor.visitConstructorDeclaration(this);
+	}
+
+	private String formatParameters(List<Token> params) {
+		if (params.isEmpty()) return "";
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < params.size(); i += 2) { // Assuming pairs of (type, name)
+			sb.append(params.get(i).getLexeme()).append(" ").append(params.get(i+1).getLexeme());
+			if (i + 2 < params.size()) {
+				sb.append(", ");
+			}
+		}
+		return sb.toString();
+	}
+
+	private String indent(String text, int level) {
+		StringBuilder indentedText = new StringBuilder();
+		String prefix = "  ".repeat(level);
+		for (String line : text.split("\n")) {
+			indentedText.append(prefix).append(line).append("\n");
+		}
+		return indentedText.toString();
+	}
+}
+
+
+declarations/ImportDirective.java:
+[AND the contents]
+// File: src/main/java/com/juanpa/nebula/transpiler/ast/declarations/ImportDirective.java
+// Changed: File name from UsingDirective.java to ImportDirective.java
+
+package com.juanpa.nebula.transpiler.ast.declarations;
+
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.ast.expressions.Expression; // For the qualified name
+import com.juanpa.nebula.transpiler.lexer.Token; // For the 'import' token or modifiers
+import com.juanpa.nebula.transpiler.lexer.TokenType;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * Represents an 'import' directive in Nebula source code.
+ * It can be a standard namespace import, a static import,
+ * or a global import.
+ * Examples:
+ * import System.Text;
+ * import static System.Console;
+ * global import MyNamespace;
+ * global static import AnotherType;
+ */
+public class ImportDirective implements ASTNode
+{ // Changed: Class name to ImportDirective
+	private final List<Token> modifiers; // Tokens for 'global', 'static'
+	private final Expression qualifiedName; // The namespace or type name (e.g., System.Text, System.Console)
+	private final Token importKeyword; // Changed: The 'import' keyword token
+
+	public ImportDirective(List<Token> modifiers, Token importKeyword, Expression qualifiedName)
+	{ // Changed: Constructor parameter to importKeyword
+		this.modifiers = modifiers; // Assume the list is already a copy if needed
+		this.importKeyword = importKeyword; // Changed: Assignment
+		this.qualifiedName = qualifiedName;
+	}
+
+	public List<Token> getModifiers()
+	{
+		return modifiers;
+	}
+
+	public boolean isGlobal()
+	{
+		return modifiers.stream().anyMatch(m -> m.getType() == TokenType.GLOBAL);
+	}
+
+	public boolean isStatic()
+	{
+		return modifiers.stream().anyMatch(m -> m.getType() == TokenType.STATIC);
+	}
+
+	public Expression getQualifiedName()
+	{
+		return qualifiedName;
+	}
+
+	public Token getImportKeyword()
+	{ // Changed: Getter to getImportKeyword
+		return importKeyword;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitImportDirective(this); // Changed: visitUsingDirective to visitImportDirective
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder();
+		if(!modifiers.isEmpty())
+		{
+			sb.append(modifiers.stream().map(Token::getLexeme).collect(Collectors.joining(" "))).append(" ");
+		}
+		sb.append("import ").append(qualifiedName.toString()).append(";"); // Changed: "using" to "import"
+		return sb.toString();
+	}
+}
+
+declarations/FieldDeclaration.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/declarations/FieldDeclaration.java
+package com.juanpa.nebula.transpiler.ast.declarations;
+
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.ast.expressions.Expression;
+import com.juanpa.nebula.transpiler.lexer.Token;
+
+import java.util.ArrayList; // Import ArrayList
+import java.util.List;
+import java.util.stream.Collectors; // Import Collectors
+
+/**
+ * Represents a field (member variable) declaration in a class.
+ * Example: `public int myField = 10;`
+ */
+public class FieldDeclaration implements ASTNode
+{
+	private final List<Token> modifiers; // e.g., public, private, static, const
+	private final Token type;            // The type of the field (e.g., int, String, MyCustomClass)
+	private final Token name;            // The name of the field
+	private final Expression initializer; // The optional initializer expression
+
+	/**
+	 * Constructs a new FieldDeclaration.
+	 *
+	 * @param modifiers   List of modifier tokens for the field.
+	 * @param type        The token representing the field's type.
+	 * @param name        The token representing the field's name.
+	 * @param initializer The optional expression for the field's initial value, can be null.
+	 */
+	public FieldDeclaration(List<Token> modifiers, Token type, Token name, Expression initializer)
+	{
+		this.modifiers = new ArrayList<>(modifiers); // Make a copy
+		this.type = type;
+		this.name = name;
+		this.initializer = initializer;
+	}
+
+	public List<Token> getModifiers()
+	{
+		return modifiers;
+	}
+
+	public Token getType()
+	{
+		return type;
+	}
+
+	public Token getName()
+	{
+		return name;
+	}
+
+	public Expression getInitializer()
+	{
+		return initializer;
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder();
+		String mods = modifiers.isEmpty() ? "" : modifiers.stream()
+				.map(Token::getLexeme)
+				.collect(Collectors.joining(" ")) + " ";
+		sb.append(mods).append("Field ").append(type.getLexeme()).append(" ").append(name.getLexeme());
+		if(initializer != null)
+		{
+			sb.append(" = ").append(initializer.toString()); // Recursively print initializer
+		}
+		sb.append(";\n");
+		return sb.toString();
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitFieldDeclaration(this);
+	}
+
+	private String indent(String text, int level)
+	{
+		StringBuilder indentedText = new StringBuilder();
+		String prefix = "  ".repeat(level);
+		for(String line : text.split("\n"))
+		{
+			indentedText.append(prefix).append(line).append("\n");
+		}
+		return indentedText.toString();
+	}
+}
+
+statements/ForStatement.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/statements/ForStatement.java
+package com.juanpa.nebula.transpiler.ast.statements;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor; // Import ASTVisitor
+import com.juanpa.nebula.transpiler.ast.expressions.Expression;
+
+/**
+ * AST node representing a 'for' loop statement.
+ * Includes an optional initializer, condition, increment expression, and a loop body.
+ */
+public class ForStatement implements Statement
+{
+	private final Statement initializer; // Can be a VariableDeclarationStatement or ExpressionStatement (or null)
+	private final Expression condition;  // The loop continuation condition (can be null for infinite loop)
+	private final Expression increment;  // The expression executed after each iteration (can be null)
+	private final BlockStatement body;   // The loop body
+
+	public ForStatement(Statement initializer, Expression condition, Expression increment, BlockStatement body)
+	{
+		this.initializer = initializer;
+		this.condition = condition;
+		this.increment = increment;
+		this.body = body;
+	}
+
+	public Statement getInitializer()
+	{
+		return initializer;
+	}
+
+	public Expression getCondition()
+	{
+		return condition;
+	}
+
+	public Expression getIncrement()
+	{
+		return increment;
+	}
+
+	public BlockStatement getBody()
+	{
+		return body;
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder("For (");
+		sb.append(initializer != null ? initializer.toString().trim() : "");
+		sb.append("; ").append(condition != null ? condition.toString() : "");
+		sb.append("; ").append(increment != null ? increment.toString() : "");
+		sb.append(") {\n");
+		sb.append(indent(body.toString(), 1)); // Indent the body
+		sb.append("}\n");
+		return sb.toString();
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitForStatement(this);
+	}
+
+	// Helper for indentation
+	private String indent(String text, int level) {
+		StringBuilder indentedText = new StringBuilder();
+		String prefix = "  ".repeat(level);
+		for (String line : text.split("\n")) {
+			indentedText.append(prefix).append(line).append("\n");
+		}
+		return indentedText.toString();
+	}
+}
+
+
+statements/VariableDeclarationStatement.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/statements/VariableDeclarationStatement.java
+
+package com.juanpa.nebula.transpiler.ast.statements;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.ast.expressions.Expression;
+import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.lexer.TokenType; // Import TokenType
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * AST node representing a variable declaration statement.
+ * Includes the type token (e.g., INT, STRING, VAR, or IDENTIFIER for custom types),
+ * the variable name, and an optional initializer expression.
+ */
+public class VariableDeclarationStatement implements Statement
+{
+	private final List<Token> modifiers; // Add modifiers
+	private final Token typeToken;
+	private final Token name;
+	private final Expression initializer;
+
+	/**
+	 * Constructs a VariableDeclarationStatement.
+	 *
+	 * @param modifiers   List of modifier tokens (e.g., CONST)
+	 * @param typeToken   The token representing the declared type.
+	 * @param name        The identifier token for the variable name.
+	 * @param initializer Optional initializer expression.
+	 */
+	public VariableDeclarationStatement(List<Token> modifiers, Token typeToken, Token name, Expression initializer)
+	{
+		this.modifiers = new ArrayList<>(modifiers); // Defensive copy
+		this.typeToken = typeToken;
+		this.name = name;
+		this.initializer = initializer;
+	}
+
+	// Existing constructor for backward compatibility (assume no modifiers)
+	public VariableDeclarationStatement(Token typeToken, Token name, Expression initializer)
+	{
+		this(new ArrayList<>(), typeToken, name, initializer);
+	}
+
+	public List<Token> getModifiers()
+	{ // Getter for modifiers
+		return Collections.unmodifiableList(modifiers);
+	}
+
+	public Token getTypeToken()
+	{
+		return typeToken;
+	}
+
+	public Token getName()
+	{
+		return name;
+	}
+
+	public Expression getInitializer()
+	{
+		return initializer;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitVariableDeclarationStatement(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder();
+		String mods = modifiers.isEmpty() ? "" : modifiers.stream()
+				.map(Token::getLexeme)
+				.collect(Collectors.joining(" ")) + " ";
+		sb.append("VarDecl: ").append(mods).append(typeToken.getLexeme()).append(" ").append(name.getLexeme());
+		if(initializer != null)
+		{
+			sb.append(" = ").append(initializer);
+		}
+		return sb.toString();
+	}
+}
+
+statements/WhileStatement.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/statements/WhileStatement.java
+package com.juanpa.nebula.transpiler.ast.statements;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor; // Import ASTVisitor
+import com.juanpa.nebula.transpiler.ast.expressions.Expression;
+
+/**
+ * AST node representing a 'while' loop statement.
+ * Includes a condition expression and a loop body.
+ */
+public class WhileStatement implements Statement
+{
+	private final Expression condition;
+	private final BlockStatement body;
+
+	public WhileStatement(Expression condition, BlockStatement body)
+	{
+		this.condition = condition;
+		this.body = body;
+	}
+
+	public Expression getCondition()
+	{
+		return condition;
+	}
+
+	public BlockStatement getBody()
+	{
+		return body;
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder("While (").append(condition).append(") {\n");
+		sb.append(indent(body.toString(), 1)); // Indent the body
+		sb.append("}\n");
+		return sb.toString();
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitWhileStatement(this);
+	}
+
+	// Helper for indentation
+	private String indent(String text, int level) {
+		StringBuilder indentedText = new StringBuilder();
+		String prefix = "  ".repeat(level);
+		for (String line : text.split("\n")) {
+			indentedText.append(prefix).append(line).append("\n");
+		}
+		return indentedText.toString();
+	}
+}
+
+
+statements/SwitchStatement.java:
+[AND the contents]
+// File: src/main/java/com/juanpa/nebula/transpiler/ast/statements/SwitchStatement.java
+
+package com.juanpa.nebula.transpiler.ast.statements;
+
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.ast.expressions.Expression; // The expression being switched on
+import com.juanpa.nebula.transpiler.lexer.Token; // Import Token
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors; // Import Collectors
+
+public class SwitchStatement implements Statement
+{
+	private final Expression switchExpression; // The expression to switch on
+	private final List<SwitchCase> cases;    // List of 'case' clauses
+	private final BlockStatement defaultBlock; // Optional 'default' block
+	private final Token switchKeyword; // The 'switch' keyword token for error reporting
+
+	public SwitchStatement(Token switchKeyword, Expression switchExpression, List<SwitchCase> cases, BlockStatement defaultBlock)
+	{
+		this.switchKeyword = switchKeyword;
+		this.switchExpression = switchExpression;
+		this.cases = new ArrayList<>(cases); // Defensive copy
+		this.defaultBlock = defaultBlock;
+	}
+
+	public Token getSwitchKeyword()
+	{
+		return switchKeyword;
+	}
+
+	public Expression getSwitchExpression()
+	{
+		return switchExpression;
+	}
+
+	public List<SwitchCase> getCases()
+	{
+		return Collections.unmodifiableList(cases);
+	}
+
+	public BlockStatement getDefaultBlock()
+	{
+		return defaultBlock;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitSwitchStatement(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder("switch (").append(switchExpression.toString()).append(") {\n");
+		for(SwitchCase sc : cases)
+		{
+			sb.append(sc.toString());
+		}
+		if(defaultBlock != null)
+		{
+			sb.append("  default:\n").append(defaultBlock.toString()).append("\n");
+		}
+		sb.append("}\n");
+		return sb.toString();
+	}
+}
+
+statements/SwitchCase.java:
+[AND the contents]
+// File: src/main/java/com/juanpa/nebula/transpiler/ast/statements/SwitchCase.java
+
+package com.juanpa.nebula.transpiler.ast.statements;
+
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+import com.juanpa.nebula.transpiler.ast.expressions.Expression; // The constant value of the case
+import com.juanpa.nebula.transpiler.lexer.Token; // Import Token
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors; // Import Collectors
+
+public class SwitchCase implements ASTNode
+{
+	private final Expression value; // The constant expression for the case (e.g., 10, 'A')
+	private final List<Statement> body; // The statements within this case
+	private final Token caseKeyword; // The 'case' keyword token for error reporting
+
+	public SwitchCase(Token caseKeyword, Expression value, List<Statement> body)
+	{
+		this.caseKeyword = caseKeyword;
+		this.value = value;
+		this.body = new ArrayList<>(body); // Defensive copy
+	}
+
+	public Token getCaseKeyword()
+	{
+		return caseKeyword;
+	}
+
+	public Expression getValue()
+	{
+		return value;
+	}
+
+	public List<Statement> getBody()
+	{
+		return Collections.unmodifiableList(body);
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitSwitchCase(this);
+	}
+
+	@Override
+	public String toString()
+	{
+		return "  case " + value.toString() + ":\n" +
+				body.stream().map(s -> "    " + s.toString()).collect(Collectors.joining("\n")) + "\n";
+	}
+}
+
+statements/IfStatement.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/statements/IfStatement.java
+package com.juanpa.nebula.transpiler.ast.statements;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor; // Import ASTVisitor
+import com.juanpa.nebula.transpiler.ast.expressions.Expression;
+
+/**
+ * AST node representing an 'if-else' statement.
+ * Includes a condition, a 'then' branch, and an optional 'else' branch.
+ */
+public class IfStatement implements Statement
+{
+	private final Expression condition;
+	private final BlockStatement thenBranch;
+	private final Statement elseBranch; // Changed from BlockStatement to Statement
+
+	public IfStatement(Expression condition, BlockStatement thenBranch, Statement elseBranch)
+	{ // Constructor updated
+		this.condition = condition;
+		this.thenBranch = thenBranch;
+		this.elseBranch = elseBranch;
+	}
+
+	public Expression getCondition()
+	{
+		return condition;
+	}
+
+	public BlockStatement getThenBranch()
+	{
+		return thenBranch;
+	}
+
+	public Statement getElseBranch()
+	{ // Changed return type
+		return elseBranch;
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder("If (").append(condition).append(") {\n");
+		sb.append(indent(thenBranch.toString(), 1)); // Indent the then branch
+		sb.append("}");
+
+		if(elseBranch != null)
+		{
+			sb.append(" Else {\n");
+			sb.append(indent(elseBranch.toString(), 1)); // Indent the else branch
+			sb.append("}");
+		}
+		sb.append("\n"); // Add a newline at the end for formatting
+		return sb.toString();
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitIfStatement(this);
+	}
+
+	// Helper for indentation
+	private String indent(String text, int level) {
+		StringBuilder indentedText = new StringBuilder();
+		String prefix = "  ".repeat(level);
+		for (String line : text.split("\n")) {
+			indentedText.append(prefix).append(line).append("\n");
+		}
+		return indentedText.toString();
+	}
+}
+
+
+statements/Statement.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/statements/Statement.java
+package com.juanpa.nebula.transpiler.ast.statements;
+
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+
+/**
+ * Base interface for all statement nodes in the Abstract Syntax Tree.
+ * Statements are units of execution that do not necessarily produce a value.
+ */
+public interface Statement extends ASTNode
+{
+	// No common methods yet, but can be added later.
+}
+
+
+statements/ReturnStatement.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/statements/ReturnStatement.java
+package com.juanpa.nebula.transpiler.ast.statements;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor; // Import ASTVisitor
+import com.juanpa.nebula.transpiler.ast.expressions.Expression;
+import com.juanpa.nebula.transpiler.lexer.Token;
+
+/**
+ * AST node representing a return statement.
+ * Can optionally include an expression to be returned.
+ */
+public class ReturnStatement implements Statement
+{
+	private final Token keyword; // The 'return' keyword token
+	private final Expression value; // Optional expression to return
+
+	public ReturnStatement(Token keyword, Expression value)
+	{
+		this.keyword = keyword;
+		this.value = value;
+	}
+
+	public Token getKeyword()
+	{
+		return keyword;
+	}
+
+	public Expression getValue()
+	{
+		return value;
+	}
+
+	@Override
+	public String toString()
+	{
+		String val = value != null ? " " + value.toString() : "";
+		return "Return" + val + ";\n";
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitReturnStatement(this);
+	}
+}
+
+
+statements/ExpressionStatement.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/statements/ExpressionStatement.java
+package com.juanpa.nebula.transpiler.ast.statements;
+
+import com.juanpa.nebula.transpiler.ast.ASTVisitor; // Import ASTVisitor
+import com.juanpa.nebula.transpiler.ast.expressions.Expression;
+
+/**
+ * AST node representing a statement that consists solely of an expression,
+ * typically followed by a semicolon (e.g., `someMethodCall();`).
+ */
+public class ExpressionStatement implements Statement
+{
+	private final Expression expression;
+
+	public ExpressionStatement(Expression expression)
+	{
+		this.expression = expression;
+	}
+
+	public Expression getExpression()
+	{
+		return expression;
+	}
+
+	@Override
+	public String toString()
+	{
+		return "ExprStmt: " + expression + ";\n";
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitExpressionStatement(this);
+	}
+}
+
+
+statements/BlockStatement.java:
+[AND the contents]
+// File: src/main/java/com/juanpa.nebula.transpiler/ast/statements/BlockStatement.java
+package com.juanpa.nebula.transpiler.ast.statements;
+
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * AST node representing a block of statements enclosed in curly braces {}.
+ * This is used for method bodies, if/else blocks, loop bodies, etc.
+ */
+public class BlockStatement implements Statement
+{
+	private final List<Statement> statements;
+
+	public BlockStatement()
+	{
+		this.statements = new ArrayList<>();
+	}
+
+	/**
+	 * Constructor to create a BlockStatement from a pre-existing list of statements.
+	 *
+	 * @param statements The list of statements to include in this block.
+	 */
+	public BlockStatement(List<Statement> statements)
+	{
+		this.statements = new ArrayList<>(statements); // Defensive copy
+	}
+
+
+	public void addStatement(Statement statement)
+	{
+		this.statements.add(statement);
+	}
+
+	public List<Statement> getStatements()
+	{
+		return statements;
+	}
+
+	@Override
+	public String toString()
+	{
+		StringBuilder sb = new StringBuilder("{\n");
+		for(Statement stmt : statements)
+		{
+			// Indent statements within the block
+			sb.append(indent(stmt.toString(), 1));
+		}
+		sb.append("}");
+		return sb.toString();
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitBlockStatement(this);
+	}
+
+	// Helper for indentation
+	private String indent(String text, int level)
+	{
+		StringBuilder indentedText = new StringBuilder();
+		String prefix = "  ".repeat(level);
+		for(String line : text.split("\n"))
+		{
+			indentedText.append(prefix).append(line).append("\n");
+		}
+		return indentedText.toString();
+	}
+}
+// File: src/main/java/com/juanpa/nebula/transpiler/parser/NebulaParser.java
+
+package com.juanpa.nebula.transpiler.parser;
+
+import com.juanpa.nebula.transpiler.ast.Program;
+import com.juanpa.nebula.transpiler.ast.ASTNode;
+import com.juanpa.nebula.transpiler.ast.declarations.ClassDeclaration;
+import com.juanpa.nebula.transpiler.ast.declarations.MethodDeclaration;
+import com.juanpa.nebula.transpiler.ast.declarations.NamespaceDeclaration;
+import com.juanpa.nebula.transpiler.ast.declarations.ConstructorDeclaration;
+import com.juanpa.nebula.transpiler.ast.declarations.FieldDeclaration;
+import com.juanpa.nebula.transpiler.ast.declarations.ImportDirective;
+import com.juanpa.nebula.transpiler.ast.expressions.*;
+import com.juanpa.nebula.transpiler.ast.statements.*;
+import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.lexer.TokenType;
+import com.juanpa.nebula.transpiler.util.ErrorReporter;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * The NebulaParser is responsible for performing syntactic analysis.
+ * It takes a list of tokens from the lexer and attempts to build an
+ * Abstract Syntax Tree (AST) based on the Nebula language grammar.
+ * This parser uses a recursive-descent approach.
+ */
+public class NebulaParser
+{
+	private final List<Token> tokens; // The list of tokens from the lexer
+	private final ErrorReporter errorReporter; // For reporting parsing errors
+	private int current = 0; // Current position in the token list
+
+	/**
+	 * Constructs a NebulaParser.
+	 *
+	 * @param tokens        The list of tokens produced by the lexer.
+	 * @param errorReporter An instance of ErrorReporter for handling parsing errors.
+	 */
+	public NebulaParser(List<Token> tokens, ErrorReporter errorReporter)
+	{
+		this.tokens = tokens;
+		this.errorReporter = errorReporter;
+	}
+
+	/**
+	 * Starts the parsing process for the entire Nebula program.
+	 *
+	 * @return The root of the parsed AST (a Program node), or null if parsing fails significantly.
+	 */
+	public Program parse()
+	{
+		Program program = new Program();
+		while(!isAtEnd())
+		{
+			try
+			{
+				// Prioritize parsing 'import' directives before namespace declarations
+				if(check(TokenType.IMPORT) || check(TokenType.GLOBAL) || check(TokenType.STATIC))
+				{
+					// Need to peek ahead to differentiate `global static` from `global` or `static`
+					int tempCurrent = current;
+					List<Token> potentialModifiers = new ArrayList<>();
+					while(check(tempCurrent, TokenType.GLOBAL) || check(tempCurrent, TokenType.STATIC))
+					{
+						potentialModifiers.add(tokens.get(tempCurrent));
+						tempCurrent++;
+					}
+					if(check(tempCurrent, TokenType.IMPORT))
+					{
+						program.addImportDirective(importDirective());
+						continue; // Successfully parsed an import directive, continue loop
+					}
+				}
+
+				// If it's not an 'import' directive, try to parse as a namespace declaration
+				if(check(TokenType.NAMESPACE))
+				{
+					program.addNamespace(namespaceDeclaration());
+				}
+				else
+				{
+					// If it's neither an 'import' directive nor a namespace declaration, it's an error
+					error(peek(), "Expected an 'import' directive or a namespace declaration at the top level.");
+					synchronize();
+				}
+			}
+			catch(SyntaxError e)
+			{
+				// Error already reported, try to synchronize and continue parsing.
+				synchronize();
+			}
+		}
+		return program;
+	}
+
+	/**
+	 * Parses an 'import' directive.
+	 * Grammar: `(GLOBAL | STATIC)* IMPORT QUALIFIED_NAME ;`
+	 *
+	 * @return An ImportDirective AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private ImportDirective importDirective() throws SyntaxError
+	{
+		List<Token> modifiers = new ArrayList<>();
+		// Parse 'global' and 'static' modifiers (can be in any order)
+		while(check(TokenType.GLOBAL) || check(TokenType.STATIC))
+		{
+			modifiers.add(advance());
+		}
+
+		Token importKeyword = consume(TokenType.IMPORT, "Expected 'import' keyword.");
+		Expression qualifiedNameExpr = qualifiedName();
+		consume(TokenType.SEMICOLON, "Expected ';' after 'import' directive.");
+
+		return new ImportDirective(modifiers, importKeyword, qualifiedNameExpr);
+	}
+
+
+	/**
+	 * Parses a qualified name (e.g., `Com.MyCompany.App`).
+	 * Grammar: `IDENTIFIER (DOT IDENTIFIER)*`
+	 *
+	 * @return An Expression representing the qualified name (e.g., a chain of DotExpressions).
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private Expression qualifiedName() throws SyntaxError
+	{
+		Expression namePart = new IdentifierExpression(consume(TokenType.IDENTIFIER, "Expected identifier for qualified name."));
+
+		while(match(TokenType.DOT))
+		{
+			Token dotToken = previous();
+			Token rightPart = consume(TokenType.IDENTIFIER, "Expected identifier after '.'.");
+			namePart = new DotExpression(namePart, dotToken, rightPart);
+		}
+		return namePart;
+	}
+
+	/**
+	 * Parses a namespace declaration.
+	 * Grammar: `NAMESPACE QUALIFIED_NAME { (CLASS_DECLARATION | ...)* }`
+	 *
+	 * @return A NamespaceDeclaration AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private NamespaceDeclaration namespaceDeclaration() throws SyntaxError
+	{
+		consume(TokenType.NAMESPACE, "Expected 'namespace' keyword.");
+		Expression namespaceNameExpr = qualifiedName(); // This will be a chain of DotExpressions/IdentifierExpression
+
+		consume(TokenType.LEFT_BRACE, "Expected '{' after namespace name.");
+
+		// Pass the Expression directly to the NamespaceDeclaration constructor.
+		// NamespaceDeclaration constructor now correctly expects an Expression.
+		NamespaceDeclaration namespaceDecl = new NamespaceDeclaration(namespaceNameExpr);
+
+		while(check(TokenType.CLASS) && !isAtEnd())
+		{
+			namespaceDecl.addClass(classDeclaration());
+		}
+
+		consume(TokenType.RIGHT_BRACE, "Expected '}' after namespace body.");
+		return namespaceDecl;
+	}
+
+	/**
+	 * Parses a class declaration.
+	 * Grammar: `CLASS IDENTIFIER { (METHOD_DECLARATION | FIELD_DECLARATION | ...)* }`
+	 *
+	 * @return A ClassDeclaration AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private ClassDeclaration classDeclaration() throws SyntaxError
+	{
+		consume(TokenType.CLASS, "Expected 'class' keyword.");
+		Token className = consume(TokenType.IDENTIFIER, "Expected class name.");
+		consume(TokenType.LEFT_BRACE, "Expected '{' after class name.");
+
+		ClassDeclaration classDecl = new ClassDeclaration(className);
+
+		while(!check(TokenType.RIGHT_BRACE) && !isAtEnd())
+		{
+			List<Token> modifiers = new ArrayList<>();
+			// Add CONST modifier to be parsed for class members
+			while(check(TokenType.PUBLIC) || check(TokenType.PRIVATE) || check(TokenType.STATIC) || check(TokenType.CONST))
+			{
+				modifiers.add(advance());
+			}
+
+			// --- REFINED LOGIC TO DISTINGUISH CONSTRUCTOR VS METHOD VS FIELD ---
+			// Peek at the token after modifiers:
+			Token nextTokenAfterModifiers = peek();
+
+
+			// Case 1: Constructor - Identifier matches class name, then '('
+			if(nextTokenAfterModifiers.getType() == TokenType.IDENTIFIER &&
+					nextTokenAfterModifiers.getLexeme().equals(className.getLexeme()) &&
+					check(1, TokenType.LEFT_PAREN))
+			{
+				classDecl.addConstructor(constructorDeclaration(modifiers, className));
+			}
+			// Case 2: Method - A type token (primitive or identifier for custom type), then an identifier (method name), then '('
+			else if(isTypeToken(nextTokenAfterModifiers.getType()) &&
+					check(1, TokenType.IDENTIFIER) &&
+					check(2, TokenType.LEFT_PAREN))
+			{
+				classDecl.addMethod(methodDeclaration(modifiers));
+			}
+			// Case 3: Field Declaration - A type token, followed by an IDENTIFIER, and then a SEMICOLON or ASSIGN.
+			// It's a field if it's a type, then an identifier, AND the *next* token (after the identifier) is NOT '('.
+			else if(isTypeToken(nextTokenAfterModifiers.getType()) &&
+					check(1, TokenType.IDENTIFIER) &&
+					!check(2, TokenType.LEFT_PAREN) &&
+					(check(2, TokenType.SEMICOLON) || check(2, TokenType.ASSIGN)))
+			{
+				classDecl.addField(fieldDeclaration(modifiers));
+			}
+			else
+			{
+				// If it's not a known declaration start, it's an error.
+				error(peek(), "Expected method, constructor, or field declaration inside class.");
+				synchronize();
+			}
+		}
+
+		consume(TokenType.RIGHT_BRACE, "Expected '}' after class body.");
+		return classDecl;
+	}
+
+	/**
+	 * Parses a constructor declaration.
+	 * Grammar: `(MODIFIERS)* CLASS_NAME ( (TYPE IDENTIFIER)* ) BLOCK_STATEMENT`
+	 *
+	 * @param modifiers      List of modifier tokens (e.g., public, private) already consumed.
+	 * @param classNameToken The token representing the name of the class (for constructor name validation).
+	 * @return A ConstructorDeclaration AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private ConstructorDeclaration constructorDeclaration(List<Token> modifiers, Token classNameToken) throws SyntaxError
+	{
+		// Consume the constructor name, which must match the class name
+		Token constructorName = consume(TokenType.IDENTIFIER, "Expected constructor name (must match class name).");
+
+		// This check is implicitly handled by the `if` condition in `classDeclaration` now,
+		// but it's good to keep for robustness or if the parser structure changes.
+		if(!constructorName.getLexeme().equals(classNameToken.getLexeme()))
+		{
+			errorReporter.report(constructorName.getLine(), constructorName.getColumn(),
+					"Constructor name '" + constructorName.getLexeme() + "' does not match class name '" + classNameToken.getLexeme() + "'.");
+			throw new SyntaxError();
+		}
+
+		consume(TokenType.LEFT_PAREN, "Expected '(' after constructor name.");
+
+		List<Token> parameters = new ArrayList<>();
+		if(!check(TokenType.RIGHT_PAREN))
+		{ // Check if there are parameters
+			do
+			{
+				parameters.add(consume(new TokenType[]{
+						TokenType.INT, TokenType.STRING_KEYWORD, TokenType.BOOL, TokenType.FLOAT,
+						TokenType.DOUBLE, TokenType.BYTE, TokenType.CHAR, TokenType.IDENTIFIER // VOID is not a valid parameter type
+				}, "Expected parameter type."));
+				parameters.add(consume(TokenType.IDENTIFIER, "Expected parameter name."));
+			}
+			while(match(TokenType.COMMA));
+		}
+
+		consume(TokenType.RIGHT_PAREN, "Expected ')' after parameters.");
+
+		BlockStatement body = blockStatement(); // Parse the constructor body
+		return new ConstructorDeclaration(modifiers, constructorName, parameters, body);
+	}
+
+
+	/**
+	 * Parses a method declaration.
+	 * Grammar: `(MODIFIERS)* TYPE IDENTIFIER ( (TYPE IDENTIFIER)* ) BLOCK_STATEMENT`
+	 *
+	 * @param modifiers List of modifier tokens (e.g., public, static) already consumed.
+	 * @return A MethodDeclaration AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private MethodDeclaration methodDeclaration(List<Token> modifiers) throws SyntaxError
+	{
+		Token returnType = advance(); // Consume the return type (VOID, INT, STRING_KEYWORD, CHAR etc. or IDENTIFIER)
+		Token methodName = consume(TokenType.IDENTIFIER, "Expected method name.");
+		consume(TokenType.LEFT_PAREN, "Expected '(' after method name.");
+
+		List<Token> parameters = new ArrayList<>();
+		if(!check(TokenType.RIGHT_PAREN))
+		{
+			do
+			{
+				parameters.add(consume(new TokenType[]{
+						TokenType.INT, TokenType.STRING_KEYWORD, TokenType.BOOL, TokenType.FLOAT,
+						TokenType.DOUBLE, TokenType.BYTE, TokenType.VOID, TokenType.CHAR, TokenType.IDENTIFIER
+				}, "Expected parameter type."));
+				parameters.add(consume(TokenType.IDENTIFIER, "Expected parameter name."));
+			}
+			while(match(TokenType.COMMA));
+		}
+
+		consume(TokenType.RIGHT_PAREN, "Expected ')' after parameters.");
+
+		BlockStatement body = blockStatement(); // Parse the method body
+		return new MethodDeclaration(modifiers, returnType, methodName, parameters, body);
+	}
+
+	/**
+	 * Parses a field declaration.
+	 * Grammar: `(MODIFIERS)* TYPE IDENTIFIER (= EXPRESSION)? ;`
+	 *
+	 * @param modifiers List of modifier tokens for the field.
+	 * @return A FieldDeclaration AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private FieldDeclaration fieldDeclaration(List<Token> modifiers) throws SyntaxError
+	{
+		Token type = advance(); // Consume the type token
+		Token name = consume(TokenType.IDENTIFIER, "Expected field name.");
+
+		Expression initializer = null;
+		if(match(TokenType.ASSIGN))
+		{
+			initializer = expression(); // Parse the initializer expression
+		}
+
+		consume(TokenType.SEMICOLON, "Expected ';' after field declaration.");
+		return new FieldDeclaration(modifiers, type, name, initializer); // Pass modifiers
+	}
+
+
+	/**
+	 * Parses a block of statements enclosed in curly braces.
+	 * Grammar: `{ STATEMENT* }`
+	 *
+	 * @return A BlockStatement AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private BlockStatement blockStatement() throws SyntaxError
+	{
+		consume(TokenType.LEFT_BRACE, "Expected '{' before block statement.");
+		List<Statement> statements = new ArrayList<>(); // Create a list to hold statements
+
+		while(!check(TokenType.RIGHT_BRACE) && !isAtEnd())
+		{
+			statements.add(statement()); // Parse individual statements
+		}
+
+		consume(TokenType.RIGHT_BRACE, "Expected '}' after block statement.");
+		return new BlockStatement(statements); // Pass the list of statements to the constructor
+	}
+
+	/**
+	 * Parses a single statement.
+	 * This method acts as a dispatcher for different statement types.
+	 *
+	 * @return A Statement AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private Statement statement() throws SyntaxError
+	{
+		// Add explicit handling for block statements
+		if(check(TokenType.LEFT_BRACE))
+		{
+			return blockStatement();
+		}
+
+		// Parse modifiers for variable declarations that appear as statements
+		List<Token> modifiers = new ArrayList<>();
+		while(check(TokenType.CONST) || check(TokenType.PUBLIC) || check(TokenType.PRIVATE) || check(TokenType.STATIC))
+		{
+			modifiers.add(advance());
+		}
+
+		// Handle explicit variable declarations (primitive types, 'string', 'char', and 'var')
+		if(check(TokenType.VAR, TokenType.INT, TokenType.STRING_KEYWORD, TokenType.BOOL, TokenType.FLOAT, TokenType.DOUBLE, TokenType.BYTE, TokenType.CHAR))
+		{
+			Token typeToken = advance(); // Consume the type token
+			return variableDeclarationStatement(modifiers, typeToken);
+		}
+
+		// Handle user-defined type declarations (IDENTIFIER followed by IDENTIFIER)
+		// This must come *before* the general expressionStatement() to distinguish variable declarations
+		// from other expressions starting with an IDENTIFIER (like method calls, assignments).
+		// We check `!check(2, TokenType.LEFT_PAREN)` to avoid mistaking `SomeClass()` (a constructor call)
+		// or `someMethodCall()` for a variable declaration.
+		if(check(TokenType.IDENTIFIER) && check(1, TokenType.IDENTIFIER) && !check(2, TokenType.LEFT_PAREN))
+		{
+			Token typeToken = advance(); // Consume the type token.
+			return variableDeclarationStatement(modifiers, typeToken);
+		}
+
+		if(match(TokenType.IF))
+		{
+			return ifStatement();
+		}
+		if(match(TokenType.WHILE))
+		{
+			return whileStatement();
+		}
+		if(match(TokenType.FOR))
+		{
+			return forStatement();
+		}
+		if(match(TokenType.RETURN))
+		{
+			return returnStatement();
+		}
+		if(match(TokenType.SWITCH))
+		{ // Added SWITCH statement
+			return switchStatement();
+		}
+
+		// If none of the above, it must be an expression statement
+		// If modifiers were collected but not used for a variable declaration, clear them.
+		if(!modifiers.isEmpty())
+		{
+			errorReporter.report(peek().getLine(), peek().getColumn(), "Modifiers are only allowed on declarations (variables, fields, methods).");
+		}
+		return expressionStatement();
+	}
+
+	/**
+	 * Parses an if-else statement.
+	 * Grammar: `IF ( EXPRESSION ) BLOCK_STATEMENT (ELSE STATEMENT)?`
+	 *
+	 * @return An IfStatement AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private IfStatement ifStatement() throws SyntaxError
+	{
+		consume(TokenType.LEFT_PAREN, "Expected '(' after 'if'.");
+		Expression condition = expression(); // Parse the condition expression
+		consume(TokenType.RIGHT_PAREN, "Expected ')' after if condition.");
+
+		BlockStatement thenBranch = blockStatement(); // Parse the 'then' block
+
+		Statement elseBranch = null;
+		if(match(TokenType.ELSE))
+		{
+			// Allow 'else' to be followed by any statement, including another 'if' statement
+			elseBranch = statement();
+		}
+		// IfStatement constructor now correctly takes 'Statement' for elseBranch.
+		return new IfStatement(condition, thenBranch, elseBranch);
+	}
+
+	/**
+	 * Parses a while loop statement.
+	 * Grammar: `WHILE ( EXPRESSION ) BLOCK_STATEMENT`
+	 *
+	 * @return A WhileStatement AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private WhileStatement whileStatement() throws SyntaxError
+	{
+		consume(TokenType.LEFT_PAREN, "Expected '(' after 'while'.");
+		Expression condition = expression();
+		consume(TokenType.RIGHT_PAREN, "Expected ')' after while condition.");
+
+		BlockStatement body = blockStatement();
+		return new WhileStatement(condition, body);
+	}
+
+	/**
+	 * Parses a for loop statement.
+	 * Grammar: `FOR ( (VAR_DECL | EXPR_STMT | ;) EXPR_STMT ; (EXPRESSION)? ) BLOCK_STATEMENT`
+	 * A more robust for loop would parse:
+	 * `for ( (variableDeclaration | expressionStatement | ';') expression? ';' expression? ) statement`
+	 * For simplicity, this will parse: `for ( VAR_DECL_OR_EXPR ; CONDITION ; INCREMENT ) BLOCK_STATEMENT`
+	 *
+	 * @return A ForStatement AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private ForStatement forStatement() throws SyntaxError
+	{
+		consume(TokenType.LEFT_PAREN, "Expected '(' after 'for'.");
+
+		Statement initializer = null;
+		List<Token> initializerModifiers = new ArrayList<>(); // To capture modifiers for initializer
+
+		// If it's a variable declaration, parse its modifiers
+		// Modifiers for local variable declarations (like 'const')
+		while(check(TokenType.CONST) || check(TokenType.PUBLIC) || check(TokenType.PRIVATE) || check(TokenType.STATIC))
+		{
+			// Note: public/private/static are usually not allowed on local vars, but parser collects them.
+			// Semantic analyzer will enforce this.
+			initializerModifiers.add(advance());
+		}
+
+		if(match(TokenType.SEMICOLON))
+		{
+			// No initializer
+		}
+		// Check for primitive types or 'string' or 'char' keywords
+		else if(check(TokenType.VAR, TokenType.INT, TokenType.STRING_KEYWORD, TokenType.BOOL, TokenType.FLOAT, TokenType.DOUBLE, TokenType.BYTE, TokenType.CHAR))
+		{
+			Token typeToken = advance(); // Consume the type token *after* modifiers are parsed
+			initializer = variableDeclarationStatement(initializerModifiers, typeToken);
+		}
+		// Check for user-defined types
+		else if(check(TokenType.IDENTIFIER) && check(1, TokenType.IDENTIFIER) && !check(2, TokenType.LEFT_PAREN))
+		{
+			Token typeToken = advance(); // Consume the type token.
+			initializer = variableDeclarationStatement(initializerModifiers, typeToken);
+		}
+		else
+		{
+			// If no declaration starts with a modifier or known type, it's an expression statement.
+			// No modifiers apply to expression statements.
+			initializerModifiers.clear(); // Clear any collected modifiers if not a variable declaration
+			initializer = expressionStatement();
+		}
+
+		Expression condition = null;
+		if(!check(TokenType.SEMICOLON))
+		{
+			condition = expression();
+		}
+		consume(TokenType.SEMICOLON, "Expected ';' after for loop condition.");
+
+		Expression increment = null;
+		if(!check(TokenType.RIGHT_PAREN))
+		{
+			increment = expression();
+		}
+		consume(TokenType.RIGHT_PAREN, "Expected ')' after for loop clauses.");
+
+		BlockStatement body = blockStatement();
+		return new ForStatement(initializer, condition, increment, body);
+	}
+
+
+	/**
+	 * Parses a return statement.
+	 * Grammar: `RETURN (EXPRESSION)? ;`
+	 *
+	 * @return A ReturnStatement AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private ReturnStatement returnStatement() throws SyntaxError
+	{
+		Token returnKeyword = previous(); // 'return' token
+		Expression value = null;
+		// Check if there's an expression to return (e.g., `return 10;` vs `return;`)
+		// Ensure it's not a semicolon immediately after 'return'
+		if(!check(TokenType.SEMICOLON))
+		{
+			value = expression();
+		}
+		consume(TokenType.SEMICOLON, "Expected ';' after return statement.");
+		return new ReturnStatement(returnKeyword, value);
+	}
+
+	/**
+	 * Parses a variable declaration statement. This is the entry point
+	 * from `statement()` when modifiers are parsed *before* the type token.
+	 * <p>
+	 * Grammar: `(MODIFIERS)* (TYPE | VAR) IDENTIFIER (= EXPRESSION)? ;`
+	 *
+	 * @return A VariableDeclarationStatement AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	// This method is called from statement() and assumes modifiers are already parsed
+	private VariableDeclarationStatement variableDeclarationStatement(List<Token> modifiers, Token typeToken) throws SyntaxError
+	{
+		// The type token (VAR, INT, etc.) has already been consumed by the `match` or `check` call
+		// in `statement()` or `forStatement()`, and passed as `typeToken`.
+		Token name = consume(TokenType.IDENTIFIER, "Expected variable name.");
+
+		Expression initializer = null;
+		if(match(TokenType.ASSIGN))
+		{
+			initializer = expression(); // Parse the initializer expression
+		}
+
+		consume(TokenType.SEMICOLON, "Expected ';' after variable declaration.");
+		return new VariableDeclarationStatement(modifiers, typeToken, name, initializer); // Pass modifiers
+	}
+
+
+	/**
+	 * Parses an expression statement.
+	 * Grammar: `EXPRESSION ;`
+	 *
+	 * @return An ExpressionStatement AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private ExpressionStatement expressionStatement() throws SyntaxError
+	{
+		Expression expr = expression();
+		consume(TokenType.SEMICOLON, "Expected ';' after expression.");
+		return new ExpressionStatement(expr);
+	}
+
+	/**
+	 * Parses an expression based on operator precedence.
+	 * This is a chain of methods, each handling a lower precedence level.
+	 * Order of precedence (highest to lowest, then left-associativity):
+	 * Assignment -> Logical OR -> Logical AND -> Equality -> Comparison -> Additive -> Multiplicative -> Unary -> Call/Member Access/Postfix -> Primary
+	 *
+	 * @return The parsed Expression AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private Expression expression() throws SyntaxError
+	{
+		return assignment(); // Start with assignment, which has lowest precedence among these.
+	}
+
+	/**
+	 * Parses an assignment expression.
+	 * Grammar: `(IDENTIFIER | CALL | DOT_EXPRESSION) (= | += | -= | *= | /= | %=) EXPRESSION`
+	 *
+	 * @return An AssignmentExpression AST node or a lower precedence expression.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private Expression assignment() throws SyntaxError
+	{
+		// Parse the left-hand side, which must be a valid assignable target (identifier, property, etc.)
+		Expression expr = or(); // Lower precedence expressions are parsed first
+
+		// Check for all assignment operators
+		if(match(TokenType.ASSIGN, TokenType.PLUS_ASSIGN, TokenType.MINUS_ASSIGN, TokenType.STAR_ASSIGN, TokenType.SLASH_ASSIGN, TokenType.MODULO_ASSIGN))
+		{
+			Token operator = previous(); // This correctly captures the '=', '+=', '*=' etc.
+			Expression value = assignment(); // Parse the right-hand side, recursively for right-associativity
+
+			// The left-hand side must be an assignable expression
+			if(expr instanceof IdentifierExpression || expr instanceof DotExpression)
+			{
+				return new AssignmentExpression(expr, operator, value); // Pass all three arguments
+			}
+			else
+			{
+				errorReporter.report(operator.getLine(), operator.getColumn(), "Invalid assignment target.");
+				throw new SyntaxError();
+			}
+		}
+		// If no assignment operator, simply return the expression parsed by 'or()'
+		return expr;
+	}
+
+
+	private Expression or() throws SyntaxError
+	{
+		Expression expr = and(); // Left operand is higher precedence (AND)
+
+		while(match(TokenType.PIPE_PIPE))
+		{ // Check for '||'
+			Token operator = previous();
+			Expression right = and(); // Right operand is also higher precedence (AND)
+			expr = new BinaryExpression(expr, operator, right);
+		}
+		return expr;
+	}
+
+	private Expression and() throws SyntaxError
+	{
+		Expression expr = equality(); // Left operand is higher precedence (Equality)
+
+		while(match(TokenType.AMPERSAND_AMPERSAND))
+		{ // Check for '&&'
+			Token operator = previous();
+			Expression right = equality(); // Right operand is also higher precedence (Equality)
+			expr = new BinaryExpression(expr, operator, right);
+		}
+		return expr;
+	}
+
+	private Expression equality() throws SyntaxError
+	{
+		Expression expr = comparison(); // Left operand is higher precedence (Comparison)
+
+		while(match(TokenType.BANG_EQUAL, TokenType.EQUAL_EQUAL))
+		{ // Check for '!=' or '=='
+			Token operator = previous();
+			Expression right = comparison(); // Right operand is also higher precedence (Comparison)
+			expr = new BinaryExpression(expr, operator, right);
+		}
+		return expr;
+	}
+
+	private Expression comparison() throws SyntaxError
+	{
+		Expression expr = additive(); // Left operand is higher precedence (Additive)
+
+		while(match(TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL))
+		{ // Check for '>', '>=', '<', '<='
+			Token operator = previous();
+			Expression right = additive(); // Right operand is also higher precedence (Additive)
+			expr = new BinaryExpression(expr, operator, right);
+		}
+		return expr;
+	}
+
+	private Expression additive() throws SyntaxError
+	{
+		Expression expr = multiplicative(); // Left operand is higher precedence (Multiplicative)
+
+		while(match(TokenType.MINUS, TokenType.PLUS))
+		{ // Check for '+' or '-'
+			Token operator = previous();
+			Expression right = multiplicative(); // Right operand is also higher precedence (Multiplicative)
+			expr = new BinaryExpression(expr, operator, right);
+		}
+		return expr;
+	}
+
+	private Expression multiplicative() throws SyntaxError
+	{
+		Expression expr = unary(); // Left operand is higher precedence (Unary)
+
+		while(match(TokenType.SLASH, TokenType.STAR, TokenType.MODULO)) // Added MODULO
+		{ // Check for '/', '*' or '%'
+			Token operator = previous();
+			Expression right = unary(); // Right operand is also higher precedence (Multiplicative)
+			expr = new BinaryExpression(expr, operator, right);
+		}
+		return expr;
+	}
+
+	/**
+	 * Parses unary expressions (e.g., `-x`, `!isTrue`, `++i`, `--j`).
+	 * Grammar: `(UNARY_OPERATOR)* CALL`
+	 *
+	 * @return A UnaryExpression AST node or a higher precedence expression.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private Expression unary() throws SyntaxError
+	{
+		// Handle prefix unary operators: !, -, ++, --
+		if(match(TokenType.BANG, TokenType.MINUS, TokenType.PLUS_PLUS, TokenType.MINUS_MINUS))
+		{
+			Token operator = previous();
+			// For prefix increment/decrement, the operand itself must be assignable.
+			// However, since unary() calls itself recursively for the right side,
+			// the actual assignability check will happen later during semantic analysis,
+			// or if `call()` determines it's not assignable for a postfix operation.
+			Expression right = unary(); // Unary operators are right-associative, so recurse
+			return new UnaryExpression(operator, right);
+		}
+		return call(); // If no unary operator, parse the next higher precedence: call/member access/postfix
+	}
+
+	/**
+	 * Handles method calls, member access (dot operator), and postfix unary operators.
+	 * This method is left-associative for chaining.
+	 * Grammar: `PRIMARY ( ( . IDENTIFIER ) | ( ( ARGUMENTS ) ) | ( ++ | -- ) )*`
+	 *
+	 * @return The parsed Expression AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private Expression call() throws SyntaxError
+	{
+		Expression expr = primary(); // Start with the most basic expression
+
+		while(true)
+		{
+			if(match(TokenType.DOT))
+			{
+				// Handle member access (e.g., System.Console.WriteLine)
+				Token dot = previous();
+				Token memberName = consume(TokenType.IDENTIFIER, "Expected identifier after '.'.");
+				expr = new DotExpression(expr, dot, memberName);
+			}
+			else if(check(TokenType.LEFT_PAREN))
+			{ // Don't `match` yet, so `paren` token is correctly captured
+				// Handle function/method call
+				Token paren = advance(); // Consume the opening parenthesis
+				List<Expression> arguments = new ArrayList<>();
+				if(!check(TokenType.RIGHT_PAREN))
+				{ // Check if there are arguments
+					do
+					{
+						arguments.add(expression()); // Parse argument expressions
+					}
+					while(match(TokenType.COMMA));
+				}
+				consume(TokenType.RIGHT_PAREN, "Expected ')' after arguments.");
+				expr = new CallExpression(expr, paren, arguments);
+			}
+			else if(match(TokenType.PLUS_PLUS, TokenType.MINUS_MINUS))
+			{ // Handle postfix ++ and --
+				Token operator = previous();
+				// The operand for postfix increment/decrement must be an assignable expression (identifier or dot expression)
+				if(expr instanceof IdentifierExpression || expr instanceof DotExpression)
+				{
+					expr = new PostfixUnaryExpression(expr, operator);
+				}
+				else
+				{
+					errorReporter.report(operator.getLine(), operator.getColumn(), "Invalid target for postfix increment/decrement operator. Must be a variable or property.");
+					throw new SyntaxError();
+				}
+			}
+			else
+			{
+				break; // No more call, dot, or postfix expressions
+			}
+		}
+		return expr;
+	}
+
+	/**
+	 * Parses a primary expression.
+	 * Currently handles: integer literals, string literals, boolean literals,
+	 * identifiers, 'this', 'new', and grouped expressions (parenthesized expressions).
+	 *
+	 * @return The parsed Expression AST node.
+	 * @throws SyntaxError if an unexpected token is encountered.
+	 */
+	private Expression primary() throws SyntaxError
+	{
+		Token token = peek();
+		switch(token.getType())
+		{
+			case INTEGER_LITERAL:
+			case STRING_LITERAL:
+			case CHAR_LITERAL:
+			case BOOLEAN_LITERAL:
+			case FLOAT_LITERAL:
+			case DOUBLE_LITERAL:
+				return new LiteralExpression(advance().getLiteral(), token);
+			case IDENTIFIER:
+				return new IdentifierExpression(advance());
+			case THIS: // Handle 'this' keyword
+				return new ThisExpression(advance());
+			case NEW: // Handle 'new' keyword
+				Token newKeyword = advance();
+				Expression classNameExpr = qualifiedName(); // New could be `new MyClass()` or `new Com.MyCompany.MyClass()`
+				List<Expression> arguments = new ArrayList<>(); // Initialize arguments list
+
+				if(check(TokenType.LEFT_PAREN))
+				{
+					Token paren = advance(); // Consume '('
+					if(!check(TokenType.RIGHT_PAREN))
+					{ // Check for arguments
+						do
+						{
+							arguments.add(expression()); // Parse argument expressions
+						}
+						while(match(TokenType.COMMA));
+					}
+					consume(TokenType.RIGHT_PAREN, "Expected ')' after new expression arguments.");
+				}
+				return new NewExpression(newKeyword, classNameExpr, arguments);
+			case LEFT_PAREN:
+				advance(); // Consume '('
+				Expression expr = expression(); // Parse the inner expression
+				consume(TokenType.RIGHT_PAREN, "Expected ')' after expression.");
+				return expr; // Return the inner expression
+			default:
+				throw error(peek(), "Expected expression.");
+		}
+	}
+
+	/**
+	 * Consumes the current token if its type matches any of the given types.
+	 *
+	 * @param types The TokenType(s) to match against.
+	 * @return True if a match was found and the token was consumed, false otherwise.
+	 */
+	private boolean match(TokenType... types)
+	{
+		for(TokenType type : types)
+		{
+			if(check(type))
+			{
+				advance();
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Checks if the current token is of the expected type without consuming it.
+	 * If not, it reports a syntax error and throws a SyntaxError.
+	 *
+	 * @param type    The expected TokenType.
+	 * @param message The error message to report if the type doesn't match.
+	 * @return The consumed Token if it matches the expected type.
+	 * @throws SyntaxError if the current token's type does not match the expected type.
+	 */
+	private Token consume(TokenType type, String message) throws SyntaxError
+	{
+		if(check(type))
+		{
+			return advance();
+		}
+		throw error(peek(), message);
+	}
+
+	/**
+	 * Overloaded consume method to check for multiple expected types.
+	 *
+	 * @param types   The expected TokenTypes.
+	 * @param message The error message to report if the type doesn't match.
+	 * @return The consumed Token if it matches one of the expected types.
+	 * @throws SyntaxError if the current token's type does not match any of the expected types.
+	 */
+	private Token consume(TokenType[] types, String message) throws SyntaxError
+	{
+		for(TokenType type : types)
+		{
+			if(check(type))
+			{
+				return advance();
+			}
+		}
+		throw error(peek(), message);
+	}
+
+	/**
+	 * Checks if the current token's type matches any of the given types.
+	 *
+	 * @param types The TokenType(s) to check against.
+	 * @return True if the current token matches any of the types, false otherwise.
+	 */
+	private boolean check(TokenType... types)
+	{
+		if(isAtEnd())
+			return false; // EOF doesn't match any specific type unless explicitly checked
+		TokenType currentType = peek().getType();
+		for(TokenType type : types)
+		{
+			if(currentType == type)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Helper method to check a token type at a given offset from the current position.
+	 *
+	 * @param offset The offset from the current token (0 for current, 1 for next, etc.)
+	 * @param type   The TokenType to check for.
+	 * @return True if the token at the offset exists and matches the type, false otherwise.
+	 */
+	private boolean check(int offset, TokenType type)
+	{
+		// Ensure we don't try to access beyond the end of the token list
+		if(current + offset >= tokens.size())
+		{
+			return false;
+		}
+		Token tokenAtOffset = tokens.get(current + offset);
+		boolean matches = tokenAtOffset.getType() == type;
+		return matches;
+	}
+
+
+	/**
+	 * Helper method to determine if a TokenType represents a valid type (e.g., int, String, custom class, or 'var').
+	 *
+	 * @param type The TokenType to check.
+	 * @return True if the type is a valid data type (including 'var'), false otherwise.
+	 */
+	private boolean isTypeToken(TokenType type)
+	{
+		return type == TokenType.VOID || type == TokenType.STRING_KEYWORD || type == TokenType.INT ||
+				type == TokenType.BOOL || type == TokenType.FLOAT || type == TokenType.DOUBLE ||
+				type == TokenType.BYTE || type == TokenType.CHAR || type == TokenType.IDENTIFIER || type == TokenType.VAR;
+	}
+
+	/**
+	 * Consumes the current token and returns it.
+	 *
+	 * @return The consumed Token.
+	 */
+	private Token advance()
+	{
+		if(!isAtEnd())
+			current++;
+		return previous();
+	}
+
+	/**
+	 * Looks at the current token without consuming it.
+	 *
+	 * @return The current Token.
+	 */
+	private Token peek()
+	{
+		return tokens.get(current);
+	}
+
+	/**
+	 * Looks at the previous token (the one just consumed).
+	 *
+	 * @return The previous Token.
+	 */
+	private Token previous()
+	{
+		return tokens.get(current - 1);
+	}
+
+	/**
+	 * Checks if the parser has reached the end of the token stream.
+	 *
+	 * @return True if at the end, false otherwise.
+	 */
+	private boolean isAtEnd()
+	{
+		return peek().getType() == TokenType.EOF;
+	}
+
+	/**
+	 * Reports a parsing error and creates a SyntaxError.
+	 *
+	 * @param token   The token where the error occurred.
+	 * @param message The error message.
+	 * @return A new SyntaxError instance.
+	 */
+	private SyntaxError error(Token token, String message)
+	{
+		errorReporter.report(token.getLine(), token.getColumn(), message);
+		return new SyntaxError();
+	}
+
+	/**
+	 * Attempts to synchronize the parser after an error to continue parsing.
+	 * This method skips tokens until it finds a likely synchronization point
+	 * (e.g., a semicolon, or the start of a new declaration/statement keyword).
+	 */
+	private void synchronize()
+	{
+		advance(); // Advance past the error-causing token
+
+		while(!isAtEnd())
+		{
+			if(previous().getType() == TokenType.SEMICOLON)
+				return; // Semicolon is a good synchronization point
+			// Added this to improve synchronization within blocks/classes
+			if(peek().getType() == TokenType.RIGHT_BRACE)
+			{
+				advance(); // Consume the '}'
+				return;
+			}
+
+			switch(peek().getType())
+			{
+				case CLASS:
+				case NAMESPACE: // Added namespace as a sync point
+				case PUBLIC:
+				case PRIVATE:
+				case STATIC:
+				case IF:
+				case FOR:
+				case WHILE:
+				case RETURN:
+				case IMPORT:
+				case GLOBAL:
+				case SWITCH: // Added SWITCH as a sync point
+				case CASE:   // Added CASE as a sync point
+				case DEFAULT:// Added DEFAULT as a sync point
+					return; // Start of a new statement/declaration
+				default:
+					// Keep advancing
+			}
+			advance();
+		}
+	}
+
+	/**
+	 * Custom exception for handling parsing errors.
+	 * This is an unchecked exception, used internally by the parser
+	 * to unwind the stack when a syntax error is found.
+	 */
+	private static class SyntaxError extends RuntimeException
+	{
+		// No special fields or constructors needed for this basic error type
+	}
+
+	/**
+	 * Parses a switch statement.
+	 * Grammar: `SWITCH ( EXPRESSION ) { ( CASE CONSTANT_EXPRESSION : STATEMENT* )* ( DEFAULT : STATEMENT* )? }`
+	 *
+	 * @return A SwitchStatement AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private SwitchStatement switchStatement() throws SyntaxError
+	{
+		Token switchKeyword = previous(); // Capture the 'switch' token
+		consume(TokenType.LEFT_PAREN, "Expected '(' after 'switch'.");
+		Expression switchExpr = expression(); // The expression to switch on
+		consume(TokenType.RIGHT_PAREN, "Expected ')' after switch expression.");
+		consume(TokenType.LEFT_BRACE, "Expected '{' for switch body.");
+
+		List<SwitchCase> cases = new ArrayList<>();
+		BlockStatement defaultBlock = null;
+
+		while(!check(TokenType.RIGHT_BRACE) && !isAtEnd())
+		{
+			if(match(TokenType.CASE))
+			{
+				cases.add(switchCase());
+			}
+			else if(match(TokenType.DEFAULT))
+			{
+				if(defaultBlock != null)
+				{
+					error(previous(), "A 'default' clause is already defined in this switch statement.");
+				}
+				Token defaultKeyword = previous(); // Capture the 'default' token
+				consume(TokenType.COLON, "Expected ':' after 'default' keyword.");
+				// Parse the default body. It can be a list of statements.
+				List<Statement> defaultBodyStatements = new ArrayList<>();
+				while(!check(TokenType.CASE) && !check(TokenType.DEFAULT) && !check(TokenType.RIGHT_BRACE) && !isAtEnd())
+				{
+					defaultBodyStatements.add(statement());
+				}
+				defaultBlock = new BlockStatement(defaultBodyStatements); // Wrap statements in a BlockStatement
+			}
+			else
+			{
+				error(peek(), "Expected 'case' or 'default' keyword within a switch statement.");
+				synchronize();
+			}
+		}
+		consume(TokenType.RIGHT_BRACE, "Expected '}' to close the switch statement.");
+		return new SwitchStatement(switchKeyword, switchExpr, cases, defaultBlock);
+	}
+
+	/**
+	 * Parses a single 'case' clause within a switch statement.
+	 * Grammar: `CASE CONSTANT_EXPRESSION : STATEMENT*`
+	 *
+	 * @return A SwitchCase AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private SwitchCase switchCase() throws SyntaxError
+	{
+		Token caseKeyword = previous(); // Capture the 'case' token
+		Expression caseValue = expression(); // The constant expression for the case
+		consume(TokenType.COLON, "Expected ':' after 'case' value.");
+
+		// Statements within a case can be one or more, until the next case, default, or end of switch.
+		List<Statement> caseBodyStatements = new ArrayList<>();
+		while(!check(TokenType.CASE) && !check(TokenType.DEFAULT) && !check(TokenType.RIGHT_BRACE) && !isAtEnd())
+		{
+			caseBodyStatements.add(statement());
+		}
+		return new SwitchCase(caseKeyword, caseValue, caseBodyStatements);
+	}
+}
+
+
+--- End of Listing ---

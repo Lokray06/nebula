@@ -1,0 +1,193 @@
+--- Directory Tree for: sdk ---
+Located at: /home/juanpa/dev/java/nebula/sdk
+
+/home/juanpa/dev/java/nebula/sdk
+└── nebula
+    ├── core
+    │   ├── Object.neb
+    │   └── String.neb
+    ├── Main.neb
+    └── system
+        └── Console.neb
+
+4 directories, 4 files
+
+--- File Contents (Recursive) ---
+.vscode/settings.json:
+[AND the contents]
+{
+    "files.associations": {
+        "iostream": "cpp"
+    }
+}
+nebula/system/Console.neb:
+[AND the contents]
+import nebula.core.Object;
+
+namespace nebula.io
+{
+    class Console
+    {
+        //All these should be compiled as a wrapper of sdt::cout 
+        public static void print(Object anything) { /* ... */ }
+        public static void print(string anyString) { /* ... */ }
+        public static void print(char character) { /* ... */ }
+        public static void print(int number) { /* ... */ }
+        public static void print(bool booleanValue) { /* ... */ }
+        public static void print(float floatValue) { /* ... */ }
+        public static void print(double doubleValue) { /* ... */ }
+
+        //All these should be compiled as a wrapper of sdt::cout std::endl
+        public static void println(Object anything) { /* ... */ }
+        public static void println(string anyString) { /* ... */ }
+        public static void println(char character) { /* ... */ }
+        public static void println(int number) { /* ... */ }
+        public static void println(bool booleanValue) { /* ... */ }
+        public static void println(float floatValue) { /* ... */ }
+        public static void println(double doubleValue) { /* ... */ }
+    }
+}
+nebula/Main.neb:
+[AND the contents]
+import nebula.io.Console;
+import nebula.core.Object; // Add this line
+
+namespace Program
+{
+    class Test
+    {
+        static void main()
+        {
+            Object testObject = new Object();
+            Console.print("Hello from Nebula!");
+            Console.println(testObject.toString());
+
+            int b = 1;
+            int a = b;
+
+            a++;
+            a -= 2;
+            a %= 2;
+
+            Console.print(someFunc(a)+a);
+            Console.print(true);
+            Console.print(5>2);          
+            someFunc(2);  
+        }
+
+        static int someFunc(int a)
+        {
+            if(a >1)
+            {
+                Console.println("true");
+                //Can not retrurn
+            }
+            else
+            {
+                return -1;
+            }
+        }
+    }
+}
+
+nebula/core/Object.neb:
+[AND the contents]
+namespace nebula.core
+{
+    // The root of all Nebula classes. All classes implicitly inherit from Object.
+    class Object
+    {
+        public bool operator==(Object other)
+        {
+            if(other is Object)//is is a keyword that compares the types of both objects
+            {
+                return this == other; // Default reference comparison
+            }
+        }
+
+        public string hashCode()
+        {
+            return "0"; // Return the actual hashcode (maybe the instance's memory address)
+        }
+
+        public string toString()
+        {
+            return hashCode(); //The default implementation is this, but can be overriden
+        }
+    }
+}
+
+nebula/core/String.neb:
+[AND the contents]
+namespace nebula.core
+{
+    // Represents an immutable sequence of characters.
+    // Maps to std::shared_ptr<String> in C++.
+    class String
+    {
+        // Default constructor
+        public String()
+        {
+            // Initializes an empty string.
+            // The C++ transpilation should map this to String::String()
+        }
+
+        // Constructor from a character array (conceptual)
+        // This might not be directly exposed in Nebula, but handled internally.
+        // public String(char[] chars) { }
+
+        // Constructor from another String (copy constructor equivalent)
+        public String(String other)
+        {
+            // In C++, this would be a copy construction or assignment.
+        }
+
+        // Returns the length of the string.
+        public int length()
+        {
+            // This will map to std::string::length() or size() in C++.
+            return 0; // Placeholder
+        }
+
+        // Concatenates this string with another string.
+        public String operator+(String other)
+        {
+            // This will map to std::string::operator+ or a custom append in C++.
+            return new String(); // Placeholder
+        }
+
+        // Provides character access by index.
+        /*
+        public char operator[](int index)
+        {
+            // This will map to std::string::operator[] in C++.
+            return '\0'; // Placeholder for null character
+        }
+        */
+
+        // Overrides Object's equals method for value comparison.
+        public bool operator==(string other)
+        {
+            if(other is string)
+            {
+                return this == other;
+            }
+        }
+
+        // Overrides Object's toString method.
+        public string toString()
+        {
+            // Returns the string itself.
+            return this;
+        }
+
+        // Overrides Object's hashCode method for string content.
+        public int hashCode()
+        {
+            // In C++, this would compute a hash based on the string's content.
+            return 0; // Placeholder
+        }
+    }
+}
+
+--- End of Listing ---

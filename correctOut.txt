@@ -1,0 +1,238 @@
+// Translation of Nebula SDK Core Classes to C++
+
+// ===== File: nebula/core/Object.h =====
+#ifndef NEBULA_CORE_OBJECT_H
+#define NEBULA_CORE_OBJECT_H
+
+#include <memory>
+#include <string>
+#include <sstream>
+#include "nebula/core/String.h"
+
+namespace nebula {
+namespace core {
+
+class Object {
+public:
+    virtual ~Object() = default;
+
+    virtual bool operator==(const std::shared_ptr<Object>& other);
+    virtual std::shared_ptr<String> hashCode() const;
+    virtual std::shared_ptr<String> toString() const;
+};
+
+} // namespace core
+} // namespace nebula
+
+#endif // NEBULA_CORE_OBJECT_H
+
+
+// ===== File: nebula/core/Object.cpp =====
+#include "Object.h"
+#include <sstream>
+
+namespace nebula {
+namespace core {
+
+bool Object::operator==(const std::shared_ptr<Object>& other) {
+    if (!other) return false;
+    return this == other.get();
+}
+
+std::shared_ptr<String> Object::hashCode() const {
+    std::stringstream ss;
+    ss << reinterpret_cast<const void*>(this);
+    return std::make_shared<String>(ss.str());
+}
+
+std::shared_ptr<String> Object::toString() const {
+    return hashCode();
+}
+
+} // namespace core
+} // namespace nebula
+
+
+// ===== File: nebula/core/String.h =====
+#ifndef NEBULA_CORE_STRING_H
+#define NEBULA_CORE_STRING_H
+
+#include <memory>
+#include <string>
+#include "nebula/core/Object.h"
+
+namespace nebula {
+namespace core {
+
+class String : public Object {
+private:
+    std::string _data;
+
+public:
+    String();
+    String(const std::string& raw);
+    String(const std::shared_ptr<String>& other);
+
+    int length() const;
+    std::shared_ptr<String> operator+(const std::shared_ptr<String>& other);
+    bool equals(const std::shared_ptr<Object>& other);
+    std::shared_ptr<String> toString() const override;
+    std::shared_ptr<String> hashCode() const override;
+
+    const std::string& raw() const { return _data; }
+};
+
+} // namespace core
+} // namespace nebula
+
+#endif // NEBULA_CORE_STRING_H
+
+
+// ===== File: nebula/core/String.cpp =====
+#include "String.h"
+#include <functional>
+
+namespace nebula {
+namespace core {
+
+String::String() : _data("") {}
+
+String::String(const std::string& raw) : _data(raw) {}
+
+String::String(const std::shared_ptr<String>& other)
+    : _data(other ? other->_data : "") {}
+
+int String::length() const {
+    return static_cast<int>(_data.length());
+}
+
+std::shared_ptr<String> String::operator+(const std::shared_ptr<String>& other) {
+    return std::make_shared<String>(_data + (other ? other->_data : ""));
+}
+
+bool String::equals(const std::shared_ptr<Object>& other) {
+    auto str = std::dynamic_pointer_cast<String>(other);
+    return str && _data == str->_data;
+}
+
+std::shared_ptr<String> String::toString() const {
+    return std::make_shared<String>(_data);
+}
+
+std::shared_ptr<String> String::hashCode() const {
+    return std::make_shared<String>(std::to_string(std::hash<std::string>{}(_data)));
+}
+
+} // namespace core
+} // namespace nebula
+
+
+// ===== File: nebula/io/Console.h =====
+#ifndef NEBULA_IO_CONSOLE_H
+#define NEBULA_IO_CONSOLE_H
+
+#include <memory>
+#include "nebula/core/Object.h"
+#include "nebula/core/String.h"
+
+namespace nebula {
+namespace io {
+
+class Console {
+public:
+    static void print(const std::shared_ptr<core::Object>& anything);
+    static void print(const std::shared_ptr<core::String>& str);
+    static void print(char character);
+    static void print(int number);
+    static void print(bool booleanValue);
+    static void print(float floatValue);
+    static void print(double doubleValue);
+
+    static void println(const std::shared_ptr<core::Object>& anything);
+    static void println(const std::shared_ptr<core::String>& str);
+    static void println(char character);
+    static void println(int number);
+    static void println(bool booleanValue);
+    static void println(float floatValue);
+    static void println(double doubleValue);
+};
+
+} // namespace io
+} // namespace nebula
+
+#endif // NEBULA_IO_CONSOLE_H
+
+
+// ===== File: nebula/io/Console.cpp =====
+#include "Console.h"
+#include <iostream>
+
+namespace nebula {
+namespace io {
+
+void Console::print(const std::shared_ptr<core::Object>& anything) {
+    if (anything)
+        std::cout << anything->toString()->raw();
+    else
+        std::cout << "null";
+}
+
+void Console::print(const std::shared_ptr<core::String>& str) {
+    if (str)
+        std::cout << str->raw();
+    else
+        std::cout << "null";
+}
+
+void Console::print(char character) {
+    std::cout << character;
+}
+
+void Console::print(int number) {
+    std::cout << number;
+}
+
+void Console::print(bool booleanValue) {
+    std::cout << (booleanValue ? "true" : "false");
+}
+
+void Console::print(float floatValue) {
+    std::cout << floatValue;
+}
+
+void Console::print(double doubleValue) {
+    std::cout << doubleValue;
+}
+
+void Console::println(const std::shared_ptr<core::Object>& anything) {
+    print(anything);
+    std::cout << std::endl;
+}
+
+void Console::println(const std::shared_ptr<core::String>& str) {
+    print(str);
+    std::cout << std::endl;
+}
+
+void Console::println(char character) {
+    std::cout << character << std::endl;
+}
+
+void Console::println(int number) {
+    std::cout << number << std::endl;
+}
+
+void Console::println(bool booleanValue) {
+    std::cout << (booleanValue ? "true" : "false") << std::endl;
+}
+
+void Console::println(float floatValue) {
+    std::cout << floatValue << std::endl;
+}
+
+void Console::println(double doubleValue) {
+    std::cout << doubleValue << std::endl;
+}
+
+} // namespace io
+} // namespace nebula
