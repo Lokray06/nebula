@@ -21,6 +21,7 @@ public enum TokenType
 	DEFAULT, // Added for switch statement
 	IS, //For type checking
 	SUPER, // NEW: Added for super constructor calls
+	ALIAS, // NEW: Added for alias declarations
 
 	// --- Identifiers ---
 	IDENTIFIER,

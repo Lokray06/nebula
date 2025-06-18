@@ -13,7 +13,7 @@ public class ArrayAccessExpression implements Expression
 	private final Expression index; // The expression representing the index
 	private final Token rightBracket; // The ']' token
 	private Symbol resolvedSymbol;
-	private Type resolvedType; // NEW: Field for resolved type
+	private Type resolvedType; // This will be set by the SemanticAnalyzer
 
 	public ArrayAccessExpression(Expression array, Expression index, Token rightBracket)
 	{
@@ -63,14 +63,15 @@ public class ArrayAccessExpression implements Expression
 		resolvedSymbol = symbol;
 	}
 
-	// NEW: Implementation for getResolvedType()
 	@Override
-	public Type getResolvedType() {
+	public Type getResolvedType()
+	{
 		return resolvedType;
 	}
 
-	// Setter for resolved type
-	public void setResolvedType(Type resolvedType) {
+	// Setter for resolved type, to be called by the Semantic Analyzer
+	public void setResolvedType(Type resolvedType)
+	{
 		this.resolvedType = resolvedType;
 	}
 }

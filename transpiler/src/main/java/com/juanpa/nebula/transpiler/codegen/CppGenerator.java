@@ -515,7 +515,17 @@ public class CppGenerator implements ASTVisitor<String>
 		// Methods
 		for(MethodDeclaration method : declaration.getMethods())
 		{
-			boolean isStatic = method.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.STATIC);
+			// --- START OF MODIFICATION ---
+
+			// Get the resolved symbol from the semantic analysis pass. This is CRUCIAL.
+			MethodSymbol resolvedMethodSymbol = method.getResolvedSymbol();
+			if(resolvedMethodSymbol == null)
+			{
+				error(method.getName(), "Internal codegen error: Method symbol not resolved for '" + method.getName().getLexeme() + "'. Cannot generate header declaration.");
+				continue;
+			}
+
+			boolean isStatic = resolvedMethodSymbol.isStatic();
 			String modifiers = isStatic ? "static " : "";
 
 			// Determine if a method is overriding a base class method
@@ -547,8 +557,15 @@ public class CppGenerator implements ASTVisitor<String>
 				modifiers += "virtual ";
 			}
 
-			String returnType = toCppType(resolveTypeFromToken(method.getReturnType()));
-			String methodName = method.getName().getLexeme();
+
+			// Use the resolved type from the symbol for accuracy.
+			String returnType = toCppType(resolvedMethodSymbol.getType());
+
+			// *** THIS IS THE KEY FIX: Use the mangled name if it exists. ***
+			String methodName = resolvedMethodSymbol.getMangledName() != null
+					? resolvedMethodSymbol.getMangledName()
+					: resolvedMethodSymbol.getName();
+
 			if(method.getOperatorKeyword() != null)
 				methodName = "operator" + methodName;
 
@@ -978,10 +995,22 @@ public class CppGenerator implements ASTVisitor<String>
 
 		for(MethodDeclaration method : declaration.getMethods())
 		{
+			// Ensure the method declaration in the AST has its resolved symbol from semantic analysis
+			if(method.getResolvedSymbol() == null)
+			{
+				// This indicates a problem in the semantic analysis setup.
+				// For now, we'll try to look it up, but ideally, it should be pre-set.
+				continue; // Skip methods that weren't resolved.
+			}
 			this.currentMethodSymbol = method.getResolvedSymbol();
 
 			String returnType = toCppType(resolveTypeFromToken(method.getReturnType()));
-			String methodName = method.getName().getLexeme();
+
+			// NEW: Use mangled name if available
+			String methodName = this.currentMethodSymbol.getMangledName() != null
+					? this.currentMethodSymbol.getMangledName()
+					: this.currentMethodSymbol.getName();
+
 			if(method.getOperatorKeyword() != null)
 				methodName = "operator" + methodName;
 
@@ -1173,11 +1202,42 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitCallExpression(CallExpression expr)
 	{
-		String callee = expr.getCallee().accept(this);
 		String args = expr.getArguments().stream()
 				.map(arg -> arg.accept(this))
 				.collect(Collectors.joining(", "));
-		return callee + "(" + args + ")";
+
+		Symbol resolvedSymbol = expr.getCallee().getResolvedSymbol();
+		if(!(resolvedSymbol instanceof MethodSymbol))
+		{
+			// Fallback or error for when the resolved symbol isn't a method
+			return expr.getCallee().accept(this) + "(" + args + ")";
+		}
+
+		MethodSymbol resolvedMethod = (MethodSymbol) resolvedSymbol;
+		String calleeString;
+
+		// NEW: Reconstruct the call to use the mangled name
+		String methodName = resolvedMethod.getMangledName() != null
+				? resolvedMethod.getMangledName()
+				: resolvedMethod.getName();
+
+		if(expr.getCallee() instanceof IdentifierExpression)
+		{
+			calleeString = methodName;
+		}
+		else if(expr.getCallee() instanceof DotExpression)
+		{
+			DotExpression dot = (DotExpression) expr.getCallee();
+			String left = dot.getLeft().accept(this);
+			String separator = resolvedMethod.isStatic() ? "::" : "->";
+			calleeString = left + separator + methodName;
+		}
+		else
+		{
+			calleeString = expr.getCallee().accept(this); // Fallback
+		}
+
+		return calleeString + "(" + args + ")";
 	}
 
 	@Override
