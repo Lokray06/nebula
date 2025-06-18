@@ -38,6 +38,12 @@ public class NebulaParser
 	private String currentNamespaceFqn = ""; // Initialized to empty string for global scope
 	String[] words = new String[2];
 
+	private record TypeSpecifier(
+			Token baseType,
+			int rank)
+	{
+	}
+
 	/**
 	 * Constructs a NebulaParser.
 	 *
@@ -46,7 +52,6 @@ public class NebulaParser
 	 */
 	public NebulaParser(List<Token> tokens, ErrorReporter errorReporter)
 	{
-		System.out.println(words.length);
 		this.errorReporter = errorReporter;
 		this.tokens = preprocessTokensForAliases(tokens);
 	}
@@ -62,55 +67,75 @@ public class NebulaParser
 	 * @param originalTokens The raw token stream from the lexer.
 	 * @return A new token stream with aliases resolved.
 	 */
-	private List<Token> preprocessTokensForAliases(List<Token> originalTokens) {
+	private List<Token> preprocessTokensForAliases(List<Token> originalTokens)
+	{
 		Map<String, List<Token>> discoveredAliases = new HashMap<>();
 		List<Token> nonAliasTokens = new ArrayList<>();
 		int cursor = 0;
 
 		// Pass 1: Discover all aliases and collect non-alias tokens.
-		while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.EOF) {
-			if (originalTokens.get(cursor).getType() == TokenType.ALIAS) {
+		while(cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.EOF)
+		{
+			if(originalTokens.get(cursor).getType() == TokenType.ALIAS)
+			{
 				Token aliasKeyword = originalTokens.get(cursor++);
 
-				if (cursor >= originalTokens.size() || originalTokens.get(cursor).getType() != TokenType.IDENTIFIER) {
+				if(cursor >= originalTokens.size() || originalTokens.get(cursor).getType() != TokenType.IDENTIFIER)
+				{
 					errorReporter.report(aliasKeyword.getLine(), aliasKeyword.getColumn(), "Expected an identifier for the alias name after 'alias' keyword.");
 					// Skip until semicolon to recover
-					while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON) cursor++;
-					if (cursor < originalTokens.size()) cursor++; // skip semicolon
+					while(cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON)
+						cursor++;
+					if(cursor < originalTokens.size())
+						cursor++; // skip semicolon
 					continue;
 				}
 				Token aliasName = originalTokens.get(cursor++);
 
 				List<Token> replacement = new ArrayList<>();
 				int replacementStartCursor = cursor;
-				while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON) {
+				while(cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON)
+				{
 					Token part = originalTokens.get(cursor);
-					if (part.getType() != TokenType.IDENTIFIER && part.getType() != TokenType.DOT) {
+					if(part.getType() != TokenType.IDENTIFIER && part.getType() != TokenType.DOT)
+					{
 						errorReporter.report(part.getLine(), part.getColumn(), "Alias replacement can only consist of identifiers and dots.");
 						// Invalidate this alias and skip to semicolon
 						replacement.clear();
-						while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON) cursor++;
+						while(cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON)
+							cursor++;
 						break;
 					}
 					replacement.add(part);
 					cursor++;
 				}
 
-				if (cursor < originalTokens.size() && originalTokens.get(cursor).getType() == TokenType.SEMICOLON) {
+				if(cursor < originalTokens.size() && originalTokens.get(cursor).getType() == TokenType.SEMICOLON)
+				{
 					cursor++; // consume ';'
-					if (replacement.isEmpty() && replacementStartCursor == cursor-1) { // Check if replacement part was empty
+					if(replacement.isEmpty() && replacementStartCursor == cursor - 1)
+					{ // Check if replacement part was empty
 						errorReporter.report(aliasName.getLine(), aliasName.getColumn(), "Alias replacement cannot be empty.");
-					} else if (!replacement.isEmpty()) {
-						if (discoveredAliases.containsKey(aliasName.getLexeme())) {
+					}
+					else if(!replacement.isEmpty())
+					{
+						if(discoveredAliases.containsKey(aliasName.getLexeme()))
+						{
 							errorReporter.report(aliasName.getLine(), aliasName.getColumn(), "Alias '" + aliasName.getLexeme() + "' is already defined.");
-						} else {
+						}
+						else
+						{
 							discoveredAliases.put(aliasName.getLexeme(), replacement);
 						}
 					}
-				} else {
+				}
+				else
+				{
 					errorReporter.report(aliasKeyword.getLine(), aliasKeyword.getColumn(), "Malformed alias declaration, expected ';'.");
 				}
-			} else {
+			}
+			else
+			{
 				nonAliasTokens.add(originalTokens.get(cursor));
 				cursor++;
 			}
@@ -118,10 +143,13 @@ public class NebulaParser
 
 		// Pass 2: Replace aliases in the collected tokens.
 		List<Token> finalTokens = new ArrayList<>();
-		for (Token token : nonAliasTokens) {
-			if (token.getType() == TokenType.IDENTIFIER && discoveredAliases.containsKey(token.getLexeme())) {
+		for(Token token : nonAliasTokens)
+		{
+			if(token.getType() == TokenType.IDENTIFIER && discoveredAliases.containsKey(token.getLexeme()))
+			{
 				List<Token> replacementTokens = discoveredAliases.get(token.getLexeme());
-				for (Token replacementToken : replacementTokens) {
+				for(Token replacementToken : replacementTokens)
+				{
 					// Create a new token to carry over the position info of the original alias usage
 					finalTokens.add(new Token(
 							replacementToken.getType(),
@@ -131,13 +159,16 @@ public class NebulaParser
 							token.getColumn() // Column info is approximate for expanded aliases
 					));
 				}
-			} else {
+			}
+			else
+			{
 				finalTokens.add(token);
 			}
 		}
 
 		// Add the EOF token at the end
-		if (!originalTokens.isEmpty()) {
+		if(!originalTokens.isEmpty())
+		{
 			finalTokens.add(originalTokens.get(originalTokens.size() - 1));
 		}
 
@@ -260,9 +291,12 @@ public class NebulaParser
 		String previousNamespaceFqn = this.currentNamespaceFqn; // Save previous FQN
 
 		// Update currentNamespaceFqn for nested parsing
-		if (this.currentNamespaceFqn.isEmpty()) {
+		if(this.currentNamespaceFqn.isEmpty())
+		{
 			this.currentNamespaceFqn = newNamespaceSegment;
-		} else {
+		}
+		else
+		{
 			this.currentNamespaceFqn += "." + newNamespaceSegment;
 		}
 
@@ -299,10 +333,14 @@ public class NebulaParser
 	 * Helper to get the fully qualified name string from an Expression (Identifier or DotExpression).
 	 * This is useful for building the 'currentNamespaceFqn' string.
 	 */
-	private String getExpressionFQN(Expression expr) {
-		if (expr instanceof IdentifierExpression) {
+	private String getExpressionFQN(Expression expr)
+	{
+		if(expr instanceof IdentifierExpression)
+		{
 			return ((IdentifierExpression) expr).getName().getLexeme();
-		} else if (expr instanceof DotExpression) {
+		}
+		else if(expr instanceof DotExpression)
+		{
 			DotExpression dotExpr = (DotExpression) expr;
 			return getExpressionFQN(dotExpr.getLeft()) + "." + dotExpr.getMemberName().getLexeme();
 		}
@@ -339,7 +377,7 @@ public class NebulaParser
 	 * Parses a class declaration, including its name, optional superclass, and members.
 	 * Grammar: (MODIFIERS)* 'class' IDENTIFIER ('extends' IDENTIFIER)? '{' (MEMBERS)* '}'
 	 *
-	 * @param modifiers The list of modifiers (public, private, static, const) for the class.
+	 * @param modifiers           The list of modifiers (public, private, static, const) for the class.
 	 * @param containingNamespace The fully qualified name of the namespace this class is declared within.
 	 * @return A ClassDeclaration AST node.
 	 * @throws SyntaxError if a syntax error occurs.
@@ -645,10 +683,14 @@ public class NebulaParser
 
 		if(isTypeToken(peek().getType()))
 		{
-			if(check(1, TokenType.IDENTIFIER) && !check(2, TokenType.LEFT_PAREN))
+			int lookahead = 1;
+			while(check(lookahead, TokenType.LEFT_BRACKET))
 			{
-				Token typeToken = advance();
-				return variableDeclarationStatement(modifiers, typeToken);
+				lookahead += 2; // Skip past a "[]"
+			}
+			if(check(lookahead, TokenType.IDENTIFIER))
+			{
+				return variableDeclarationStatement(modifiers);
 			}
 		}
 
@@ -656,7 +698,6 @@ public class NebulaParser
 		{
 			return constructorChainingCallStatement();
 		}
-
 		if(match(TokenType.IF))
 		{
 			return ifStatement();
@@ -787,30 +828,17 @@ public class NebulaParser
 		consume(TokenType.LEFT_PAREN, "Expected '(' after 'for'.");
 
 		Statement initializer = null;
-		List<Token> initializerModifiers = new ArrayList<>();
-
-		while(check(TokenType.CONST) || check(TokenType.PUBLIC) || check(TokenType.PRIVATE) || check(TokenType.STATIC))
-		{
-			initializerModifiers.add(advance());
-		}
-
 		if(match(TokenType.SEMICOLON))
 		{
 			// No initializer
 		}
-		else if(check(TokenType.VAR, TokenType.INT, TokenType.STRING_KEYWORD, TokenType.BOOL, TokenType.FLOAT, TokenType.DOUBLE, TokenType.BYTE, TokenType.CHAR))
+		else if(isTypeToken(peek().getType()))
 		{
-			Token typeToken = advance();
-			initializer = variableDeclarationStatement(initializerModifiers, typeToken);
-		}
-		else if(check(TokenType.IDENTIFIER) && check(1, TokenType.IDENTIFIER) && !check(2, TokenType.LEFT_PAREN))
-		{
-			Token typeToken = advance();
-			initializer = variableDeclarationStatement(initializerModifiers, typeToken);
+			// **FIXED**: Call variableDeclarationStatement with only modifiers
+			initializer = variableDeclarationStatement(new ArrayList<>());
 		}
 		else
 		{
-			initializerModifiers.clear();
 			initializer = expressionStatement();
 		}
 
@@ -861,20 +889,18 @@ public class NebulaParser
 	 * @return A VariableDeclarationStatement AST node.
 	 * @throws SyntaxError if a syntax error occurs.
 	 */
-	private VariableDeclarationStatement variableDeclarationStatement(List<Token> modifiers, Token typeToken) throws SyntaxError
+	private VariableDeclarationStatement variableDeclarationStatement(List<Token> modifiers) throws SyntaxError
 	{
+		TypeSpecifier typeSpec = parseTypeSpecifier();
 		Token name = consume(TokenType.IDENTIFIER, "Expected variable name.");
-
 		Expression initializer = null;
 		if(match(TokenType.ASSIGN))
 		{
 			initializer = expression();
 		}
-
 		consume(TokenType.SEMICOLON, "Expected ';' after variable declaration.");
-		return new VariableDeclarationStatement(modifiers, typeToken, name, initializer);
+		return new VariableDeclarationStatement(modifiers, typeSpec.baseType(), typeSpec.rank(), name, initializer);
 	}
-
 
 	/**
 	 * Parses an expression statement.
@@ -1104,35 +1130,68 @@ public class NebulaParser
 
 	/**
 	 * Parses the most basic expressions: literals, identifiers, 'this', parenthesized expressions, and 'new' expressions.
-	 * Grammar: `LITERAL | IDENTIFIER | THIS | ( EXPRESSION ) | NEW_EXPRESSION`
+	 * Grammar: `LITERAL | IDENTIFIER | THIS | ( EXPRESSION ) | NEW_EXPRESSION | ARRAY_INITIALIZER`
 	 *
 	 * @return The parsed primary Expression AST node.
 	 * @throws SyntaxError if a syntax error occurs.
 	 */
 	private Expression primary() throws SyntaxError
 	{
-		Token token = peek();
-		switch(token.getType())
+		if(match(TokenType.LEFT_BRACE))
 		{
-			case INTEGER_LITERAL:
-			case STRING_LITERAL:
-			case CHAR_LITERAL:
-			case BOOLEAN_LITERAL:
-			case FLOAT_LITERAL:
-			case DOUBLE_LITERAL:
-				Token literalToken = advance();
-				return new LiteralExpression(literalToken.getLiteral(), literalToken);
-			case IDENTIFIER:
-				return new IdentifierExpression(advance());
-			case THIS:
-				return new ThisExpression(advance());
-			case NEW:
-				Token newKeyword = advance();
-				Expression classNameExpr = qualifiedName();
+			Token leftBrace = previous();  // already consumed
+			return arrayInitializer(leftBrace);
+		}
+		if(match(TokenType.INTEGER_LITERAL, TokenType.STRING_LITERAL, TokenType.CHAR_LITERAL, TokenType.BOOLEAN_LITERAL, TokenType.FLOAT_LITERAL, TokenType.DOUBLE_LITERAL, TokenType.NULL))
+		{
+			return new LiteralExpression(previous().getLiteral(), previous());
+		}
+		if(match(TokenType.IDENTIFIER))
+		{
+			return new IdentifierExpression(previous());
+		}
+		if(match(TokenType.THIS))
+		{
+			return new ThisExpression(previous());
+		}
+		if(match(TokenType.NEW))
+		{
+			Token newKeyword = previous();
+			// For 'new' expressions, we'll parse the base type first.
+			// Array creation (e.g., `new int[5]`) will be handled by looking for `[` directly after the type.
+			// Object creation (e.g., `new MyClass()`) will be handled by looking for `(` directly after the type.
 
-				Token leftParen = consume(TokenType.LEFT_PAREN, "Expected '(' after class name in 'new' expression.");
+			// This *advances* the base type (e.g., 'float' in 'new float[1]')
+			Token baseTypeToken = advance();
+
+			if(baseTypeToken == null || !isTypeToken(baseTypeToken.getType()))
+			{
+				throw error(peek(), "Expected a type name after 'new' keyword.");
+			}
+
+			int arrayRankForNew = 0; // This will store the explicit array dimension for 'new Type[size]'
+
+			// Check if it's an array creation like `new float[...]`
+			if(check(TokenType.LEFT_BRACKET))
+			{
+				Token leftBracket = consume(TokenType.LEFT_BRACKET, "Expected '[' for array size in 'new' expression.");
+				Expression sizeExpr = expression();
+				Token rightBracket = consume(TokenType.RIGHT_BRACKET, "Expected ']' after array size in 'new' expression.");
+				arrayRankForNew = 1; // Mark as a 1-dimensional array creation for now
+
+				// You'll need to extend this for multi-dimensional array creation like `new int[5][2]`
+				// while(check(TokenType.LEFT_BRACKET) && check(1, TokenType.RIGHT_BRACKET)) {
+				//     consume(TokenType.LEFT_BRACKET, "Expected '[' for additional array dimension.");
+				//     consume(TokenType.RIGHT_BRACKET, "Expected ']' for additional array dimension.");
+				//     arrayRankForNew++;
+				// }
+
+				return new ArrayCreationExpression(newKeyword, baseTypeToken, arrayRankForNew, sizeExpr);
+			}
+			else if(match(TokenType.LEFT_PAREN))
+			{ // new MyClass(...)
+				Token paren = previous(); // This is the '(' token
 				List<Expression> arguments = new ArrayList<>();
-
 				if(!check(TokenType.RIGHT_PAREN))
 				{
 					do
@@ -1141,18 +1200,25 @@ public class NebulaParser
 					}
 					while(match(TokenType.COMMA));
 				}
-				Token rightParen = consume(TokenType.RIGHT_PAREN, "Expected ')' after new expression arguments.");
-				return new NewExpression(newKeyword, classNameExpr, leftParen, arguments);
-			case LEFT_PAREN:
-				leftParen = advance();
-				Expression expr = expression();
-				consume(TokenType.RIGHT_PAREN, "Expected ')' after expression.");
-				return new GroupingExpression(leftParen, expr);
-			default:
-				throw error(peek(), "Expected expression.");
+				Token rightParen = consume(TokenType.RIGHT_PAREN, "Expected ')' after constructor's arguments.");
+				Expression classNameExpr = new IdentifierExpression(baseTypeToken); // baseTypeToken is the class name
+				return new NewExpression(newKeyword, classNameExpr, paren, arguments);
+			}
+			else
+			{
+				throw error(peek(), "Expected '(' for constructor call or '[' for array creation after 'new' type.");
+			}
 		}
-	}
+		if(match(TokenType.LEFT_PAREN))
+		{
+			Token leftParen = previous();
+			Expression expr = expression();
+			consume(TokenType.RIGHT_PAREN, "Expected ')' after expression.");
+			return new GroupingExpression(leftParen, expr);
+		}
 
+		throw error(peek(), "Expected expression.");
+	}
 
 	/**
 	 * Consumes the current token if its type matches any of the given types.
@@ -1455,5 +1521,62 @@ public class NebulaParser
 			caseBodyStatements.add(statement());
 		}
 		return new SwitchCase(caseKeyword, caseValue, caseBodyStatements);
+	}
+
+	/**
+	 * Parses an array initializer expression, e.g., {1, 2, 3}
+	 *
+	 * @return An ArrayInitializerExpression node.
+	 * @throws SyntaxError if the syntax is incorrect.
+	 */
+	private Expression arrayInitializer(Token leftBrace) throws SyntaxError
+	{
+		List<Expression> elements = new ArrayList<>();
+		if(!check(TokenType.RIGHT_BRACE))
+		{
+			do
+			{
+				elements.add(expression());
+			}
+			while(match(TokenType.COMMA));
+		}
+		consume(TokenType.RIGHT_BRACE, "Expected '}' to end array initializer.");
+		return new ArrayInitializerExpression(leftBrace, elements);
+	}
+
+	/**
+	 * Parses a type specifier. For declarations (e.g., int[] var;), this will consume array brackets.
+	 * For 'new' expressions where the brackets enclose a size (e.g., new int[5]), this should
+	 * only parse the base type, and the array brackets for the size will be parsed separately.
+	 *
+	 * @return A TypeSpecifier record containing the base type token and the array rank.
+	 */
+	private TypeSpecifier parseTypeSpecifier() throws SyntaxError
+	{
+		if(!isTypeToken(peek().getType()))
+		{
+			throw error(peek(), "Expected a type name.");
+		}
+		Token baseType = advance(); // Consume the base type (e.g., int, float, MyClass)
+
+		int rank = 0;
+		// This loop is primarily for declarations like `int[] myArr;` or `MyClass[][] anotherArr;`
+		// For `new MyType[size]`, the brackets for `[size]` are handled separately in primary().
+		while(check(TokenType.LEFT_BRACKET)) // Use check, not match, to decide if it's a type array specifier
+		{
+			// Peek ahead to ensure it's a closing bracket, not an expression bracket.
+			// This is a heuristic and might need refinement for complex cases.
+			if(check(1, TokenType.RIGHT_BRACKET))
+			{
+				advance(); // Consume LEFT_BRACKET
+				advance(); // Consume RIGHT_BRACKET
+				rank++;
+			}
+			else
+			{
+				break; // It's not a type array specifier like `[]`, but possibly `[expression]`
+			}
+		}
+		return new TypeSpecifier(baseType, rank);
 	}
 }

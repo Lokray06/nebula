@@ -54,6 +54,10 @@ public interface ASTVisitor<R>
 
 	R visitSwitchStatement(SwitchStatement statement); // Added for SwitchStatement
 
+	R  visitArrayCreationExpression(ArrayCreationExpression expression);
+
+	R visitArrayInitializerExpression(ArrayInitializerExpression expression);
+
 	R visitSwitchCase(SwitchCase switchCase);         // Added for SwitchCase
 
 	R visitConstructorChainingCallStatement(ConstructorChainingCallStatement statement); // NEW

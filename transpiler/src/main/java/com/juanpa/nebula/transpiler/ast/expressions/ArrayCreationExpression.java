@@ -13,19 +13,26 @@ public class ArrayCreationExpression implements Expression
 {
 	private final Token newKeyword;
 	private final Token typeToken; // The base type of the array elements (e.g., 'int')
+	private final int rank; // The number of dimensions, e.g., 1 for int[], 2 for int[][]
 	private final Expression sizeExpression; // The expression inside the brackets
 	private Type resolvedType;
 
-	public ArrayCreationExpression(Token newKeyword, Token typeToken, Expression sizeExpression)
+	public ArrayCreationExpression(Token newKeyword, Token typeToken, int rank, Expression sizeExpression)
 	{
 		this.newKeyword = newKeyword;
 		this.typeToken = typeToken;
+		this.rank = rank;
 		this.sizeExpression = sizeExpression;
 	}
 
 	public Token getTypeToken()
 	{
 		return typeToken;
+	}
+
+	public int getRank()
+	{
+		return rank;
 	}
 
 	public Expression getSizeExpression()
@@ -36,12 +43,7 @@ public class ArrayCreationExpression implements Expression
 	@Override
 	public <R> R accept(ASTVisitor<R> visitor)
 	{
-		// Assumes a new visitor method is added for this node type
-		// return visitor.visitArrayCreationExpression(this);
-		// As a fallback, we can use a generic method if the visitor interface is not updated yet.
-		// For this implementation, we will assume the visitor has the method.
-		// The SemanticAnalyzer will need to be updated to have visitArrayCreationExpression.
-		return null;
+		return visitor.visitArrayCreationExpression(this);
 	}
 
 	@Override
@@ -56,6 +58,11 @@ public class ArrayCreationExpression implements Expression
 		return resolvedType;
 	}
 
+	/**
+	 * Sets the resolved type of this expression. Called by the SemanticAnalyzer.
+	 *
+	 * @param type The resolved type.
+	 */
 	public void setResolvedType(Type type)
 	{
 		this.resolvedType = type;
@@ -64,7 +71,7 @@ public class ArrayCreationExpression implements Expression
 	@Override
 	public Symbol getResolvedSymbol()
 	{
-		return null; // This expression doesn't resolve to a single symbol
+		return null;
 	}
 
 	@Override
