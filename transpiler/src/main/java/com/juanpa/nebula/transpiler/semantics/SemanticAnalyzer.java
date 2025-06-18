@@ -1,5 +1,4 @@
-// File: src/main/java/com/juanpa.nebula.transpiler/semantics/SemanticAnalyzer.java
-
+// File: src/main/java/com/juanpa/nebula/transpiler/semantics/SemanticAnalyzer.java
 package com.juanpa.nebula.transpiler.semantics;
 
 import com.juanpa.nebula.transpiler.ast.ASTVisitor;
@@ -294,6 +293,30 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	private void error(Token token, String message)
 	{
 		errorReporter.report(token.getLine(), token.getColumn(), "[Semantic Error] " + message);
+	}
+
+	/**
+	 * *** NEW ***
+	 * Helper to resolve a full type specification, including array ranks.
+	 *
+	 * @param typeToken The base type token (e.g., INT, IDENTIFIER).
+	 * @param arrayRank The number of array dimensions (e.g., 1 for int[], 2 for int[][]).
+	 * @return The resolved Type object, which will be an ArrayType if rank > 0.
+	 */
+	private Type resolveType(Token typeToken, int arrayRank)
+	{
+		Type baseType = getTypeFromToken(typeToken);
+		if(baseType instanceof ErrorType)
+		{
+			return ErrorType.INSTANCE;
+		}
+
+		Type currentType = baseType;
+		for(int i = 0; i < arrayRank; i++)
+		{
+			currentType = new ArrayType(currentType);
+		}
+		return currentType;
 	}
 
 	/**
@@ -1070,7 +1093,8 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			if(initializerType instanceof ErrorType)
 				return PrimitiveType.VOID; // Propagate error
 
-			if(!fieldType.isAssignableTo(initializerType)) // Changed from isAssignableFrom to isAssignableTo
+			// *** MODIFIED ***: Corrected assignment check direction.
+			if(!initializerType.isAssignableTo(fieldType))
 			{
 				error(declaration.getName(), "Incompatible types in field initialization: cannot assign '" + initializerType.getName() + "' to '" + fieldType.getName() + "'.");
 			}
@@ -1205,7 +1229,8 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			if(actualReturnType instanceof ErrorType)
 				return ErrorType.INSTANCE;
 
-			if(!expectedReturnType.isAssignableTo(actualReturnType)) // Changed from isAssignableFrom to isAssignableTo
+			// *** MODIFIED ***: Corrected assignment check direction.
+			if(!actualReturnType.isAssignableTo(expectedReturnType))
 			{
 				error(statement.getKeyword(), "Cannot return value of type '" + actualReturnType.getName() + "'. Expected '" + expectedReturnType.getName() + "'.");
 			}
@@ -1216,17 +1241,18 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	@Override
 	public Type visitVariableDeclarationStatement(VariableDeclarationStatement statement)
 	{
-		Type declaredType = null;
+		Type declaredType;
 		if(statement.getTypeToken().getType() == TokenType.VAR)
 		{
-			declaredType = null;
+			declaredType = null; // Type will be inferred
 		}
 		else
 		{
-			declaredType = getTypeFromToken(statement.getTypeToken());
+			// *** MODIFIED ***: Use the new helper to handle array ranks
+			declaredType = resolveType(statement.getTypeToken(), statement.getArrayRank());
 			if(declaredType instanceof ErrorType)
 			{
-				return PrimitiveType.VOID;
+				return PrimitiveType.VOID; // Error already reported
 			}
 			if(declaredType.equals(PrimitiveType.VOID))
 			{
@@ -1256,21 +1282,19 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				declaredType = initializerType;
 			}
 		}
-		else
-		{
-			if(isConstVar)
-			{
-				error(statement.getName(), "Constant variable '" + statement.getName().getLexeme() + "' must be initialized.");
-			}
-		}
 
 		if(statement.getTypeToken().getType() == TokenType.VAR && statement.getInitializer() == null)
 		{
-			error(statement.getTypeToken(), "'var' cannot be used without an initializer.");
-			return PrimitiveType.VOID;
+			error(statement.getTypeToken(), "'var' requires an initializer.");
+			declaredType = ErrorType.INSTANCE;
+		}
+		else if(isConstVar && statement.getInitializer() == null)
+		{
+			error(statement.getName(), "Constant variable '" + statement.getName().getLexeme() + "' must be initialized.");
 		}
 
-		if(declaredType != null && initializerType != null && !declaredType.isAssignableTo(initializerType)) // Changed from isAssignableFrom to isAssignableTo
+		// *** MODIFIED ***: Corrected assignment check direction.
+		if(declaredType != null && initializerType != null && !initializerType.isAssignableTo(declaredType))
 		{
 			error(statement.getName(), "Incompatible types in variable declaration: cannot assign '" + initializerType.getName() + "' to '" + declaredType.getName() + "'.");
 		}
@@ -1535,8 +1559,8 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// If the base is a literal array (e.g., `new int[]{1,2,3}[0] = 5;`), that would be an AST structure
 		// where the base is not a VariableSymbol, and generally array literals are not mutable in this way.
 
-
-		if(!targetType.isAssignableTo(valueType)) // Changed from isAssignableFrom to isAssignableTo
+		// *** MODIFIED ***: Corrected assignment check direction.
+		if(!valueType.isAssignableTo(targetType))
 		{
 			error(expression.getOperator(), "Incompatible types in assignment: cannot assign '" + valueType.getName() + "' to '" + targetType.getName() + "'.");
 			return ErrorType.INSTANCE;
@@ -1575,7 +1599,8 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			{
 				return ErrorType.INSTANCE;
 			}
-			if(!targetType.isAssignableTo(binaryOpResultType)) // Changed from isAssignableFrom to isAssignableTo
+			// *** MODIFIED ***: Corrected assignment check direction.
+			if(!binaryOpResultType.isAssignableTo(targetType))
 			{
 				error(expression.getOperator(), "The result of the compound assignment operation ('" + expression.getOperator().getLexeme() + "') is not assignable back to the target type '" + targetType.getName() + "'.");
 				return ErrorType.INSTANCE;
@@ -1684,6 +1709,24 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		if(leftType instanceof ErrorType)
 		{
 			return ErrorType.INSTANCE;
+		}
+
+		//Handle array.length
+		if(leftType instanceof ArrayType)
+		{
+			String memberName = expression.getMemberName().getLexeme();
+			if(memberName.equals("length"))
+			{
+				// Create a synthetic symbol for 'length' for consistency
+				VariableSymbol lengthSymbol = new VariableSymbol("size", PrimitiveType.INT, expression.getMemberName(), true, true, true, true);
+				expression.setResolvedSymbol(lengthSymbol);
+				return PrimitiveType.INT;
+			}
+			else
+			{
+				error(expression.getMemberName(), "Member '" + memberName + "' not found for array type. Only 'size' is supported.");
+				return ErrorType.INSTANCE;
+			}
 		}
 
 		ClassSymbol containerClassSymbol = null;
@@ -1948,6 +1991,11 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		return PrimitiveType.VOID;
 	}
 
+	/**
+	 * Visits an array access expression (e.g., myArray[i]).
+	 * It checks that the base is an array or string and the index is an integer.
+	 * The resolved type of this expression is the element type of the array.
+	 */
 	@Override
 	public Type visitArrayAccessExpression(ArrayAccessExpression expression)
 	{
@@ -1959,13 +2007,14 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return ErrorType.INSTANCE;
 		}
 
-		Type elementType = null;
+		Type elementType;
 		if(arrayType instanceof ArrayType)
 		{
 			elementType = ((ArrayType) arrayType).getElementType();
 		}
 		else
 		{
+			// Special case: Allow character access on the 'nebula.core.String' class
 			ClassSymbol stringClassSymbol = declaredClasses.get("nebula.core.String");
 			if(stringClassSymbol != null && arrayType.equals(stringClassSymbol.getType()))
 			{
@@ -1978,40 +2027,17 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 		}
 
-		if(!(indexType.equals(PrimitiveType.INT) || indexType.equals(PrimitiveType.BYTE) || indexType.equals(PrimitiveType.CHAR)))
+		// Check if the index type is compatible with 'int'
+		if(!indexType.isCompatibleWith(PrimitiveType.INT))
 		{
-			error(expression.getIndex().getFirstToken(), "Array index must be an integral type (int, byte, or char). Found '" + indexType.getName() + "'.");
+			error(expression.getIndex().getFirstToken(), "Array index must be an integer-compatible type. Found '" + indexType.getName() + "'.");
 			return ErrorType.INSTANCE;
 		}
 
-		// Check initialization status of the array variable/field (if applicable)
-		// This is now done by checking the `resolvedSymbol` of the base expression.
-		Expression baseArray = expression.getArray();
-		Symbol baseArraySymbol = null;
-		if(baseArray instanceof IdentifierExpression)
-		{
-			baseArraySymbol = ((IdentifierExpression) baseArray).getResolvedSymbol();
-		}
-		else if(baseArray instanceof DotExpression)
-		{
-			baseArraySymbol = ((DotExpression) baseArray).getResolvedSymbol();
-		}
-		else if(baseArray instanceof ThisExpression)
-		{ // `this[idx]` should resolve `this`
-			baseArraySymbol = ((ThisExpression) baseArray).getResolvedSymbol();
-		}
-
-		if(baseArraySymbol instanceof VariableSymbol)
-		{
-			VariableSymbol varSymbol = (VariableSymbol) baseArraySymbol;
-			if(!varSymbol.isInitialized())
-			{
-				error(baseArray.getFirstToken(), "Array/String variable '" + varSymbol.getName() + "' might not have been initialized.");
-			}
-		}
-
+		expression.setResolvedType(elementType);
 		return elementType;
 	}
+
 
 	@Override
 	public Type visitGroupingExpression(GroupingExpression expression)
@@ -2048,6 +2074,114 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		return PrimitiveType.BOOL;
+	}
+
+	/**
+	 * Visits an array creation expression (e.g., new int[10]).
+	 * It validates that the size is an integer and resolves the type of the
+	 * expression to the correct ArrayType.
+	 */
+	@Override
+	public Type visitArrayCreationExpression(ArrayCreationExpression expression)
+	{
+		// Resolve the base type (e.g., 'int' in 'new int[10]')
+		Type baseType = getTypeFromToken(expression.getTypeToken());
+		if(baseType instanceof ErrorType)
+		{
+			expression.setResolvedType(ErrorType.INSTANCE);
+			return ErrorType.INSTANCE;
+		}
+
+		// Recursively visit the size expression to ensure it's an integer type
+		Type sizeType = expression.getSizeExpression().accept(this);
+		if(sizeType instanceof ErrorType)
+		{
+			expression.setResolvedType(ErrorType.INSTANCE);
+			return ErrorType.INSTANCE;
+		}
+		if(!sizeType.equals(PrimitiveType.INT))
+		{
+			error(expression.getSizeExpression().getFirstToken(), "Array size expression must be an integer.");
+			expression.setResolvedType(ErrorType.INSTANCE);
+			return ErrorType.INSTANCE;
+		}
+
+		// Construct the ArrayType based on the base type and rank
+		Type arrayType = baseType;
+		for(int i = 0; i < expression.getRank(); i++)
+		{
+			arrayType = new ArrayType(arrayType);
+		}
+		expression.setResolvedType(arrayType);
+		return arrayType;
+	}
+
+	/**
+	 * Visits an array initializer expression (e.g., {1, 2, 3}).
+	 * It infers the array's type from its elements or from the context
+	 * (e.g., the type of the variable it's being assigned to).
+	 */
+	@Override
+	public Type visitArrayInitializerExpression(ArrayInitializerExpression expression)
+	{
+		if(expression.getElements().isEmpty())
+		{
+			// An empty initializer can imply an array of any type.
+			// For now, treat as an error or return a generic "empty array" type if supported.
+			// Or defer type inference until assignment/context.
+			// For simplicity, let's treat it as an error or require explicit typing.
+			// Or return a NullType if it can be assigned to any array type later.
+			// For a robust solution, one might return a special `InferredType` or `UnknownArrayType`.
+			// Here, we'll return an ErrorType, or a `Void` type if it's acceptable.
+			// Given the ASTVisitor<Type> return, returning ErrorType is safer.
+			error(expression.getFirstToken(), "Array initializer cannot be empty without an explicit type context.");
+			expression.setResolvedType(ErrorType.INSTANCE);
+			return ErrorType.INSTANCE;
+		}
+
+		Type commonElementType = null;
+
+		for(Expression element : expression.getElements())
+		{
+			Type elementType = element.accept(this);
+			if(elementType instanceof ErrorType)
+			{
+				expression.setResolvedType(ErrorType.INSTANCE);
+				return ErrorType.INSTANCE;
+			}
+
+			if(commonElementType == null)
+			{
+				commonElementType = elementType;
+			}
+			else
+			{
+				// Ensure all elements are compatible with the common type
+				// This logic might need to be more sophisticated to find a "least common supertype"
+				// For simplicity, checking assignability of subsequent elements to the first one's type.
+				if(!elementType.isAssignableTo(commonElementType) && !commonElementType.isAssignableTo(elementType))
+				{
+					error(element.getFirstToken(), "Array initializer elements have incompatible types: expected '"
+							+ commonElementType.getName() + "', but found '" + elementType.getName() + "'.");
+					expression.setResolvedType(ErrorType.INSTANCE);
+					return ErrorType.INSTANCE;
+				}
+				// If one type is assignable to the other, use the wider type as the common type.
+				if(elementType.isAssignableTo(commonElementType))
+				{
+					// commonElementType remains the wider type.
+				}
+				else if(commonElementType.isAssignableTo(elementType))
+				{
+					commonElementType = elementType; // elementType is wider or same.
+				}
+			}
+		}
+
+		// The resolved type of the ArrayInitializerExpression is an ArrayType of the common element type
+		ArrayType resolvedArrayType = new ArrayType(commonElementType);
+		expression.setResolvedType(resolvedArrayType);
+		return resolvedArrayType;
 	}
 
 	/**
@@ -2258,5 +2392,4 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		error(errorToken, "Ambiguous method call for '" + methodName + "'. Multiple overloads have a return type compatible with '" + this.expectedTypeForNextExpression.getName() + "'.");
 		return returnMatchingMethods.get(0); // Return first for error recovery
 	}
-
 }

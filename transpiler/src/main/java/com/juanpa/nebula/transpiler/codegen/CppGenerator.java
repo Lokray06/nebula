@@ -1,5 +1,4 @@
-// File: src/main/java/com/juanpa.nebula.transpiler/codegen/CppGenerator.java
-
+// File: src/main/java/com/juanpa/nebula/transpiler/codegen/CppGenerator.java
 package com.juanpa.nebula.transpiler.codegen;
 
 import com.juanpa.nebula.transpiler.ast.ASTVisitor;
@@ -11,6 +10,7 @@ import com.juanpa.nebula.transpiler.lexer.Token;
 import com.juanpa.nebula.transpiler.lexer.TokenType;
 import com.juanpa.nebula.transpiler.semantics.*; // Import all semantic types (including VariableSymbol as it represents fields)
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -169,67 +169,77 @@ public class CppGenerator implements ASTVisitor<String>
 		}
 	}
 
-	private Type resolveTypeFromToken(Token typeToken)
+	/**
+	 * *** NEW ***
+	 * Resolves a type from a token and array rank, necessary because the generator
+	 * doesn't have access to the fully resolved types on VariableDeclarationStatements.
+	 */
+	private Type resolveTypeFromToken(Token typeToken, int arrayRank)
 	{
-		if(typeToken == null)
-		{
-			return ErrorType.INSTANCE;
-		}
-
-		// Handle primitive types directly
+		Type baseType;
 		switch(typeToken.getType())
 		{
 			case INT:
-				return PrimitiveType.INT;
+				baseType = PrimitiveType.INT;
+				break;
 			case BOOL:
-				return PrimitiveType.BOOL;
+				baseType = PrimitiveType.BOOL;
+				break;
 			case FLOAT:
-				return PrimitiveType.FLOAT;
+				baseType = PrimitiveType.FLOAT;
+				break;
 			case DOUBLE:
-				return PrimitiveType.DOUBLE;
+				baseType = PrimitiveType.DOUBLE;
+				break;
 			case BYTE:
-				return PrimitiveType.BYTE;
+				baseType = PrimitiveType.BYTE;
+				break;
 			case VOID:
-				return PrimitiveType.VOID;
+				baseType = PrimitiveType.VOID;
+				break;
 			case CHAR:
-				return PrimitiveType.CHAR;
+				baseType = PrimitiveType.CHAR;
+				break;
 			case STRING_KEYWORD:
-				// Special handling for 'string' keyword, mapping to Nebula's String class
-				// Assumes that 'declaredClasses' contains the ClassSymbol for "nebula.core.String"
 				ClassSymbol stringClass = declaredClasses.get("nebula.core.String");
-				if(stringClass != null)
+				baseType = (stringClass != null) ? stringClass.getType() : ErrorType.INSTANCE;
+				break;
+			case IDENTIFIER:
+				// This is a simplified lookup. A more robust implementation would check
+				// current namespace, imports, etc., similar to SemanticAnalyzer.
+				ClassSymbol byFqn = declaredClasses.get(currentNamespacePrefix + "." + typeToken.getLexeme());
+				if(byFqn != null)
 				{
-					return new ClassType("nebula.core.String", stringClass);
+					baseType = byFqn.getType();
 				}
 				else
 				{
-					error(typeToken, "String class (nebula.core.String) not found in declared classes.");
-					return ErrorType.INSTANCE;
+					Optional<ClassSymbol> found = declaredClasses.values().stream()
+							.filter(cs -> cs.getName().equals(typeToken.getLexeme()))
+							.findFirst();
+					baseType = found.map(Symbol::getType).orElse(ErrorType.INSTANCE);
 				}
+				break;
 			default:
-				// For non-primitive types, attempt to resolve from declaredClasses.
-				// First, try a direct lookup by the full lexeme (assuming it might be a FQN in some contexts)
-				ClassSymbol byFqn = declaredClasses.get(typeToken.getLexeme());
-				if(byFqn != null)
-				{
-					return byFqn.getType();
-				}
-
-				// If not found by direct FQN, iterate through declared classes to find a match by simple name
-				// or by ending with the simple name (e.g., "Console" matches "Nebula.System.Console")
-				String simpleName = typeToken.getLexeme(); // Corrected: use getLexeme()
-				for(ClassSymbol classSymbol : declaredClasses.values())
-				{
-					if(classSymbol.getName().equals(simpleName) || classSymbol.getFqn().endsWith("." + simpleName))
-					{
-						return classSymbol.getType();
-					}
-				}
-
-				// If still not found, return ErrorType.
-				error(typeToken, "Could not resolve type '" + typeToken.getLexeme() + "' during C++ generation. Semantic analysis might have missed it or code generation context is insufficient.");
-				return ErrorType.INSTANCE;
+				baseType = ErrorType.INSTANCE;
+				break;
 		}
+
+		if(baseType instanceof ErrorType)
+			return baseType;
+
+		Type currentType = baseType;
+		for(int i = 0; i < arrayRank; i++)
+		{
+			currentType = new ArrayType(currentType);
+		}
+		return currentType;
+	}
+
+	private Type resolveTypeFromToken(Token typeToken)
+	{
+		// Keep the old method for calls that don't involve array ranks.
+		return resolveTypeFromToken(typeToken, 0);
 	}
 
 
@@ -261,7 +271,7 @@ public class CppGenerator implements ASTVisitor<String>
 		}
 		else if(type instanceof ArrayType)
 		{
-			// For arrays, use std::vector. If element is a class, it'll be shared_ptr.
+			// *** MODIFIED ***: Correctly handle nested arrays.
 			ArrayType arrayType = (ArrayType) type;
 			return "std::vector<" + toCppType(arrayType.getElementType()) + ">";
 		}
@@ -308,7 +318,7 @@ public class CppGenerator implements ASTVisitor<String>
 			String paramName = paramNameToken.getLexeme();
 
 			// For Nebula class types, pass shared_ptr by const reference to avoid copying smart pointers
-			if(paramType instanceof ClassType)
+			if(paramType instanceof ClassType || paramType instanceof ArrayType) // Also pass vectors by const ref
 			{
 				sb.append("const ").append(cppType).append("& ").append(paramName);
 			}
@@ -716,11 +726,15 @@ public class CppGenerator implements ASTVisitor<String>
 	{
 		String conditionCode = statement.getCondition().accept(this);
 		appendLine("if (" + conditionCode + ") {");
+		indent();
 		statement.getThenBranch().accept(this);
+		dedent();
 		if(statement.getElseBranch() != null)
 		{
 			appendLine("} else {");
+			indent();
 			statement.getElseBranch().accept(this);
+			dedent();
 		}
 		appendLine("}");
 		return null;
@@ -731,7 +745,9 @@ public class CppGenerator implements ASTVisitor<String>
 	{
 		String conditionCode = statement.getCondition().accept(this);
 		appendLine("while (" + conditionCode + ") {");
+		indent();
 		statement.getBody().accept(this);
+		dedent();
 		appendLine("}");
 		return null;
 	}
@@ -745,23 +761,17 @@ public class CppGenerator implements ASTVisitor<String>
 		String conditionCode = statement.getCondition() != null ? statement.getCondition().accept(this) : "";
 		String incrementCode = statement.getIncrement() != null ? statement.getIncrement().accept(this) : "";
 
-		// Ensure initializer has a semicolon if it's not a VariableDeclarationStatement
-		if(statement.getInitializer() instanceof ExpressionStatement)
+		// visitor for statements already adds the semicolon, so remove it from the initializer part of the for loop
+		if(initializerCode.endsWith(";"))
 		{
-			// ExpressionStatement already adds a semicolon
-		}
-		else if(statement.getInitializer() instanceof VariableDeclarationStatement)
-		{
-			// VariableDeclarationStatement already adds a semicolon
-		}
-		else if(!initializerCode.isEmpty() && !initializerCode.endsWith(";"))
-		{
-			initializerCode += ";";
+			initializerCode = initializerCode.substring(0, initializerCode.length() - 1);
 		}
 
 
-		appendLine("for (" + initializerCode + " " + conditionCode + "; " + incrementCode + ") {");
+		appendLine("for (" + initializerCode + "; " + conditionCode + "; " + incrementCode + ") {");
+		indent();
 		statement.getBody().accept(this);
+		dedent();
 		appendLine("}");
 		return null;
 	}
@@ -779,7 +789,8 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitVariableDeclarationStatement(VariableDeclarationStatement statement)
 	{
-		Type varType = resolveTypeFromToken(statement.getTypeToken());
+		// *** MODIFIED ***: Use the new helper to resolve the full type, including arrays.
+		Type varType = resolveTypeFromToken(statement.getTypeToken(), statement.getArrayRank());
 		String cppType = statement.getTypeToken().getType() == TokenType.VAR ? "auto" : toCppType(varType);
 
 		String declaration = cppType + " " + statement.getName().getLexeme();
@@ -787,10 +798,10 @@ public class CppGenerator implements ASTVisitor<String>
 		{
 			declaration += " = " + statement.getInitializer().accept(this);
 		}
-		else if(varType instanceof ClassType)
+		else if(varType instanceof ClassType || varType instanceof ArrayType)
 		{
-			// Initialize shared_ptr to nullptr if no explicit initializer
-			declaration += " = nullptr";
+			// Default-initialize shared_ptrs to nullptr and vectors to empty
+			declaration += "{}";
 		}
 		return declaration + ";";
 	}
@@ -808,11 +819,48 @@ public class CppGenerator implements ASTVisitor<String>
 		if(statement.getDefaultBlock() != null)
 		{
 			appendLine("default:");
+			indent();
 			statement.getDefaultBlock().accept(this);
+			dedent();
 		}
 		dedent();
 		appendLine("}");
 		return null;
+	}
+
+	/**
+	 * Visits an array creation expression (e.g., `new int[10]`) and generates
+	 * the C++ equivalent for a std::vector, like `std::vector<int>(10)`.
+	 */
+	@Override
+	public String visitArrayCreationExpression(ArrayCreationExpression expression)
+	{
+		Type resolvedType = expression.getResolvedType();
+		if(resolvedType == null || !(resolvedType instanceof ArrayType))
+		{
+			error(expression.getFirstToken(), "Internal codegen error: Array creation expression has no resolved type.");
+			return "{}"; // Return empty C++ initializer list as an error fallback
+		}
+
+		ArrayType arrayType = (ArrayType) resolvedType;
+		String elementCppType = toCppType(arrayType.getElementType());
+		String sizeExpr = expression.getSizeExpression().accept(this);
+
+		return "std::vector<" + elementCppType + ">(" + sizeExpr + ")";
+	}
+
+	/**
+	 * Visits an array initializer expression (e.g., `{1, 2, 3}`) and generates
+	 * the equivalent C++ initializer list `{1, 2, 3}`.
+	 */
+	@Override
+	public String visitArrayInitializerExpression(ArrayInitializerExpression expression)
+	{
+		List<String> elementCodes = expression.getElements().stream()
+				.map(element -> element.accept(this))
+				.collect(Collectors.toList());
+
+		return "{" + String.join(", ", elementCodes) + "}";
 	}
 
 	private void generateObjectCpp(ClassDeclaration declaration)
@@ -1065,7 +1113,7 @@ public class CppGenerator implements ASTVisitor<String>
 	public String visitSwitchCase(SwitchCase switchCase)
 	{
 		String caseValueCode = switchCase.getValue().accept(this);
-		appendLine("case " + caseValueCode + ":");
+		appendLine("case " + caseValueCode + ": {");
 		indent();
 		for(Statement stmt : switchCase.getBody())
 		{
@@ -1077,6 +1125,7 @@ public class CppGenerator implements ASTVisitor<String>
 		}
 		appendLine("break;"); // Add break statement for switch cases
 		dedent();
+		appendLine("}");
 		return null;
 	}
 
@@ -1177,9 +1226,14 @@ public class CppGenerator implements ASTVisitor<String>
 		if(symbol instanceof VariableSymbol)
 		{
 			VariableSymbol varSym = (VariableSymbol) symbol;
-			if(varSym.getOwnerClass() != null)
-			{ // It's a field
-				return "this->" + varSym.getName() + "_"; // Assume fields are suffixed
+			if(varSym.getOwnerClass() != null && !varSym.isStatic())
+			{ // It's an instance field
+				return "this->" + varSym.getName();
+			}
+			else if(varSym.getOwnerClass() != null && varSym.isStatic())
+			{
+				// It's a static field
+				return varSym.getOwnerClass().getFqn().replace(".", "::") + "::" + varSym.getName();
 			}
 			return varSym.getName();
 		}
@@ -1223,7 +1277,14 @@ public class CppGenerator implements ASTVisitor<String>
 
 		if(expr.getCallee() instanceof IdentifierExpression)
 		{
-			calleeString = methodName;
+			if(resolvedMethod.isStatic())
+			{
+				calleeString = this.currentClassSymbol.getFqn().replace(".", "::") + "::" + methodName;
+			}
+			else
+			{
+				calleeString = "this->" + methodName;
+			}
 		}
 		else if(expr.getCallee() instanceof DotExpression)
 		{
@@ -1246,8 +1307,22 @@ public class CppGenerator implements ASTVisitor<String>
 		String left = expr.getLeft().accept(this);
 		String memberName = expr.getMemberName().getLexeme();
 		Symbol symbol = expr.getResolvedSymbol();
+		Type leftType = expr.getLeft().getResolvedType();
+
+		// *** MODIFIED ***: Handle .length on arrays
+		if(leftType instanceof ArrayType)
+		{
+			if(memberName.equals("length"))
+			{
+				return left + ".size()";
+			}
+		}
 
 		if(symbol instanceof MethodSymbol && ((MethodSymbol) symbol).isStatic())
+		{
+			return left + "::" + memberName;
+		}
+		else if(symbol instanceof VariableSymbol && ((VariableSymbol) symbol).isStatic())
 		{
 			return left + "::" + memberName;
 		}
@@ -1259,7 +1334,6 @@ public class CppGenerator implements ASTVisitor<String>
 	public String visitThisExpression(ThisExpression expression)
 	{
 		// 'this' in Nebula maps to 'this' in C++ when accessing instance members
-		// For fields, it will be `this->fieldName_`
 		return "this";
 	}
 
@@ -1284,7 +1358,6 @@ public class CppGenerator implements ASTVisitor<String>
 		return "std::make_shared<" + cppFqn + ">(" + String.join(", ", argCodes) + ")";
 	}
 
-
 	@Override
 	public String visitPostfixUnaryExpression(PostfixUnaryExpression expression)
 	{
@@ -1295,27 +1368,19 @@ public class CppGenerator implements ASTVisitor<String>
 		return operandCode + operator;
 	}
 
+	// In CppGenerator.java
+
+	/**
+	 * Visits an array access expression (e.g., `myArray[i]`) and generates
+	 * the C++ equivalent `myArray[i]`.
+	 */
 	@Override
 	public String visitArrayAccessExpression(ArrayAccessExpression expression)
 	{
 		String arrayCode = expression.getArray().accept(this);
 		String indexCode = expression.getIndex().accept(this);
 
-		Type arrayResolvedType = expression.getArray().getResolvedType();
-
-		// Special handling for String character access (Nebula `s[0]` -> C++ `s->operator[](0)`)
-		// and for ArrayType where elements are objects (i.e., shared_ptr), still use ->operator[]
-		if(arrayResolvedType instanceof ClassType && ((ClassType) arrayResolvedType).getFqn().equals("nebula.core.String"))
-		{
-			// Access character from a Nebula String object (which is a shared_ptr to nebula::core::String)
-			return arrayCode + "->operator[](" + indexCode + ")";
-		}
-		else if(arrayResolvedType instanceof ArrayType)
-		{
-			// For std::vector, use regular [] operator. If elements are objects, the vector will hold shared_ptr.
-			return arrayCode + "[" + indexCode + "]";
-		}
-		// Default for other array-like types
+		// For std::vector, C++ uses the standard [] operator for access.
 		return arrayCode + "[" + indexCode + "]";
 	}
 
@@ -1335,6 +1400,13 @@ public class CppGenerator implements ASTVisitor<String>
 		{
 			String targetFqn = ((ClassType) targetType).getFqn().replace(".", "::");
 			return "(std::dynamic_pointer_cast<" + targetFqn + ">(" + leftCode + ") != nullptr)";
+		}
+		else if(targetType instanceof ArrayType)
+		{
+			// `is` check for arrays is not directly supported in C++ RTTI this way.
+			// This is a language feature decision. For now, we return false.
+			error(expression.getTypeToken(), "'is' expression for array types is not yet supported in C++ codegen.");
+			return "false";
 		}
 		error(expression.getTypeToken(), "'is' expression can only be used with class types.");
 		return "false";

@@ -21,6 +21,7 @@ public class VariableDeclarationStatement implements Statement
 {
 	private final List<Token> modifiers; // Add modifiers
 	private final Token typeToken;
+	private final int arrayRank; // NEW: To store array dimensionality (0 for non-array)
 	private final Token name;
 	private final Expression initializer;
 
@@ -28,23 +29,26 @@ public class VariableDeclarationStatement implements Statement
 	 * Constructs a VariableDeclarationStatement.
 	 *
 	 * @param modifiers   List of modifier tokens (e.g., CONST)
-	 * @param typeToken   The token representing the declared type.
+	 * @param typeToken   The token representing the base declared type.
+	 * @param arrayRank   The rank of the array (e.g., 1 for int[], 2 for int[][]).
 	 * @param name        The identifier token for the variable name.
 	 * @param initializer Optional initializer expression.
 	 */
-	public VariableDeclarationStatement(List<Token> modifiers, Token typeToken, Token name, Expression initializer)
+	public VariableDeclarationStatement(List<Token> modifiers, Token typeToken, int arrayRank, Token name, Expression initializer)
 	{
 		this.modifiers = new ArrayList<>(modifiers); // Defensive copy
 		this.typeToken = typeToken;
+		this.arrayRank = arrayRank;
 		this.name = name;
 		this.initializer = initializer;
 	}
 
-	// Existing constructor for backward compatibility (assume no modifiers)
-	public VariableDeclarationStatement(Token typeToken, Token name, Expression initializer)
+	// Overloaded constructor for non-array types for convenience
+	public VariableDeclarationStatement(List<Token> modifiers, Token typeToken, Token name, Expression initializer)
 	{
-		this(new ArrayList<>(), typeToken, name, initializer);
+		this(modifiers, typeToken, 0, name, initializer);
 	}
+
 
 	public List<Token> getModifiers()
 	{ // Getter for modifiers
@@ -54,6 +58,10 @@ public class VariableDeclarationStatement implements Statement
 	public Token getTypeToken()
 	{
 		return typeToken;
+	}
+
+	public int getArrayRank() {
+		return arrayRank;
 	}
 
 	public Token getName()
@@ -79,7 +87,9 @@ public class VariableDeclarationStatement implements Statement
 		String mods = modifiers.isEmpty() ? "" : modifiers.stream()
 				.map(Token::getLexeme)
 				.collect(Collectors.joining(" ")) + " ";
-		sb.append("VarDecl: ").append(mods).append(typeToken.getLexeme()).append(" ").append(name.getLexeme());
+		sb.append("VarDecl: ").append(mods).append(typeToken.getLexeme());
+		sb.append("[]".repeat(arrayRank)); // Append brackets for array type
+		sb.append(" ").append(name.getLexeme());
 		if(initializer != null)
 		{
 			sb.append(" = ").append(initializer);

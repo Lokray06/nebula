@@ -11,49 +11,55 @@ import java.util.List;
 /**
  * Represents an array initializer expression, e.g., "{1, 2, 3}".
  */
-public class ArrayInitializerExpression implements Expression {
-    private final Token leftBrace;
-    private final List<Expression> elements;
-    private Type resolvedType;
+public class ArrayInitializerExpression implements Expression
+{
+	private final Token leftBrace;
+	private final List<Expression> elements;
+	private Type resolvedType;
 
-    public ArrayInitializerExpression(Token leftBrace, List<Expression> elements) {
-        this.leftBrace = leftBrace;
-        this.elements = elements;
-    }
+	public ArrayInitializerExpression(Token leftBrace, List<Expression> elements)
+	{
+		this.leftBrace = leftBrace;
+		this.elements = elements;
+	}
 
-    public List<Expression> getElements() {
-        return elements;
-    }
+	public List<Expression> getElements()
+	{
+		return elements;
+	}
 
-    @Override
-    public <R> R accept(ASTVisitor<R> visitor) {
-        // Assumes a new visitor method is added for this node type
-        // return visitor.visitArrayInitializerExpression(this);
-        // The SemanticAnalyzer will need to be updated to have visitArrayInitializerExpression.
-        return null;
-    }
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitArrayInitializerExpression(this);
+	}
 
-    @Override
-    public Token getFirstToken() {
-        return leftBrace;
-    }
+	@Override
+	public Token getFirstToken()
+	{
+		return leftBrace;
+	}
 
-    @Override
-    public Type getResolvedType() {
-        return resolvedType;
-    }
+	@Override
+	public Type getResolvedType()
+	{
+		return resolvedType;
+	}
 
-    public void setResolvedType(Type type) {
-        this.resolvedType = type;
-    }
+	public void setResolvedType(Type type)
+	{
+		this.resolvedType = type;
+	}
 
-    @Override
-    public Symbol getResolvedSymbol() {
-        return null;
-    }
+	@Override
+	public Symbol getResolvedSymbol()
+	{
+		return null;
+	}
 
-    @Override
-    public void setResolvedSymbol(Symbol symbol) {
-        // Not applicable
-    }
+	@Override
+	public void setResolvedSymbol(Symbol symbol)
+	{
+		// Not applicable
+	}
 }

@@ -33,6 +33,7 @@ public enum TokenType
 	BOOLEAN_LITERAL,
 	FLOAT_LITERAL,
 	DOUBLE_LITERAL,
+	NULL,
 
 	// --- Operators ---
 	PLUS, MINUS, STAR, SLASH, MODULO,
