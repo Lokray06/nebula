@@ -18,7 +18,7 @@ public class MethodSymbol extends Symbol
 	private final boolean isStatic; // Indicates if the method is static
 	private final boolean isConstructor; // Flag to explicitly mark if this symbol represents a constructor
 	private ClassSymbol ownerClass; // Reference to the ClassSymbol this method belongs to
-
+	private String mangledName;
 
 	/**
 	 * Constructor for a regular MethodSymbol.
@@ -114,6 +114,16 @@ public class MethodSymbol extends Symbol
 	public boolean isConstructor()
 	{
 		return isConstructor;
+	}
+
+	public String getMangledName()
+	{
+		return mangledName;
+	}
+
+	public void setMangledName(String mangledName)
+	{
+		this.mangledName = mangledName;
 	}
 
 	/**

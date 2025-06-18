@@ -6,7 +6,7 @@ import com.juanpa.nebula.transpiler.ast.Program;
 import com.juanpa.nebula.transpiler.ast.declarations.ImportDirective;
 import com.juanpa.nebula.transpiler.ast.declarations.NamespaceDeclaration;
 import com.juanpa.nebula.transpiler.codegen.CppGenerator;
-import com.juanpa.nebula.transpiler.lexer.NebulaLexer;
+import com.juanpa.nebula.transpiler.lexer.Lexer;
 import com.juanpa.nebula.transpiler.lexer.Token;
 import com.juanpa.nebula.transpiler.parser.NebulaParser;
 import com.juanpa.nebula.transpiler.semantics.SemanticAnalyzer;
@@ -24,7 +24,6 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -86,7 +85,7 @@ public class Main
 				String sourceCode = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
 
 				// Lexical Analysis
-				NebulaLexer lexer = new NebulaLexer(sourceCode, errorReporter);
+				Lexer lexer = new Lexer(sourceCode, errorReporter);
 				List<Token> tokens = lexer.scanTokens();
 				if(errorReporter.hasErrors())
 				{

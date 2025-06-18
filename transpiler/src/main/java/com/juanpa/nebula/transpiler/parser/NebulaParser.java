@@ -18,7 +18,9 @@ import com.juanpa.nebula.transpiler.util.ErrorReporter;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The NebulaParser is responsible for performing syntactic analysis.
@@ -34,6 +36,7 @@ public class NebulaParser
 
 	// Field to keep track of the current fully qualified namespace being parsed
 	private String currentNamespaceFqn = ""; // Initialized to empty string for global scope
+	String[] words = new String[2];
 
 	/**
 	 * Constructs a NebulaParser.
@@ -43,8 +46,102 @@ public class NebulaParser
 	 */
 	public NebulaParser(List<Token> tokens, ErrorReporter errorReporter)
 	{
-		this.tokens = tokens;
+		System.out.println(words.length);
 		this.errorReporter = errorReporter;
+		this.tokens = preprocessTokensForAliases(tokens);
+	}
+
+	/**
+	 * Pre-processes the token stream to handle `alias` declarations.
+	 * This method performs two passes:
+	 * 1. Finds all valid `alias` declarations and stores them in a map.
+	 * 2. Creates a new token stream where alias declarations are removed and
+	 * alias usages are replaced with their expanded token sequences.
+	 * This allows aliases to be used before they are declared.
+	 *
+	 * @param originalTokens The raw token stream from the lexer.
+	 * @return A new token stream with aliases resolved.
+	 */
+	private List<Token> preprocessTokensForAliases(List<Token> originalTokens) {
+		Map<String, List<Token>> discoveredAliases = new HashMap<>();
+		List<Token> nonAliasTokens = new ArrayList<>();
+		int cursor = 0;
+
+		// Pass 1: Discover all aliases and collect non-alias tokens.
+		while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.EOF) {
+			if (originalTokens.get(cursor).getType() == TokenType.ALIAS) {
+				Token aliasKeyword = originalTokens.get(cursor++);
+
+				if (cursor >= originalTokens.size() || originalTokens.get(cursor).getType() != TokenType.IDENTIFIER) {
+					errorReporter.report(aliasKeyword.getLine(), aliasKeyword.getColumn(), "Expected an identifier for the alias name after 'alias' keyword.");
+					// Skip until semicolon to recover
+					while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON) cursor++;
+					if (cursor < originalTokens.size()) cursor++; // skip semicolon
+					continue;
+				}
+				Token aliasName = originalTokens.get(cursor++);
+
+				List<Token> replacement = new ArrayList<>();
+				int replacementStartCursor = cursor;
+				while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON) {
+					Token part = originalTokens.get(cursor);
+					if (part.getType() != TokenType.IDENTIFIER && part.getType() != TokenType.DOT) {
+						errorReporter.report(part.getLine(), part.getColumn(), "Alias replacement can only consist of identifiers and dots.");
+						// Invalidate this alias and skip to semicolon
+						replacement.clear();
+						while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON) cursor++;
+						break;
+					}
+					replacement.add(part);
+					cursor++;
+				}
+
+				if (cursor < originalTokens.size() && originalTokens.get(cursor).getType() == TokenType.SEMICOLON) {
+					cursor++; // consume ';'
+					if (replacement.isEmpty() && replacementStartCursor == cursor-1) { // Check if replacement part was empty
+						errorReporter.report(aliasName.getLine(), aliasName.getColumn(), "Alias replacement cannot be empty.");
+					} else if (!replacement.isEmpty()) {
+						if (discoveredAliases.containsKey(aliasName.getLexeme())) {
+							errorReporter.report(aliasName.getLine(), aliasName.getColumn(), "Alias '" + aliasName.getLexeme() + "' is already defined.");
+						} else {
+							discoveredAliases.put(aliasName.getLexeme(), replacement);
+						}
+					}
+				} else {
+					errorReporter.report(aliasKeyword.getLine(), aliasKeyword.getColumn(), "Malformed alias declaration, expected ';'.");
+				}
+			} else {
+				nonAliasTokens.add(originalTokens.get(cursor));
+				cursor++;
+			}
+		}
+
+		// Pass 2: Replace aliases in the collected tokens.
+		List<Token> finalTokens = new ArrayList<>();
+		for (Token token : nonAliasTokens) {
+			if (token.getType() == TokenType.IDENTIFIER && discoveredAliases.containsKey(token.getLexeme())) {
+				List<Token> replacementTokens = discoveredAliases.get(token.getLexeme());
+				for (Token replacementToken : replacementTokens) {
+					// Create a new token to carry over the position info of the original alias usage
+					finalTokens.add(new Token(
+							replacementToken.getType(),
+							replacementToken.getLexeme(),
+							replacementToken.getLiteral(),
+							token.getLine(),
+							token.getColumn() // Column info is approximate for expanded aliases
+					));
+				}
+			} else {
+				finalTokens.add(token);
+			}
+		}
+
+		// Add the EOF token at the end
+		if (!originalTokens.isEmpty()) {
+			finalTokens.add(originalTokens.get(originalTokens.size() - 1));
+		}
+
+		return finalTokens;
 	}
 
 	/**

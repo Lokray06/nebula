@@ -1,4 +1,4 @@
-// File: src/main/java/com/juanpa/nebula/transpiler/lexer/NebulaLexer.java
+// File: src/main/java/com/juanpa/nebula/transpiler/lexer/Lexer.java
 
 package com.juanpa.nebula.transpiler.lexer;
 
@@ -10,11 +10,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The NebulaLexer is responsible for performing lexical analysis (scanning).
+ * The Lexer is responsible for performing lexical analysis (scanning).
  * It reads the raw Nebula source code and converts it into a stream of meaningful Tokens.
  * This class identifies keywords, identifiers, literals, operators, and punctuation.
  */
-public class NebulaLexer
+public class Lexer
 {
 	private final String source; // The raw source code string
 	private final List<Token> tokens = new ArrayList<>(); // List to store generated tokens
@@ -71,15 +71,16 @@ public class NebulaLexer
 		keywords.put("case", TokenType.CASE);
 		keywords.put("default", TokenType.DEFAULT);
 		keywords.put("is", TokenType.IS);
+		keywords.put("alias", TokenType.ALIAS); // NEW: Added alias keyword
 	}
 
 	/**
-	 * Constructs a NebulaLexer.
+	 * Constructs a Lexer.
 	 *
 	 * @param source        The source code string to tokenize.
 	 * @param errorReporter An instance of ErrorReporter for logging errors.
 	 */
-	public NebulaLexer(String source, ErrorReporter errorReporter)
+	public Lexer(String source, ErrorReporter errorReporter)
 	{
 		this.source = source;
 		this.errorReporter = errorReporter;
