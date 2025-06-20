@@ -11,42 +11,50 @@ import com.juanpa.nebula.transpiler.semantics.Type; // Import Type
  * AST node representing a binary operation (e.g., a + b, x == y, c && d).
  * It has a left operand, an operator token, and a right operand.
  */
-public class BinaryExpression implements Expression {
+public class BinaryExpression implements Expression
+{
 	private final Expression left;
 	private final Token operator; // The binary operator token (e.g., PLUS, MINUS, EQUAL_EQUAL)
 	private final Expression right;
 	private Type resolvedType; // NEW: Field for resolved type
 
-	public BinaryExpression(Expression left, Token operator, Expression right) {
+	public BinaryExpression(Expression left, Token operator, Expression right)
+	{
 		this.left = left;
 		this.operator = operator;
 		this.right = right;
 	}
 
-	public Expression getLeft() {
+	public Expression getLeft()
+	{
 		return left;
 	}
 
-	public Token getOperator() {
+	public Token getOperator()
+	{
 		return operator;
 	}
 
-	public Expression getRight() {
+	public Expression getRight()
+	{
 		return right;
 	}
 
 	@Override
-	public <R> R accept(ASTVisitor<R> visitor) {
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
 		return visitor.visitBinaryExpression(this);
 	}
 
 	@Override
-	public String toString() {
+	public String toString()
+	{
 		return "(" + left + " " + operator.getLexeme() + " " + right + ")";
 	}
 
 	@Override
-	public Token getFirstToken() {
+	public Token getFirstToken()
+	{
 		return left.getFirstToken(); // The first token of a binary expression is its left operand's first token
 	}
 
@@ -64,12 +72,14 @@ public class BinaryExpression implements Expression {
 
 	// NEW: Implementation for getResolvedType()
 	@Override
-	public Type getResolvedType() {
+	public Type getResolvedType()
+	{
 		return resolvedType;
 	}
 
 	// Setter for resolved type
-	public void setResolvedType(Type resolvedType) {
+	public void setResolvedType(Type resolvedType)
+	{
 		this.resolvedType = resolvedType;
 	}
 }

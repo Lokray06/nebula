@@ -1,18 +1,19 @@
-// File: src/main/java/com/juanpa.nebula.transpiler/ast/statements/ForStatement.java
+// File: src/main/java/com/juanpa/nebula/transpiler/ast/statements/ForStatement.java
 package com.juanpa.nebula.transpiler.ast.statements;
 
-import com.juanpa.nebula.transpiler.ast.ASTVisitor; // Import ASTVisitor
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
 import com.juanpa.nebula.transpiler.ast.expressions.Expression;
 
 /**
  * AST node representing a 'for' loop statement.
  * Includes an optional initializer, condition, increment expression, and a loop body.
+ * The fields have been made mutable to allow for AST transformations (desugaring).
  */
 public class ForStatement implements Statement
 {
-	private final Statement initializer; // Can be a VariableDeclarationStatement or ExpressionStatement (or null)
-	private final Expression condition;  // The loop continuation condition (can be null for infinite loop)
-	private final Expression increment;  // The expression executed after each iteration (can be null)
+	private Statement initializer; // Can be a VariableDeclarationStatement or ExpressionStatement (or null)
+	private Expression condition;  // The loop continuation condition (can be null for infinite loop)
+	private Expression increment;  // The expression executed after each iteration (can be null)
 	private final BlockStatement body;   // The loop body
 
 	public ForStatement(Statement initializer, Expression condition, Expression increment, BlockStatement body)
@@ -43,6 +44,22 @@ public class ForStatement implements Statement
 		return body;
 	}
 
+	// Added setters to allow the Semantic Analyzer to transform the AST node.
+	public void setInitializer(Statement initializer)
+	{
+		this.initializer = initializer;
+	}
+
+	public void setCondition(Expression condition)
+	{
+		this.condition = condition;
+	}
+
+	public void setIncrement(Expression increment)
+	{
+		this.increment = increment;
+	}
+
 	@Override
 	public String toString()
 	{
@@ -63,13 +80,14 @@ public class ForStatement implements Statement
 	}
 
 	// Helper for indentation
-	private String indent(String text, int level) {
+	private String indent(String text, int level)
+	{
 		StringBuilder indentedText = new StringBuilder();
 		String prefix = "  ".repeat(level);
-		for (String line : text.split("\n")) {
+		for(String line : text.split("\n"))
+		{
 			indentedText.append(prefix).append(line).append("\n");
 		}
 		return indentedText.toString();
 	}
 }
-

@@ -1170,6 +1170,16 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	@Override
 	public Type visitForStatement(ForStatement statement)
 	{
+		// Check for the simplified syntax pattern: no initializer, no increment, but a condition.
+		// This assumes the parser produces this AST shape for semicolon-less for loops.
+		if(statement.getInitializer() == null && statement.getCondition() != null && statement.getIncrement() == null)
+		{
+			desugarSimplifiedForLoop(statement);
+			// After this call, the `statement` object is mutated to be a standard for loop.
+			// The rest of this method will then analyze it as a normal loop.
+		}
+
+		// Standard analysis for a (possibly now desugared) for loop.
 		SymbolTable forScope = new SymbolTable(currentScope, "ForLoop");
 		enterScope(forScope);
 
@@ -1182,7 +1192,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		{
 			Type conditionType = statement.getCondition().accept(this);
 			if(conditionType instanceof ErrorType)
+			{
+				exitScope(); // Clean up scope
 				return ErrorType.INSTANCE;
+			}
 
 			if(!conditionType.equals(PrimitiveType.BOOL))
 			{
@@ -1199,6 +1212,93 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		exitScope();
 		return PrimitiveType.VOID;
+	}
+
+	/**
+	 * Transforms a ForStatement node representing the simplified syntax (e.g., `for(i < 10)`)
+	 * into a standard C-style for loop AST structure.
+	 * This method mutates the given ForStatement object.
+	 *
+	 * @param statement The ForStatement node to "desugar".
+	 */
+	private void desugarSimplifiedForLoop(ForStatement statement)
+	{
+		Expression originalCondition = statement.getCondition();
+		IdentifierExpression loopVarIdentifier;
+		Expression loopLimit;
+		Statement newInitializer;
+		Expression newCondition;
+		Expression newIncrement;
+
+		// The simplified syntax must be a binary expression like `i < 10` or `(j=2) < 10`.
+		if(!(originalCondition instanceof BinaryExpression))
+		{
+			error(originalCondition.getFirstToken(), "Simplified for loop condition must be a binary comparison (e.g., i < 10).");
+			return;
+		}
+
+		BinaryExpression binaryCond = (BinaryExpression) originalCondition;
+		Expression left = binaryCond.getLeft();
+		loopLimit = binaryCond.getRight();
+		Token operator = binaryCond.getOperator();
+
+		// Check for supported operators
+		if(operator.getType() != TokenType.LESS && operator.getType() != TokenType.LESS_EQUAL)
+		{
+			error(operator, "Simplified for loop only supports '<' and '<=' operators.");
+			return;
+		}
+
+		if(left instanceof IdentifierExpression)
+		{ // Case: for(i < 10)
+			loopVarIdentifier = (IdentifierExpression) left;
+
+			// Create initializer: int i = 0;
+			Token typeToken = new Token(TokenType.INT, "int", null, loopVarIdentifier.getName().getLine(), loopVarIdentifier.getName().getColumn());
+			LiteralExpression zeroLiteral = new LiteralExpression(0, new Token(TokenType.INTEGER_LITERAL, "0", 0, -1, -1));
+			// --- MODIFICATION START ---
+			newInitializer = new VariableDeclarationStatement(Collections.emptyList(), typeToken, 0, loopVarIdentifier.getName(), zeroLiteral);
+			// --- MODIFICATION END ---
+
+
+			// Condition is the original expression.
+			newCondition = originalCondition;
+
+		}
+		else if(left instanceof AssignmentExpression)
+		{ // Case: for(j = 2 < 10), parsed as ((j=2) < 10)
+			AssignmentExpression assignment = (AssignmentExpression) left;
+			if(!(assignment.getTarget() instanceof IdentifierExpression))
+			{
+				error(assignment.getTarget().getFirstToken(), "Loop variable in simplified for loop must be a simple identifier.");
+				return;
+			}
+			loopVarIdentifier = (IdentifierExpression) assignment.getTarget();
+			Expression startValue = assignment.getValue();
+
+			// Create initializer: int j = 2;
+			Token typeToken = new Token(TokenType.INT, "int", null, loopVarIdentifier.getName().getLine(), loopVarIdentifier.getName().getColumn());
+			// --- MODIFICATION START ---
+			newInitializer = new VariableDeclarationStatement(Collections.emptyList(), typeToken, 0, loopVarIdentifier.getName(), startValue);
+			// --- MODIFICATION END ---
+
+			// Create new condition: j < 10 (or <=)
+			newCondition = new BinaryExpression(loopVarIdentifier, operator, loopLimit);
+
+		}
+		else
+		{
+			error(left.getFirstToken(), "Invalid expression for loop variable in simplified for loop.");
+			return;
+		}
+
+		// Create increment: i++
+		newIncrement = new PostfixUnaryExpression(loopVarIdentifier, new Token(TokenType.PLUS_PLUS, "++", null, -1, -1));
+
+		// Mutate the ForStatement node with the new desugared components.
+		statement.setInitializer(newInitializer);
+		statement.setCondition(newCondition);
+		statement.setIncrement(newIncrement);
 	}
 
 	@Override
