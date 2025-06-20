@@ -814,11 +814,10 @@ public class NebulaParser
 	}
 
 	/**
-	 * Parses a for loop statement.
-	 * Grammar: `FOR ( (VAR_DECL | EXPR_STMT | ;) EXPR_STMT ; (EXPRESSION)? ) BLOCK_STATEMENT`
-	 * A more robust for loop would parse:
-	 * `for ( (variableDeclaration | expressionStatement | ';') expression? ';' expression? ) statement`
-	 * For simplicity, this will parse: `for ( VAR_DECL_OR_EXPR ; CONDITION ; INCREMENT ) BLOCK_STATEMENT`
+	 * Parses a for loop statement, handling both standard loops
+	 * and the simplified syntax `for (condition)`.
+	 * This version adds a check to correctly handle combined
+	 * initializer/condition syntax like `for(i = 0 <= 10)`.
 	 *
 	 * @return A ForStatement AST node.
 	 * @throws SyntaxError if a syntax error occurs.
@@ -828,32 +827,123 @@ public class NebulaParser
 		consume(TokenType.LEFT_PAREN, "Expected '(' after 'for'.");
 
 		Statement initializer = null;
-		if(match(TokenType.SEMICOLON))
+		Expression condition = null;
+		Expression increment = null;
+
+		// Look ahead to see if there is a semicolon inside the parentheses
+		// to distinguish between simplified and standard for-loops.
+		boolean hasSemicolon = false;
+		int tempCursor = current;
+		int parenDepth = 1;
+		while(tempCursor < tokens.size())
 		{
-			// No initializer
+			TokenType type = tokens.get(tempCursor).getType();
+			if(type == TokenType.LEFT_PAREN)
+				parenDepth++;
+			if(type == TokenType.RIGHT_PAREN)
+			{
+				parenDepth--;
+				if(parenDepth == 0)
+					break; // Found the matching ')' for our for-loop header
+			}
+			// Only consider semicolons at the top-level of the for-header
+			if(type == TokenType.SEMICOLON && parenDepth == 1)
+			{
+				hasSemicolon = true;
+				break;
+			}
+			tempCursor++;
 		}
-		else if(isTypeToken(peek().getType()))
+
+		if(!hasSemicolon)
 		{
-			// **FIXED**: Call variableDeclarationStatement with only modifiers
-			initializer = variableDeclarationStatement(new ArrayList<>());
+			// --- PARSE SIMPLIFIED SYNTAX ---
+			if(!check(TokenType.RIGHT_PAREN))
+			{
+				Expression parsedCondition = expression();
+
+				// ======================= NEW CHECK =======================
+				// This check handles the case `for(i = 0 <= nums.length)`.
+				// A standard parser will incorrectly interpret this as `i = (0 <= nums.length)`
+				// due to operator precedence (comparison > assignment).
+				// We check for this specific AST structure: AssignmentExpression(target, BinaryExpression(...))
+				// and rewrite it to the intended structure: BinaryExpression(AssignmentExpression(...), ...).
+				if(parsedCondition instanceof AssignmentExpression &&
+						((AssignmentExpression) parsedCondition).getValue() instanceof BinaryExpression)
+				{
+					AssignmentExpression outerAssignment = (AssignmentExpression) parsedCondition;
+					BinaryExpression innerBinary = (BinaryExpression) outerAssignment.getValue();
+
+					// Create the new assignment expression, e.g., `i = 0`.
+					// This will become the left-hand side of the new condition.
+					AssignmentExpression newInitializerPart = new AssignmentExpression(
+							outerAssignment.getTarget(),   // The target of the original assignment (e.g., IdentifierExpression for 'i')
+							outerAssignment.getOperator(), // The assignment operator token (e.g., ASSIGN)
+							innerBinary.getLeft()          // The left side of the inner comparison (e.g., LiteralExpression for '0')
+					);
+
+					// Rebuild the condition to have the correct precedence, creating a new BinaryExpression.
+					// The new condition becomes `(i = 0) <= nums.length`.
+					condition = new BinaryExpression(
+							newInitializerPart,      // The new assignment expression as the left operand
+							innerBinary.getOperator(), // The comparison operator token (e.g., LESS_EQUAL)
+							innerBinary.getRight()     // The original right operand
+					);
+				}
+				else
+				{
+					// If the pattern doesn't match, use the parsed condition as-is.
+					condition = parsedCondition;
+				}
+				// ===================== END NEW CHECK =====================
+			}
 		}
 		else
 		{
-			initializer = expressionStatement();
+			// --- PARSE STANDARD C-STYLE SYNTAX ---
+			// 1. Initializer
+			if(!check(TokenType.SEMICOLON))
+			{
+				if(isTypeToken(peek().getType()))
+				{
+					int lookahead = 1;
+					while(check(lookahead, TokenType.LEFT_BRACKET) && check(lookahead + 1, TokenType.RIGHT_BRACKET))
+					{
+						lookahead += 2;
+					}
+					if(check(lookahead, TokenType.IDENTIFIER))
+					{
+						initializer = variableDeclarationStatement(new ArrayList<>());
+					}
+					else
+					{
+						initializer = expressionStatement();
+					}
+				}
+				else
+				{
+					initializer = expressionStatement();
+				}
+			}
+			else
+			{
+				consume(TokenType.SEMICOLON, "Expected ';' after empty initializer in for-loop.");
+			}
+
+			// 2. Condition
+			if(!check(TokenType.SEMICOLON))
+			{
+				condition = expression();
+			}
+			consume(TokenType.SEMICOLON, "Expected ';' after for loop condition.");
+
+			// 3. Increment
+			if(!check(TokenType.RIGHT_PAREN))
+			{
+				increment = expression();
+			}
 		}
 
-		Expression condition = null;
-		if(!check(TokenType.SEMICOLON))
-		{
-			condition = expression();
-		}
-		consume(TokenType.SEMICOLON, "Expected ';' after for loop condition.");
-
-		Expression increment = null;
-		if(!check(TokenType.RIGHT_PAREN))
-		{
-			increment = expression();
-		}
 		consume(TokenType.RIGHT_PAREN, "Expected ')' after for loop clauses.");
 
 		BlockStatement body = blockStatement();

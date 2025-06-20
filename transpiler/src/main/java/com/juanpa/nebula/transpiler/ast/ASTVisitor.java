@@ -54,7 +54,7 @@ public interface ASTVisitor<R>
 
 	R visitSwitchStatement(SwitchStatement statement); // Added for SwitchStatement
 
-	R  visitArrayCreationExpression(ArrayCreationExpression expression);
+	R visitArrayCreationExpression(ArrayCreationExpression expression);
 
 	R visitArrayInitializerExpression(ArrayInitializerExpression expression);
 
