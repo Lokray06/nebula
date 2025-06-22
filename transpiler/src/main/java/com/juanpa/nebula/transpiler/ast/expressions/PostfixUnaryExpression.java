@@ -65,8 +65,15 @@ public class PostfixUnaryExpression implements Expression
 
 	// NEW: Implementation for getResolvedType()
 	@Override
-	public Type getResolvedType() {
+	public Type getResolvedType()
+	{
 		// The type of a postfix unary expression is the type of its operand.
 		return operand.getResolvedType();
+	}
+
+	@Override
+	public void setResolvedType(Type resolvedType)
+	{
+		this.resolvedType = resolvedType;
 	}
 }

@@ -1,14 +1,14 @@
-// File: src/main/java/com/juanpa.nebula.transpiler/ast/declarations/FieldDeclaration.java
 package com.juanpa.nebula.transpiler.ast.declarations;
 
 import com.juanpa.nebula.transpiler.ast.ASTNode;
 import com.juanpa.nebula.transpiler.ast.ASTVisitor;
 import com.juanpa.nebula.transpiler.ast.expressions.Expression;
 import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.semantics.Type; // <-- NEW: Import Type
 
-import java.util.ArrayList; // Import ArrayList
+import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors; // Import Collectors
+import java.util.stream.Collectors;
 
 /**
  * Represents a field (member variable) declaration in a class.
@@ -17,9 +17,12 @@ import java.util.stream.Collectors; // Import Collectors
 public class FieldDeclaration implements ASTNode
 {
 	private final List<Token> modifiers; // e.g., public, private, static, const
-	private final Token type;            // The type of the field (e.g., int, String, MyCustomClass)
+	private final Token type;            // The token representing the type of the field (e.g., int, String, MyCustomClass)
 	private final Token name;            // The name of the field
 	private final Expression initializer; // The optional initializer expression
+
+	// NEW: Field to store the resolved Type object after semantic analysis
+	private Type resolvedType;
 
 	/**
 	 * Constructs a new FieldDeclaration.
@@ -55,6 +58,18 @@ public class FieldDeclaration implements ASTNode
 	public Expression getInitializer()
 	{
 		return initializer;
+	}
+
+	// NEW: Getter for the resolved Type
+	public Type getResolvedType()
+	{
+		return resolvedType;
+	}
+
+	// NEW: Setter for the resolved Type
+	public void setResolvedType(Type resolvedType)
+	{
+		this.resolvedType = resolvedType;
 	}
 
 	@Override

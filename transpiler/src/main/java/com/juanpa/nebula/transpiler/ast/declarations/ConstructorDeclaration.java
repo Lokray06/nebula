@@ -1,15 +1,16 @@
-// File: src/main/java/com/juanpa.nebula.transpiler/ast/declarations/ConstructorDeclaration.java
+// File: src/main/java/com/juanpa/nebula/transpiler/ast/declarations/ConstructorDeclaration.java
 
 package com.juanpa.nebula.transpiler.ast.declarations;
 
 import com.juanpa.nebula.transpiler.ast.ASTNode;
-import com.juanpa.nebula.transpiler.ast.ASTVisitor; // Import ASTVisitor
+import com.juanpa.nebula.transpiler.ast.ASTVisitor;
 import com.juanpa.nebula.transpiler.ast.statements.BlockStatement;
+import com.juanpa.nebula.transpiler.ast.statements.ConstructorChainingCallStatement; // Import this
 import com.juanpa.nebula.transpiler.lexer.Token;
 
-import java.util.ArrayList; // Import ArrayList
+import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors; // Import Collectors
+import java.util.stream.Collectors;
 
 /**
  * AST node representing a constructor declaration.
@@ -17,17 +18,22 @@ import java.util.stream.Collectors; // Import Collectors
  */
 public class ConstructorDeclaration implements ASTNode
 {
-	private final List<Token> modifiers; // e.g., PUBLIC, PRIVATE
-	private final Token name;            // The constructor name (should match class name)
-	private final List<Token> parameters; // For simplicity, just tokens for now
+	private final List<Token> modifiers;
+	private final Token name;
+	private final List<Token> parameters;
 	private final BlockStatement body;
+
+	// --- NEW FIELD ---
+	// This will hold the 'this(...)' or 'super(...)' call if it exists.
+	private ConstructorChainingCallStatement chainingCall;
 
 	public ConstructorDeclaration(List<Token> modifiers, Token name, List<Token> parameters, BlockStatement body)
 	{
-		this.modifiers = new ArrayList<>(modifiers); // Make a copy
+		this.modifiers = new ArrayList<>(modifiers);
 		this.name = name;
-		this.parameters = new ArrayList<>(parameters); // Make a copy
+		this.parameters = new ArrayList<>(parameters);
 		this.body = body;
+		this.chainingCall = null; // Initialize to null
 	}
 
 	public List<Token> getModifiers()
@@ -50,6 +56,25 @@ public class ConstructorDeclaration implements ASTNode
 		return body;
 	}
 
+	// --- NEW GETTER ---
+	public ConstructorChainingCallStatement getChainingCall()
+	{
+		return chainingCall;
+	}
+
+	// --- NEW SETTER ---
+	public void setChainingCall(ConstructorChainingCallStatement chainingCall)
+	{
+		this.chainingCall = chainingCall;
+	}
+
+	@Override
+	public <R> R accept(ASTVisitor<R> visitor)
+	{
+		return visitor.visitConstructorDeclaration(this);
+	}
+
+	// ... (toString and other helper methods remain the same) ...
 	@Override
 	public String toString()
 	{
@@ -64,30 +89,30 @@ public class ConstructorDeclaration implements ASTNode
 		return sb.toString();
 	}
 
-	@Override
-	public <R> R accept(ASTVisitor<R> visitor) {
-		return visitor.visitConstructorDeclaration(this);
-	}
-
-	private String formatParameters(List<Token> params) {
-		if (params.isEmpty()) return "";
+	private String formatParameters(List<Token> params)
+	{
+		if(params.isEmpty())
+			return "";
 		StringBuilder sb = new StringBuilder();
-		for (int i = 0; i < params.size(); i += 2) { // Assuming pairs of (type, name)
-			sb.append(params.get(i).getLexeme()).append(" ").append(params.get(i+1).getLexeme());
-			if (i + 2 < params.size()) {
+		for(int i = 0; i < params.size(); i += 2)
+		{ // Assuming pairs of (type, name)
+			sb.append(params.get(i).getLexeme()).append(" ").append(params.get(i + 1).getLexeme());
+			if(i + 2 < params.size())
+			{
 				sb.append(", ");
 			}
 		}
 		return sb.toString();
 	}
 
-	private String indent(String text, int level) {
+	private String indent(String text, int level)
+	{
 		StringBuilder indentedText = new StringBuilder();
 		String prefix = "  ".repeat(level);
-		for (String line : text.split("\n")) {
+		for(String line : text.split("\n"))
+		{
 			indentedText.append(prefix).append(line).append("\n");
 		}
 		return indentedText.toString();
 	}
 }
-

@@ -28,9 +28,12 @@ public class LiteralExpression implements Expression
 		this.resolvedType = determineLiteralType(literalToken);
 	}
 
-	private Type determineLiteralType(Token literalToken) {
-		switch (literalToken.getType()) {
-			case INTEGER_LITERAL: return PrimitiveType.INT;
+	private Type determineLiteralType(Token literalToken)
+	{
+		switch(literalToken.getType())
+		{
+			case INTEGER_LITERAL:
+				return PrimitiveType.INT;
 			case STRING_LITERAL:
 				// Assuming 'string' keyword implies 'nebula.core.String'
 				// This needs access to declaredClasses, which this AST node doesn't have.
@@ -38,17 +41,23 @@ public class LiteralExpression implements Expression
 				// A temporary ClassType can be created here if needed for initial type,
 				// but it must be resolved against actual ClassSymbols later.
 				return null; // Will be set by SemanticAnalyzer
-			case CHAR_LITERAL: return PrimitiveType.CHAR;
-			case BOOLEAN_LITERAL: return PrimitiveType.BOOL;
-			case FLOAT_LITERAL: return PrimitiveType.FLOAT;
-			case DOUBLE_LITERAL: return PrimitiveType.DOUBLE;
+			case CHAR_LITERAL:
+				return PrimitiveType.CHAR;
+			case BOOLEAN_LITERAL:
+				return PrimitiveType.BOOL;
+			case FLOAT_LITERAL:
+				return PrimitiveType.FLOAT;
+			case DOUBLE_LITERAL:
+				return PrimitiveType.DOUBLE;
 			// For 'null' literal, assign NullType.INSTANCE
 			case IDENTIFIER: // Could be 'null' identifier token
-				if ("null".equals(literalToken.getLexeme())) {
+				if("null".equals(literalToken.getLexeme()))
+				{
 					return com.juanpa.nebula.transpiler.semantics.NullType.INSTANCE;
 				}
 				// fall through for other identifiers if this is a generic literal expression
-			default: return null; // Resolved by SemanticAnalyzer
+			default:
+				return null; // Resolved by SemanticAnalyzer
 		}
 	}
 
@@ -100,9 +109,16 @@ public class LiteralExpression implements Expression
 		// Not applicable for literals
 	}
 
+	@Override
+	public void setResolvedType(Type resolvedType)
+	{
+		this.resolvedType = resolvedType;
+	}
+
 	// NEW: Implementation for getResolvedType()
 	@Override
-	public Type getResolvedType() {
+	public Type getResolvedType()
+	{
 		// For literals, the type is inherent. SemanticAnalyzer might refine for String.
 		return resolvedType;
 	}
