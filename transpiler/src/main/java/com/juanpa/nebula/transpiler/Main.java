@@ -139,7 +139,7 @@ public class Main
 
 		// Code Generation Phase
 		System.out.println("\n--- Code Generation Phase ---");
-		CppGenerator cppGenerator = new CppGenerator(semanticAnalyzer.getDeclaredClasses());
+		CppGenerator cppGenerator = new CppGenerator(semanticAnalyzer.getDeclaredClasses(), semanticAnalyzer);
 		Map<String, String> generatedCode = cppGenerator.generate(fullProgramAST);
 
 		if(errorReporter.hasErrors())

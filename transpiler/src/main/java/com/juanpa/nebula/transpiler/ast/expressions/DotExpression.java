@@ -19,6 +19,7 @@ public class DotExpression implements Expression
 
 	// Semantic information to be filled during semantic analysis
 	private Symbol resolvedSymbol;
+	private Type resolvedType;
 
 	public DotExpression(Expression left, Token dotToken, Token memberName)
 	{
@@ -56,8 +57,15 @@ public class DotExpression implements Expression
 
 	// NEW: Implementation for getResolvedType()
 	@Override
-	public Type getResolvedType() {
-		return resolvedSymbol != null ? resolvedSymbol.getType() : null;
+	public Type getResolvedType()
+	{
+		return resolvedType;
+	}
+
+	@Override
+	public void setResolvedType(Type resolvedType)
+	{
+		this.resolvedType = resolvedType;
 	}
 
 	@Override

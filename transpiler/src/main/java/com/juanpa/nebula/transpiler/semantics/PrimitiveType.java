@@ -14,7 +14,7 @@ public class PrimitiveType extends Type
 	// Note: String is treated as a class type for C# like behavior, not a primitive here.
 	// This PrimitiveType.STRING instance might be a remnant or used for conceptual compatibility.
 	// For "string" keyword, it will map to Nebula.Lang.String ClassSymbol.
-	public static final PrimitiveType STRING = new PrimitiveType("String"); // This will be phased out for ClassType "nebula.core.String"
+	public static final PrimitiveType STRING = new PrimitiveType("string"); // This will be phased out for ClassType "nebula.core.String"
 	public static final PrimitiveType DOUBLE = new PrimitiveType("double");
 	public static final PrimitiveType FLOAT = new PrimitiveType("float");
 	public static final PrimitiveType BYTE = new PrimitiveType("byte");

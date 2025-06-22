@@ -42,4 +42,6 @@ public interface Expression extends ASTNode
 	 * @return The resolved Type, or null if not yet resolved or not applicable.
 	 */
 	Type getResolvedType(); // NEW METHOD
+
+	void setResolvedType(Type resolvedType);
 }

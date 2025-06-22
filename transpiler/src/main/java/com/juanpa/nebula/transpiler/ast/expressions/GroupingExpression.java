@@ -69,6 +69,12 @@ public class GroupingExpression implements Expression
 	}
 
 	@Override
+	public void setResolvedType(Type resolvedType)
+	{
+		this.resolvedType = resolvedType;
+	}
+
+	@Override
 	public void setResolvedSymbol(Symbol symbol)
 	{
 		// Not directly applicable for this expression type itself.
@@ -76,7 +82,8 @@ public class GroupingExpression implements Expression
 
 	// NEW: Implementation for getResolvedType()
 	@Override
-	public Type getResolvedType() {
+	public Type getResolvedType()
+	{
 		// The type of a grouping expression is the type of its inner expression.
 		return expression.getResolvedType();
 	}

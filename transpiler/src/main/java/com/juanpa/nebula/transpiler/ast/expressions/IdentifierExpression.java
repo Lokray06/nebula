@@ -15,6 +15,7 @@ public class IdentifierExpression implements Expression
 {
 	private final Token name; // The IDENTIFIER token
 	private Symbol resolvedSymbol; // Added field for resolved symbol
+	private Type resolvedType;
 
 	public IdentifierExpression(Token name)
 	{
@@ -44,8 +45,15 @@ public class IdentifierExpression implements Expression
 
 	// NEW: Implementation for getResolvedType()
 	@Override
-	public Type getResolvedType() {
+	public Type getResolvedType()
+	{
 		return resolvedSymbol != null ? resolvedSymbol.getType() : null;
+	}
+
+	@Override
+	public void setResolvedType(Type resolvedType)
+	{
+		this.resolvedType = resolvedType;
 	}
 
 	@Override
