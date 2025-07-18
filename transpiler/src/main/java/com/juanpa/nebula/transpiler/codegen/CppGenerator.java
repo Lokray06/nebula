@@ -438,6 +438,7 @@ public class CppGenerator implements ASTVisitor<String>
 			appendHeaderLine("#include \"" + relativeUpPath + "nebula/core/Object.h\"");
 			appendHeaderLine("#include \"" + relativeUpPath + "nebula/core/String.h\""); // User classes might implicitly use String (e.g. literals)
 			appendHeaderLine("#include \"" + relativeUpPath + "nebula/io/Console.h\""); // User classes might implicitly use Console
+            appendHeaderLine("#include \"" + relativeUpPath + "nebula/core/Math.h\""); // Explicitly include Math for user classes
 		}
 		if(!fqn.startsWith("nebula."))
 		{
