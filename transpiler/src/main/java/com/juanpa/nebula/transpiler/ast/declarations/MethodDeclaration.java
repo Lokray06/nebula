@@ -31,14 +31,16 @@ public class MethodDeclaration implements ASTNode
 	// NEW: Field for resolved MethodSymbol (to link AST node to semantic info)
 	private MethodSymbol resolvedSymbol;
 
+	private final boolean isWrapper; // ADD THIS
+	private final Token cppTarget;   // ADD THIS
 
 	// Constructor for regular methods (no operatorKeyword, must have body OR semicolon)
 	public MethodDeclaration(List<Token> modifiers, Token returnType, Token name,
-							 List<Token> parameters, BlockStatement body, Token semicolon)
+	                         List<Token> parameters, BlockStatement body, Token semicolon)
 	{
-		// Delegate to the more comprehensive constructor, passing null for operatorKeyword
-		this(modifiers, returnType, name, parameters, body, semicolon, null);
+		this(modifiers, returnType, name, parameters, body, semicolon, null, false, null);
 	}
+
 
 	/**
 	 * Comprehensive constructor for MethodDeclaration, used by the parser.
@@ -53,15 +55,17 @@ public class MethodDeclaration implements ASTNode
 	 */
 	public MethodDeclaration(List<Token> modifiers, Token returnType, Token name,
 							 List<Token> parameters, BlockStatement body, Token semicolon,
-							 Token operatorKeyword)
+							 Token operatorKeyword, boolean isWrapper, Token cppTarget)
 	{
-		this.modifiers = new ArrayList<>(modifiers); // Make a copy
+		this.modifiers = new ArrayList<>(modifiers);
 		this.returnType = returnType;
 		this.name = name;
-		this.parameters = new ArrayList<>(parameters); // Make a copy
+		this.parameters = new ArrayList<>(parameters);
 		this.body = body;
 		this.semicolon = semicolon;
 		this.operatorKeyword = operatorKeyword;
+		this.isWrapper = isWrapper;       // ADD THIS
+		this.cppTarget = cppTarget;
 
 		// Basic validation (optional, can be done in semantic analysis too)
 		if(body == null && semicolon == null)
@@ -92,6 +96,16 @@ public class MethodDeclaration implements ASTNode
 	public Token getName()
 	{
 		return name;
+	}
+
+	public boolean isWrapper()
+	{
+		return isWrapper;
+	}
+
+	public Token getCppTarget()
+	{
+		return cppTarget;
 	}
 
 	public Token getOperatorKeyword()

@@ -66,7 +66,7 @@ public class CppGenerator implements ASTVisitor<String>
 	public Map<String, String> generate(Program program)
 	{
 		// First pass to populate the map for classes and headers (and resolve symbols if applicable)
-		for(NamespaceDeclaration namespaceDecl : program.getNamespaceDeclarations())
+		for (NamespaceDeclaration namespaceDecl : program.getNamespaceDeclarations())
 		{
 			namespaceDecl.accept(this);
 		}
@@ -88,7 +88,7 @@ public class CppGenerator implements ASTVisitor<String>
 								"void".equals(m.getReturnType().getLexeme()))) // Keep consistent with your new condition
 				.findFirst();
 
-		if(mainClassOpt.isPresent())
+		if (mainClassOpt.isPresent())
 		{
 			ClassDeclaration mainClassDecl = mainClassOpt.get();
 
@@ -130,12 +130,12 @@ public class CppGenerator implements ASTVisitor<String>
 
 	private void appendLine(String line)
 	{
-		if(currentClassCodeBuilder == null)
+		if (currentClassCodeBuilder == null)
 		{
 			System.err.println("Error: currentClassCodeBuilder is null. This should be initialized per class in visitClassDeclaration.");
 			return;
 		}
-		for(int i = 0; i < indentLevel; i++)
+		for (int i = 0; i < indentLevel; i++)
 		{
 			currentClassCodeBuilder.append("	");
 		}
@@ -144,12 +144,12 @@ public class CppGenerator implements ASTVisitor<String>
 
 	private void appendHeaderLine(String line)
 	{
-		if(currentHeaderCodeBuilder == null)
+		if (currentHeaderCodeBuilder == null)
 		{
 			System.err.println("Error: currentHeaderCodeBuilder is null. This should be initialized per class in visitClassDeclaration.");
 			return;
 		}
-		for(int i = 0; i < indentLevel; i++)
+		for (int i = 0; i < indentLevel; i++)
 		{
 			currentHeaderCodeBuilder.append("	");
 		}
@@ -163,7 +163,7 @@ public class CppGenerator implements ASTVisitor<String>
 
 	private void dedent()
 	{
-		if(indentLevel > 0)
+		if (indentLevel > 0)
 		{
 			indentLevel--;
 		}
@@ -177,7 +177,7 @@ public class CppGenerator implements ASTVisitor<String>
 	private Type resolveTypeFromToken(Token typeToken, int arrayRank)
 	{
 		Type baseType;
-		switch(typeToken.getType())
+		switch (typeToken.getType())
 		{
 			case INT:
 				baseType = PrimitiveType.INT;
@@ -208,7 +208,7 @@ public class CppGenerator implements ASTVisitor<String>
 				// This is a simplified lookup. A more robust implementation would check
 				// current namespace, imports, etc., similar to SemanticAnalyzer.
 				ClassSymbol byFqn = declaredClasses.get(currentNamespacePrefix + "." + typeToken.getLexeme());
-				if(byFqn != null)
+				if (byFqn != null)
 				{
 					baseType = byFqn.getType();
 				}
@@ -225,11 +225,13 @@ public class CppGenerator implements ASTVisitor<String>
 				break;
 		}
 
-		if(baseType instanceof ErrorType)
+		if (baseType instanceof ErrorType)
+		{
 			return baseType;
+		}
 
 		Type currentType = baseType;
-		for(int i = 0; i < arrayRank; i++)
+		for (int i = 0; i < arrayRank; i++)
 		{
 			currentType = new ArrayType(currentType);
 		}
@@ -245,41 +247,55 @@ public class CppGenerator implements ASTVisitor<String>
 
 	private String toCppType(Type type)
 	{
-		if(type instanceof PrimitiveType)
+		if (type instanceof PrimitiveType)
 		{
-			if(type.equals(PrimitiveType.INT))
+			if (type.equals(PrimitiveType.INT))
+			{
 				return "int";
-			if(type.equals(PrimitiveType.BOOL))
+			}
+			if (type.equals(PrimitiveType.BOOL))
+			{
 				return "bool";
-			if(type.equals(PrimitiveType.FLOAT))
+			}
+			if (type.equals(PrimitiveType.FLOAT))
+			{
 				return "float";
-			if(type.equals(PrimitiveType.DOUBLE))
+			}
+			if (type.equals(PrimitiveType.DOUBLE))
+			{
 				return "double";
-			if(type.equals(PrimitiveType.BYTE))
+			}
+			if (type.equals(PrimitiveType.BYTE))
+			{
 				return "char"; // Assuming byte maps to char in C++
-			if(type.equals(PrimitiveType.CHAR))
+			}
+			if (type.equals(PrimitiveType.CHAR))
+			{
 				return "char";
-			if(type.equals(PrimitiveType.VOID))
+			}
+			if (type.equals(PrimitiveType.VOID))
+			{
 				return "void";
+			}
 		}
-		else if(type instanceof ClassType)
+		else if (type instanceof ClassType)
 		{
 			ClassType classType = (ClassType) type;
 			// For all Nebula classes (including String and Object), use shared_ptr
 			String cppFqn = classType.getFqn().replace(".", "::");
 			return "std::shared_ptr<" + cppFqn + ">";
 		}
-		else if(type instanceof ArrayType)
+		else if (type instanceof ArrayType)
 		{
 			// *** MODIFIED ***: Correctly handle nested arrays.
 			ArrayType arrayType = (ArrayType) type;
 			return "std::vector<" + toCppType(arrayType.getElementType()) + ">";
 		}
-		else if(type instanceof NullType)
+		else if (type instanceof NullType)
 		{
 			return "decltype(nullptr)"; // Represents the type of 'nullptr'
 		}
-		else if(type instanceof ErrorType)
+		else if (type instanceof ErrorType)
 		{
 			return "/* ERROR_TYPE */ void*"; // Placeholder for unresolved types
 		}
@@ -303,12 +319,12 @@ public class CppGenerator implements ASTVisitor<String>
 	 */
 	private String formatCppParameters(List<Token> parameters)
 	{
-		if(parameters.isEmpty())
+		if (parameters.isEmpty())
 		{
 			return "";
 		}
 		StringBuilder sb = new StringBuilder();
-		for(int i = 0; i < parameters.size(); i += 2) // Iterate by pairs (type, name)
+		for (int i = 0; i < parameters.size(); i += 2) // Iterate by pairs (type, name)
 		{
 			Token paramTypeToken = parameters.get(i);
 			Token paramNameToken = parameters.get(i + 1);
@@ -318,7 +334,7 @@ public class CppGenerator implements ASTVisitor<String>
 			String paramName = paramNameToken.getLexeme();
 
 			// For Nebula class types, pass shared_ptr by const reference to avoid copying smart pointers
-			if(paramType instanceof ClassType || paramType instanceof ArrayType) // Also pass vectors by const ref
+			if (paramType instanceof ClassType || paramType instanceof ArrayType) // Also pass vectors by const ref
 			{
 				sb.append("const ").append(cppType).append("& ").append(paramName);
 			}
@@ -327,7 +343,7 @@ public class CppGenerator implements ASTVisitor<String>
 				sb.append(cppType).append(" ").append(paramName);
 			}
 
-			if(i < parameters.size() - 2) // Check if there are more parameter pairs
+			if (i < parameters.size() - 2) // Check if there are more parameter pairs
 			{
 				sb.append(", ");
 			}
@@ -359,7 +375,7 @@ public class CppGenerator implements ASTVisitor<String>
 		String namespacePart = getQualifiedNameFromExpressionInternal(declaration.getNameExpression());
 		this.currentNamespacePrefix = previousNamespacePrefix.isEmpty() ? namespacePart : previousNamespacePrefix + "." + namespacePart;
 
-		for(ClassDeclaration classDecl : declaration.getClassDeclarations())
+		for (ClassDeclaration classDecl : declaration.getClassDeclarations())
 		{
 			classDecl.accept(this);
 		}
@@ -372,35 +388,23 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitClassDeclaration(ClassDeclaration declaration)
 	{
+		// This method now acts as the entry point for generating a single class's .h and .cpp files.
 		currentClassCodeBuilder = new StringBuilder();
 		currentHeaderCodeBuilder = new StringBuilder();
 		indentLevel = 0;
 
-		ClassSymbol resolvedClassSymbol = null;
-		if(declaration.getNameExpression().getResolvedSymbol() instanceof ClassSymbol)
-		{
-			resolvedClassSymbol = (ClassSymbol) declaration.getNameExpression().getResolvedSymbol();
-		}
-		else
-		{
-			// Fallback if resolvedSymbol is not directly available, try lookup
-			String simpleName = declaration.getName().getLexeme();
-			String fullClassNameFromPrefix = currentNamespacePrefix.isEmpty() ? simpleName : currentNamespacePrefix + "." + simpleName;
-			resolvedClassSymbol = declaredClasses.get(fullClassNameFromPrefix);
-		}
+		ClassSymbol resolvedClassSymbol = (declaration.getNameExpression().getResolvedSymbol() instanceof ClassSymbol)
+				? (ClassSymbol) declaration.getNameExpression().getResolvedSymbol()
+				: declaredClasses.get(declaration.getContainingNamespace() + "." + declaration.getName().getLexeme());
 
-
-		ClassSymbol previousClassSymbol = this.currentClassSymbol;
-		this.currentClassSymbol = resolvedClassSymbol; // Set current class for symbol resolution within methods
-
-		if(this.currentClassSymbol == null)
+		if (resolvedClassSymbol == null)
 		{
-			String className = declaration.getName().getLexeme();
-			String errorFqn = currentNamespacePrefix.isEmpty() ? className : currentNamespacePrefix + "." + className;
-			error(declaration.getName(), "Class symbol not resolved for class '" + errorFqn + "'. Skipping code generation for this class.");
-			this.currentClassSymbol = previousClassSymbol; // Restore previous symbol before returning
+			error(declaration.getName(), "Class symbol not resolved for class '" + declaration.getName().getLexeme() + "'. Skipping code generation.");
 			return null;
 		}
+
+		ClassSymbol previousClassSymbol = this.currentClassSymbol;
+		this.currentClassSymbol = resolvedClassSymbol;
 
 		String fqn = currentClassSymbol.getFqn();
 		String simpleName = currentClassSymbol.getName();
@@ -414,285 +418,151 @@ public class CppGenerator implements ASTVisitor<String>
 		appendHeaderLine("#include <memory>");
 		appendHeaderLine("#include <string>");
 		appendHeaderLine("#include <vector>");
-
-		// Logic for includes based on namespace hierarchy
-		// Calculate the number of directories to go up to reach the root 'out' directory
-		int currentNamespaceDepth = currentNamespacePrefix.isEmpty() ? 0 : currentNamespacePrefix.split("\\.").length;
-		String relativeUpPath = "../".repeat(currentNamespaceDepth);
-
-		if(fqn.equals("nebula.core.Object"))
-		{
-			appendHeaderLine("namespace nebula { namespace core { class String; } } // Forward Declaration");
-		}
-		else if(fqn.equals("nebula.core.String"))
-		{
-			appendHeaderLine("#include \"Object.h\""); // String is in core, needs Object.h from same dir
-		}
-		else if(fqn.equals("nebula.io.Console"))
-		{
-			appendHeaderLine("#include \"../core/Object.h\""); // Console is in io, needs Object.h from ../core
-			appendHeaderLine("#include \"../core/String.h\""); // Console is in io, needs String.h from ../core
-		}
-		else
-		{ // For user-defined classes (e.g., Program.Test)
-			appendHeaderLine("#include \"" + relativeUpPath + "nebula/core/Object.h\"");
-			appendHeaderLine("#include \"" + relativeUpPath + "nebula/core/String.h\""); // User classes might implicitly use String (e.g. literals)
-			appendHeaderLine("#include \"" + relativeUpPath + "nebula/io/Console.h\""); // User classes might implicitly use Console
-            appendHeaderLine("#include \"" + relativeUpPath + "nebula/core/Math.h\""); // Explicitly include Math for user classes
-		}
-		if(!fqn.startsWith("nebula."))
-		{
-			Set<String> deps = collectClassDependencies(declaration);
-			int depth = currentNamespacePrefix.isEmpty() ? 0 : currentNamespacePrefix.split("\\.").length;
-			for(String dep : deps)
-			{
-				String path = dep.replace('.', '/') + ".h";
-				String rel = "../".repeat(depth) + path;
-				appendHeaderLine("#include \"" + rel + "\"");
-			}
-			appendHeaderLine("");
-		}
+		appendHeaderLine("#include <cmath>");
+		appendHeaderLine("#include <iostream>");
 		appendHeaderLine("");
 
-		String[] namespaceParts = currentNamespacePrefix.split("\\.");
-		for(String ns : namespaceParts)
+		Set<String> headerDeps = collectClassDependencies(declaration, false);
+
+		if (currentClassSymbol.getType().getSuperClassType() instanceof ClassType)
 		{
-			if(!ns.isEmpty())
-			{ // Handle empty prefix for top-level classes
+			headerDeps.add(((ClassType) currentClassSymbol.getType().getSuperClassType()).getFqn());
+		}
+
+		for (String dep : headerDeps)
+		{
+			if (!dep.equals(fqn))
+			{
+				appendHeaderLine("#include \"" + dep.replace('.', '/') + ".h\"");
+			}
+		}
+		appendHeaderLine("");
+		appendHeaderLine("namespace nebula { namespace core { class Object; class String; } }");
+		appendHeaderLine("");
+		String[] namespaceParts = currentNamespacePrefix.split("\\.");
+		for (String ns : namespaceParts)
+		{
+			if (!ns.isEmpty())
+			{
 				appendHeaderLine("namespace " + ns + " {");
 				indent();
 			}
 		}
 
 		String inheritance = "";
-		if(currentClassSymbol.getType().getSuperClassType() != null)
+		if (currentClassSymbol.getType().getSuperClassType() instanceof ClassType)
 		{
-			String superClassFqn = "";
-			if(currentClassSymbol.getType().getSuperClassType() instanceof ClassType)
-			{
-				ClassType superClassType = (ClassType) currentClassSymbol.getType().getSuperClassType();
-				if(superClassType.getClassSymbol() != null)
-				{
-					superClassFqn = superClassType.getFqn();
-					inheritance = " : public " + superClassFqn.replace(".", "::");
-				}
-			}
+			ClassType superClassType = (ClassType) currentClassSymbol.getType().getSuperClassType();
+			inheritance = " : public " + superClassType.getFqn().replace(".", "::");
 		}
 
 		appendHeaderLine("class " + simpleName + inheritance + " {");
-
-		if(fqn.equals("nebula.core.String"))
-		{
-			appendHeaderLine("private:");
-			indent();
-			appendHeaderLine("std::string _data;");
-			dedent();
-		}
-
 		appendHeaderLine("public:");
 		indent();
 
-		// FIX: Iterate through all field declarations to correctly handle static vs non-static
-		for(FieldDeclaration field : declaration.getFields())
+		// +++ FIX: Add virtual destructor to Object for polymorphism +++
+		if ("nebula.core.Object".equals(fqn))
 		{
-			Symbol fieldSymbol = currentClassSymbol.getClassScope().resolve(field.getName().getLexeme());
-			if(fieldSymbol instanceof VariableSymbol)
+			appendHeaderLine("virtual ~Object() = default; // Enable RTTI for dynamic_cast");
+		}
+
+		for (FieldDeclaration field : declaration.getFields())
+		{
+			VariableSymbol varSymbol = (VariableSymbol) currentClassSymbol.getClassScope().resolve(field.getName().getLexeme());
+			if (varSymbol != null)
 			{
-				VariableSymbol varSymbol = (VariableSymbol) fieldSymbol;
-				String modifiers = varSymbol.isStatic() ? "static " : "";
 				String fieldCppType = toCppType(field.getResolvedType());
-				String fieldName = field.getName().getLexeme();
-				appendHeaderLine(modifiers + fieldCppType + " " + fieldName + ";");
+				String staticQualifier = varSymbol.isStatic() ? "static " : "";
+				appendHeaderLine(staticQualifier + fieldCppType + " " + field.getName().getLexeme() + ";");
+			}
+		}
+		appendHeaderLine("");
+
+		for (ConstructorDeclaration ctor : declaration.getConstructors())
+		{
+			appendHeaderLine(simpleName + "(" + formatCppParameters(ctor.getParameters()) + ");");
+		}
+		if (declaration.getConstructors().isEmpty())
+		{
+			appendHeaderLine(simpleName + "(); // Default constructor");
+		}
+		appendHeaderLine("");
+
+		for (MethodDeclaration method : declaration.getMethods())
+		{
+			MethodSymbol methodSymbol = method.getResolvedSymbol();
+			if (methodSymbol != null)
+			{
+				String returnType = toCppType(methodSymbol.getType());
+				String methodName = methodSymbol.isOperator() ? "operator" + methodSymbol.getName() : methodSymbol.getMangledName();
+				String staticQualifier = methodSymbol.isStatic() ? "static " : "";
+
+				// Only add 'const' if the method is NOT static.
+				String constQualifier = (!methodSymbol.isStatic()) ? " const" : "";
+
+				appendHeaderLine(staticQualifier + returnType + " " + methodName + "(" + formatCppParameters(method.getParameters()) + ")" + constQualifier + ";");
 			}
 		}
 
-
-		// Destructor
-		appendHeaderLine("virtual ~" + simpleName + "() = default;");
-
-		// Constructors
-		// Handle specific constructors for String
-		if(fqn.equals("nebula.core.String"))
+		if (currentClassSymbol.isNative() && "nebula.core.String".equals(fqn))
 		{
-			appendHeaderLine(simpleName + "();"); // Default constructor
-			appendHeaderLine(simpleName + "(const std::string& raw_str);"); // std::string constructor
-			appendHeaderLine(simpleName + "(const std::shared_ptr<nebula::core::String>& other);"); // Copy constructor
-		}
-		else
-		{
-			// Generate default constructor for non-String/Object classes if no explicit ones are defined
-			if(declaration.getConstructors().isEmpty())
-			{
-				// Only generate if it's not Object (Object's constructor will be explicitly defined)
-				if(!fqn.equals("nebula.core.Object"))
-				{
-					appendHeaderLine(simpleName + "();");
-				}
-			}
-		}
-
-		for(ConstructorDeclaration ctor : declaration.getConstructors())
-		{
-			// Skip explicitly handled String constructors
-			boolean isStringDefaultCtor = fqn.equals("nebula.core.String") && ctor.getParameters().isEmpty();
-			boolean isStringRawStringCtor = fqn.equals("nebula.core.String") && ctor.getParameters().size() == 2 &&
-					ctor.getParameters().get(0).getType() == TokenType.STRING_KEYWORD &&
-					ctor.getParameters().get(1).getType() == TokenType.IDENTIFIER;
-			// To avoid duplication, also skip if it's the shared_ptr copy constructor for String
-			boolean isStringSharedPtrCopyCtor = fqn.equals("nebula.core.String") && ctor.getParameters().size() == 2 &&
-					ctor.getParameters().get(0).getLexeme().equals("String") && // Assuming parameter type is 'String' keyword
-					ctor.getParameters().get(1).getType() == TokenType.IDENTIFIER;
-
-			if(!isStringDefaultCtor && !isStringRawStringCtor && !isStringSharedPtrCopyCtor)
-			{
-				appendHeaderLine(simpleName + "(" + formatCppParameters(ctor.getParameters()) + ");");
-			}
-		}
-
-
-		// Methods
-		for(MethodDeclaration method : declaration.getMethods())
-		{
-			// --- START OF MODIFICATION ---
-
-			// Get the resolved symbol from the semantic analysis pass. This is CRUCIAL.
-			MethodSymbol resolvedMethodSymbol = method.getResolvedSymbol();
-			if(resolvedMethodSymbol == null)
-			{
-				error(method.getName(), "Internal codegen error: Method symbol not resolved for '" + method.getName().getLexeme() + "'. Cannot generate header declaration.");
-				continue;
-			}
-
-			boolean isStatic = resolvedMethodSymbol.isStatic();
-			String modifiers = isStatic ? "static " : "";
-
-			// Determine if a method is overriding a base class method
-			boolean isOverride = false;
-			if(!isStatic)
-			{
-				if(currentClassSymbol.getType().getSuperClassType() != null)
-				{
-					ClassType superClassType = (ClassType) currentClassSymbol.getType().getSuperClassType();
-					if(superClassType.getClassSymbol() != null)
-					{
-						ClassSymbol superClass = (ClassSymbol) superClassType.getClassSymbol();
-						Optional<MethodSymbol> overriddenMethod = superClass.methodsByName.values().stream()
-								.flatMap(List::stream)
-								.filter(m -> m.getName().equals(method.getName().getLexeme()) &&
-										m.getParameterTypes().size() == method.getParameters().size() / 2) // Assuming MethodSymbol has isVirtual()
-								.findFirst();
-						if(overriddenMethod.isPresent())
-						{
-							isOverride = true;
-						}
-					}
-				}
-			}
-
-			// Add virtual keyword if necessary
-			if(!isStatic && (fqn.equals("nebula.core.Object") || isOverride))
-			{
-				modifiers += "virtual ";
-			}
-
-
-			// Use the resolved type from the symbol for accuracy.
-			String returnType = toCppType(resolvedMethodSymbol.getType());
-
-			// *** THIS IS THE KEY FIX: Use the mangled name if it exists. ***
-			String methodName = resolvedMethodSymbol.getMangledName() != null
-					? resolvedMethodSymbol.getMangledName()
-					: resolvedMethodSymbol.getName();
-
-			if(method.getOperatorKeyword() != null)
-				methodName = "operator" + methodName;
-
-			String params = formatCppParameters(method.getParameters());
-
-			boolean isConstMethod = !isStatic && List.of("length", "hashCode", "toString", "operator==").contains(methodName);
-			String constQualifier = isConstMethod ? " const" : "";
-
-			String overrideKeyword = isOverride ? " override" : "";
-
-			if(fqn.equals("nebula.core.Object") && methodName.equals("operator=="))
-			{
-				appendHeaderLine(modifiers + "bool " + methodName + "(const std::shared_ptr<nebula::core::Object>& other)" + constQualifier + overrideKeyword + ";");
-			}
-			else if(fqn.equals("nebula.core.String") && methodName.equals("operator=="))
-			{
-				appendHeaderLine(modifiers + "bool " + methodName + "(const std::shared_ptr<nebula::core::Object>& other)" + constQualifier + overrideKeyword + ";");
-				appendHeaderLine("bool " + methodName + "(const std::shared_ptr<nebula::core::String>& other)" + constQualifier + ";");
-			}
-			else
-			{
-				appendHeaderLine(modifiers + returnType + " " + methodName + "(" + params + ")" + constQualifier + overrideKeyword + ";");
-			}
-		}
-
-		if(fqn.equals("nebula.core.String"))
-		{
-			appendHeaderLine("const std::string& raw() const;");
+			appendHeaderLine("\n\t// Special constructor for wrapping std::string");
+			appendHeaderLine("\tString(const std::string& raw_str);");
+			appendHeaderLine("\n\t// Accessor for the raw C++ string data");
+			appendHeaderLine("\tconst std::string& raw() const;");
+			dedent();
+			appendHeaderLine("private:");
+			indent();
+			appendHeaderLine("std::string _data;");
 		}
 
 		dedent();
 		appendHeaderLine("}; // class " + simpleName);
 
-		for(int i = namespaceParts.length - 1; i >= 0; i--)
+		for (int i = namespaceParts.length - 1; i >= 0; i--)
 		{
-			if(!namespaceParts[i].isEmpty())
+			if (!namespaceParts[i].isEmpty())
 			{
 				dedent();
 				appendHeaderLine("} // namespace " + namespaceParts[i]);
 			}
 		}
-
 		appendHeaderLine("\n#endif // " + headerGuard);
 		generatedClassCodeMap.put(fqn.replace('.', '/') + ".h", currentHeaderCodeBuilder.toString());
 
 		// --- Generate Source (.cpp) ---
 		appendLine("// " + fqn.replace('.', '/') + ".cpp");
-		appendLine("#include \"" + simpleName + ".h\""); // Current class header
-		// Corrected includes for cpp files relative to their own location
-		if(fqn.equals("nebula.core.Object"))
+		appendLine("#include \"" + fqn.replace('.', '/') + ".h\"");
+
+		Set<String> cppDeps = collectClassDependencies(declaration, true);
+		for (String dep : cppDeps)
 		{
-			appendLine("#include \"String.h\"");
+			if (currentClassSymbol.getType().getSuperClassType() instanceof ClassType &&
+					dep.equals(((ClassType) currentClassSymbol.getType().getSuperClassType()).getFqn()))
+			{
+				continue;
+			}
+			appendLine("#include \"" + dep.replace('.', '/') + ".h\"");
 		}
-		else if(fqn.equals("nebula.core.String"))
-		{
-			// String.cpp includes String.h (which now includes Object.h), no need for direct Object.h here
-		}
-		else if(fqn.equals("nebula.io.Console"))
-		{
-			appendLine("#include \"../core/String.h\"");
-			appendLine("#include \"../core/Object.h\"");
-		}
-		appendLine("#include <iostream>");
+
 		appendLine("#include <sstream>");
 		appendLine("#include <functional>");
 		appendLine("");
 
-		for(String ns : namespaceParts)
+		for (String ns : namespaceParts)
 		{
-			if(!ns.isEmpty())
+			if (!ns.isEmpty())
 			{
 				appendLine("namespace " + ns + " {");
 				indent();
 			}
 		}
 
-		// Use special generators for SDK classes
-		if(fqn.equals("nebula.core.Object"))
-			generateObjectCpp(declaration);
-		else if(fqn.equals("nebula.core.String"))
-			generateStringCpp(declaration);
-		else if(fqn.equals("nebula.io.Console"))
-			generateConsoleCpp(declaration);
-		else
-			generateGenericClassCpp(declaration);
+		generateGenericClassCpp(declaration);
 
-		for(int i = namespaceParts.length - 1; i >= 0; i--)
+		for (int i = namespaceParts.length - 1; i >= 0; i--)
 		{
-			if(!namespaceParts[i].isEmpty())
+			if (!namespaceParts[i].isEmpty())
 			{
 				dedent();
 				appendLine("} // namespace " + namespaceParts[i]);
@@ -700,7 +570,7 @@ public class CppGenerator implements ASTVisitor<String>
 		}
 		generatedClassCodeMap.put(fqn.replace('.', '/') + ".cpp", currentClassCodeBuilder.toString());
 
-		this.currentClassSymbol = null; // Reset
+		this.currentClassSymbol = previousClassSymbol;
 		return null;
 	}
 
@@ -721,7 +591,7 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitFieldDeclaration(FieldDeclaration declaration)
 	{
-		if(declaration.getInitializer() != null)
+		if (declaration.getInitializer() != null)
 		{
 			return declaration.getInitializer().accept(this);
 		}
@@ -731,10 +601,10 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitBlockStatement(BlockStatement statement)
 	{
-		for(Statement stmt : statement.getStatements())
+		for (Statement stmt : statement.getStatements())
 		{
 			String generatedCode = stmt.accept(this);
-			if(generatedCode != null && !generatedCode.trim().isEmpty())
+			if (generatedCode != null && !generatedCode.trim().isEmpty())
 			{
 				appendLine(generatedCode);
 			}
@@ -757,7 +627,7 @@ public class CppGenerator implements ASTVisitor<String>
 		indent();
 		statement.getThenBranch().accept(this);
 		dedent();
-		if(statement.getElseBranch() != null)
+		if (statement.getElseBranch() != null)
 		{
 			appendLine("} else {");
 			indent();
@@ -790,7 +660,7 @@ public class CppGenerator implements ASTVisitor<String>
 		String incrementCode = statement.getIncrement() != null ? statement.getIncrement().accept(this) : "";
 
 		// visitor for statements already adds the semicolon, so remove it from the initializer part of the for loop
-		if(initializerCode.endsWith(";"))
+		if (initializerCode.endsWith(";"))
 		{
 			initializerCode = initializerCode.substring(0, initializerCode.length() - 1);
 		}
@@ -807,7 +677,7 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitReturnStatement(ReturnStatement statement)
 	{
-		if(statement.getValue() != null)
+		if (statement.getValue() != null)
 		{
 			return "return " + statement.getValue().accept(this) + ";";
 		}
@@ -822,11 +692,11 @@ public class CppGenerator implements ASTVisitor<String>
 		String cppType = statement.getTypeToken().getType() == TokenType.VAR ? "auto" : toCppType(varType);
 
 		String declaration = cppType + " " + statement.getName().getLexeme();
-		if(statement.getInitializer() != null)
+		if (statement.getInitializer() != null)
 		{
 			declaration += " = " + statement.getInitializer().accept(this);
 		}
-		else if(varType instanceof ClassType || varType instanceof ArrayType)
+		else if (varType instanceof ClassType || varType instanceof ArrayType)
 		{
 			// Default-initialize shared_ptrs to nullptr and vectors to empty
 			declaration += "{}";
@@ -840,11 +710,11 @@ public class CppGenerator implements ASTVisitor<String>
 		String switchExprCode = statement.getSwitchExpression().accept(this);
 		appendLine("switch (" + switchExprCode + ") {");
 		indent();
-		for(SwitchCase sc : statement.getCases())
+		for (SwitchCase sc : statement.getCases())
 		{
 			sc.accept(this);
 		}
-		if(statement.getDefaultBlock() != null)
+		if (statement.getDefaultBlock() != null)
 		{
 			appendLine("default:");
 			indent();
@@ -864,7 +734,7 @@ public class CppGenerator implements ASTVisitor<String>
 	public String visitArrayCreationExpression(ArrayCreationExpression expression)
 	{
 		Type resolvedType = expression.getResolvedType();
-		if(resolvedType == null || !(resolvedType instanceof ArrayType))
+		if (resolvedType == null || !(resolvedType instanceof ArrayType))
 		{
 			error(expression.getFirstToken(), "Internal codegen error: Array creation expression has no resolved type.");
 			return "{}"; // Return empty C++ initializer list as an error fallback
@@ -982,7 +852,7 @@ public class CppGenerator implements ASTVisitor<String>
 	private void generateConsoleCpp(ClassDeclaration declaration)
 	{
 		String simpleName = currentClassSymbol.getName();
-		for(MethodDeclaration method : declaration.getMethods())
+		for (MethodDeclaration method : declaration.getMethods())
 		{
 			String methodName = method.getName().getLexeme();
 			String params = formatCppParameters(method.getParameters());
@@ -995,7 +865,7 @@ public class CppGenerator implements ASTVisitor<String>
 			// The original Console.neb had parameters like (Object anything), (string anyString)
 			// so the second token is the actual parameter name.
 			// This assumes single-parameter print/println methods.
-			if(!method.getParameters().isEmpty())
+			if (!method.getParameters().isEmpty())
 			{
 				Token paramNameToken = method.getParameters().get(1); // Parameter name is the second token
 				Token paramTypeToken = method.getParameters().get(0); // Parameter type is the first token
@@ -1003,12 +873,12 @@ public class CppGenerator implements ASTVisitor<String>
 				Type paramType = resolveTypeFromToken(paramTypeToken);
 
 
-				if(paramType instanceof ClassType)
+				if (paramType instanceof ClassType)
 				{
 					// Use the raw() method for printing Nebula String/Object content
 					appendLine("if (" + paramName + ") { std::cout << " + paramName + "->toString()->raw(); } else { std::cout << \"null\"; }");
 				}
-				else if(paramType.equals(PrimitiveType.BOOL))
+				else if (paramType.equals(PrimitiveType.BOOL))
 				{
 					// Use std::boolalpha for cleaner boolean output (true/false)
 					appendLine("std::cout << std::boolalpha << " + paramName + ";");
@@ -1026,7 +896,7 @@ public class CppGenerator implements ASTVisitor<String>
 			}
 
 
-			if(methodName.startsWith("println"))
+			if (methodName.startsWith("println"))
 			{
 				appendLine("std::cout << std::endl;");
 			}
@@ -1039,122 +909,123 @@ public class CppGenerator implements ASTVisitor<String>
 	private void generateGenericClassCpp(ClassDeclaration declaration)
 	{
 		String simpleName = currentClassSymbol.getName();
-		String cppFqnPrefix = currentNamespacePrefix.isEmpty() ? "" : currentNamespacePrefix.replace(".", "::") + "::";
+		String fqn = currentClassSymbol.getFqn();
+		boolean isNative = currentClassSymbol.isNative();
 
-		// FIX: Define and initialize static fields
-		for(FieldDeclaration field : declaration.getFields())
+		// 1. Define and initialize static fields
+		for (FieldDeclaration field : declaration.getFields())
 		{
-			Symbol fieldSymbol = currentClassSymbol.getClassScope().resolve(field.getName().getLexeme());
-			if(fieldSymbol instanceof VariableSymbol)
+			VariableSymbol varSymbol = (VariableSymbol) currentClassSymbol.getClassScope().resolve(field.getName().getLexeme());
+			if (varSymbol != null && varSymbol.isStatic())
 			{
-				VariableSymbol varSymbol = (VariableSymbol) fieldSymbol;
-				if(varSymbol.isStatic())
+				String fieldCppType = toCppType(field.getResolvedType());
+				String initializer = (field.getInitializer() != null) ? field.getInitializer().accept(this) : "{}";
+				if (varSymbol.isWrapper())
 				{
-					String fieldCppType = toCppType(field.getResolvedType());
-					String fieldName = field.getName().getLexeme();
-					String initializer = "{}"; // Default initializer
-					if(field.getInitializer() != null)
-					{
-						initializer = field.getInitializer().accept(this);
-					}
-					appendLine(fieldCppType + " " + cppFqnPrefix + simpleName + "::" + fieldName + " = " + initializer + ";\n");
+					initializer = varSymbol.getCppTarget();
 				}
+				appendLine(fieldCppType + " " + simpleName + "::" + field.getName().getLexeme() + " = " + initializer + ";");
+			}
+		}
+		appendLine("");
+
+		// 2. Constructors (for both native and non-native)
+		if (declaration.getConstructors().isEmpty())
+		{
+			// Generate default constructor definition
+			String initializer = "nebula.core.String".equals(fqn) ? " : _data(\"\")" : "";
+			appendLine(simpleName + "::" + simpleName + "()" + initializer + " {} \n");
+		}
+		else
+		{
+			for (ConstructorDeclaration ctor : declaration.getConstructors())
+			{
+				String params = formatCppParameters(ctor.getParameters());
+				String ctorSignature = simpleName + "::" + simpleName + "(" + params + ")";
+
+				// +++ FIX: Differentiate between String constructors +++
+				if ("nebula.core.String".equals(fqn))
+				{
+					if (ctor.getParameters().isEmpty())
+					{
+						// Default constructor: String()
+						ctorSignature += " : _data(\"\")";
+					}
+					else
+					{
+						// Copy constructor: String(String other)
+						ctorSignature += " : _data(other ? other->raw() : \"\")";
+					}
+				}
+				// +++ END OF FIX +++
+
+				appendLine(ctorSignature + " {");
+				indent();
+				if (ctor.getBody() != null)
+				{
+					ctor.getBody().accept(this);
+				}
+				dedent();
+				appendLine("}\n");
 			}
 		}
 
-
-		// Generate default constructor if no constructors are defined in Nebula
-		if(declaration.getConstructors().isEmpty())
+		if (isNative && "nebula.core.String".equals(fqn))
 		{
-			appendLine(cppFqnPrefix + simpleName + "::" + simpleName + "() { } \n");
-		}
-
-		for(ConstructorDeclaration ctor : declaration.getConstructors())
-		{
-			// Ensure initializer list for base class constructor is included if 'super' is called.
-			String ctorParams = formatCppParameters(ctor.getParameters());
-			StringBuilder ctorSignature = new StringBuilder(cppFqnPrefix + simpleName + "::" + simpleName + "(" + ctorParams + ")");
-
-//			// Check for constructor chaining (this/super)
-//			if (ctor.getChainingCall() != null) { // This assumes getChainingCall() exists on ConstructorDeclaration
-//				String chainingCallCode = ctor.getChainingCall().accept(this);
-//				ctorSignature.append(" : ").append(chainingCallCode);
-//			}
-
-			ctorSignature.append(" {");
-			appendLine(ctorSignature.toString());
+			appendLine(simpleName + "::String(const std::string& raw_str) : _data(raw_str) {}\n");
+			appendLine("const std::string& " + simpleName + "::raw() const {");
 			indent();
-			if(ctor.getBody() != null)
-				ctor.getBody().accept(this);
+			appendLine("return _data;");
 			dedent();
 			appendLine("}\n");
 		}
 
-		for(MethodDeclaration method : declaration.getMethods())
+		// 3. Methods
+		for (MethodDeclaration method : declaration.getMethods())
 		{
-			// Ensure the method declaration in the AST has its resolved symbol from semantic analysis
-			if(method.getResolvedSymbol() == null)
+			MethodSymbol methodSymbol = method.getResolvedSymbol();
+			if (methodSymbol == null)
 			{
-				// This indicates a problem in the semantic analysis setup.
-				// For now, we'll try to look it up, but ideally, it should be pre-set.
-				continue; // Skip methods that weren't resolved.
+				continue;
 			}
-			this.currentMethodSymbol = method.getResolvedSymbol();
 
-			String returnType = toCppType(resolveTypeFromToken(method.getReturnType()));
-
-			// NEW: Use mangled name if available
-			String methodName = this.currentMethodSymbol.getMangledName() != null
-					? this.currentMethodSymbol.getMangledName()
-					: this.currentMethodSymbol.getName();
-
-			if(method.getOperatorKeyword() != null)
-				methodName = "operator" + methodName;
-
-			String params = formatCppParameters(method.getParameters());
-
-			boolean isStatic = method.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.STATIC);
-			String constQualifier = "";
-
-			// Determine if a method is overriding a base class method for const qualifier
-			boolean isOverride = false;
-			if(!isStatic && currentClassSymbol.getType().getSuperClassType() != null)
+			if (method.isWrapper())
 			{
-				ClassType superClassType = (ClassType) currentClassSymbol.getType().getSuperClassType();
-				if(superClassType.getClassSymbol() != null)
+				String returnType = toCppType(methodSymbol.getType());
+				String methodName = methodSymbol.isOperator() ? "operator" + methodSymbol.getName() : methodSymbol.getName();
+				String params = formatCppParameters(method.getParameters());
+				String constQualifier = !methodSymbol.isStatic() ? " const" : "";
+
+				appendLine(returnType + " " + simpleName + "::" + methodName + "(" + params + ")" + constQualifier + " {");
+				indent();
+				String body = processWrapperBody(methodSymbol, method.getParameters());
+				if (!methodSymbol.getType().equals(PrimitiveType.VOID))
 				{
-					ClassSymbol superClass = (ClassSymbol) superClassType.getClassSymbol();
-					// Corrected: Use methodsByName map to get all methods from superclass
-					Optional<MethodSymbol> overriddenMethod = superClass.methodsByName.values().stream()
-							.flatMap(List::stream) // Flatten the list of lists of methods
-							.filter(m -> m.getName().equals(method.getName().getLexeme()) &&
-									m.getParameterTypes().size() / 2 == method.getParameters().size() / 2).findFirst();
-					//&& m.isVirtual() Check if base method is virtual (assuming MethodSymbol has isVirtual)
-					if(overriddenMethod.isPresent())
-					{
-						isOverride = true;
-					}
+					appendLine("return " + body + ";");
 				}
+				else
+				{
+					appendLine(body + ";");
+				}
+				dedent();
+				appendLine("}\n");
 			}
-
-			// Apply const qualifier only if it's not static and it's a known const method or an override of a const method
-			// Removed isConst() call on MethodSymbol as it was not defined.
-			if(!isStatic && (List.of("length", "hashCode", "toString", "operator==").contains(methodName) || isOverride))
+			else if (!isNative)
 			{
-				constQualifier = " const";
+				String returnType = toCppType(methodSymbol.getType());
+				String methodName = methodSymbol.isOperator() ? "operator" + methodSymbol.getName() : methodSymbol.getMangledName();
+				String params = formatCppParameters(method.getParameters());
+				String constQualifier = !methodSymbol.isStatic() ? " const" : "";
+
+				appendLine(returnType + " " + simpleName + "::" + methodName + "(" + params + ")" + constQualifier + " {");
+				indent();
+				if (method.getBody() != null)
+				{
+					method.getBody().accept(this);
+				}
+				dedent();
+				appendLine("}\n");
 			}
-
-			appendLine(returnType + " " + cppFqnPrefix + simpleName + "::" + methodName + "(" + params + ")" + constQualifier + " {");
-			indent();
-			if(method.getBody() != null)
-				method.getBody().accept(this);
-			// For non-void functions, ensure a return statement is present if the body can exit without one.
-			// This is a complex semantic check; for now, rely on Nebula's semantic analysis to ensure all paths return.
-			// If not, a default return might be needed here, e.g., if (returnType != "void") appendLine("return {});");
-			dedent();
-			appendLine("}\n");
-
-			this.currentMethodSymbol = null;
 		}
 	}
 
@@ -1164,10 +1035,10 @@ public class CppGenerator implements ASTVisitor<String>
 		String caseValueCode = switchCase.getValue().accept(this);
 		appendLine("case " + caseValueCode + ": {");
 		indent();
-		for(Statement stmt : switchCase.getBody())
+		for (Statement stmt : switchCase.getBody())
 		{
 			String generatedCode = stmt.accept(this);
-			if(generatedCode != null && !generatedCode.isEmpty())
+			if (generatedCode != null && !generatedCode.isEmpty())
 			{
 				appendLine(generatedCode);
 			}
@@ -1189,23 +1060,23 @@ public class CppGenerator implements ASTVisitor<String>
 				.map(arg -> arg.accept(this))
 				.collect(Collectors.toList());
 
-		if(keyword.equals("this"))
+		if (keyword.equals("this"))
 		{
 			// Call the current class's constructor
 			// currentClassSymbol.getName() returns the simple name of the class
 			call.append(currentClassSymbol.getName()).append("(");
 		}
-		else if(keyword.equals("super"))
+		else if (keyword.equals("super"))
 		{
 			// Call the super class's constructor
 			String superCppName = "nebula::core::Object"; // Default
-			if(currentClassSymbol != null && currentClassSymbol.getType().getSuperClassType() != null)
+			if (currentClassSymbol != null && currentClassSymbol.getType().getSuperClassType() != null)
 			{
 				ClassType superClassType = (ClassType) currentClassSymbol.getType().getSuperClassType(); // Your cast
 				superCppName = superClassType.getFqn().replace(".", "::");
 			}
 			// Get the simple name for the superclass constructor call if it's not the default Object
-			if(superCppName.startsWith("nebula::core::"))
+			if (superCppName.startsWith("nebula::core::"))
 			{
 				superCppName = getSimpleClassName(superCppName.replace("::", ".")); // Convert back to dot for simple name extraction
 			}
@@ -1228,42 +1099,42 @@ public class CppGenerator implements ASTVisitor<String>
 
 		// If the left side is a class type, it's a shared_ptr.
 		// Member operators require the object to be dereferenced.
-		if(leftType instanceof ClassType)
+		if (leftType instanceof ClassType)
 		{
 			// For any class type, dereference the left operand to access member operators.
 			String leftOperand = "*" + left;
 
 			// String concatenation requires special handling for the right operand,
 			// which may need to be converted to a string.
-			if(op.equals("+") && ((ClassType) leftType).getFqn().equals("nebula.core.String"))
+			if (op.equals("+") && ((ClassType) leftType).getFqn().equals("nebula.core.String"))
 			{
 				String rightOperandForConcat = right;
 
-				if(rightType instanceof PrimitiveType)
+				if (rightType instanceof PrimitiveType)
 				{
-					if(rightType.equals(PrimitiveType.INT) ||
+					if (rightType.equals(PrimitiveType.INT) ||
 							rightType.equals(PrimitiveType.FLOAT) ||
 							rightType.equals(PrimitiveType.DOUBLE))
 					{
 						// For numeric primitives, use std::to_string
 						rightOperandForConcat = "std::make_shared<nebula::core::String>(std::to_string(" + right + "))";
 					}
-					else if(rightType.equals(PrimitiveType.BOOL))
+					else if (rightType.equals(PrimitiveType.BOOL))
 					{
 						// For boolean, convert to "true" or "false" string
 						rightOperandForConcat = "std::make_shared<nebula::core::String>(" + right + " ? \"true\" : \"false\")";
 					}
-					else if(rightType.equals(PrimitiveType.CHAR) ||
+					else if (rightType.equals(PrimitiveType.CHAR) ||
 							rightType.equals(PrimitiveType.BYTE))
 					{ // Assuming BYTE maps to char
 						// For char/byte, convert to string containing single character
 						rightOperandForConcat = "std::make_shared<nebula::core::String>(std::string(1, " + right + "))";
 					}
 				}
-				else if(rightType instanceof ClassType)
+				else if (rightType instanceof ClassType)
 				{
 					// If the right operand is another Nebula class, call its toString() method.
-					if(!((ClassType) rightType).getFqn().equals("nebula.core.String"))
+					if (!((ClassType) rightType).getFqn().equals("nebula.core.String"))
 					{
 						rightOperandForConcat = right + "->toString()";
 					}
@@ -1289,7 +1160,7 @@ public class CppGenerator implements ASTVisitor<String>
 		String operator = expression.getOperator().getLexeme();
 
 		// For prefix increment/decrement, the operator comes before the operand
-		if(operator.equals("++") || operator.equals("--"))
+		if (operator.equals("++") || operator.equals("--"))
 		{
 			return operator + operandCode;
 		}
@@ -1301,17 +1172,17 @@ public class CppGenerator implements ASTVisitor<String>
 	public String visitLiteralExpression(LiteralExpression expression)
 	{
 		Object value = expression.getValue();
-		if(expression.getLiteralToken().getType() == TokenType.STRING_LITERAL)
+		if (expression.getLiteralToken().getType() == TokenType.STRING_LITERAL)
 		{
 			// Ensure string literals are wrapped in std::make_shared<nebula::core::String>
 			return "std::make_shared<nebula::core::String>(\"" + value.toString().replace("\"", "\\\"") + "\")";
 		}
-		if(expression.getLiteralToken().getType() == TokenType.BOOLEAN_LITERAL)
+		if (expression.getLiteralToken().getType() == TokenType.BOOLEAN_LITERAL)
 		{
 			// Output 'true' or 'false' directly
 			return value.toString().toLowerCase();
 		}
-		if("null".equals(expression.getLiteralToken().getLexeme()))
+		if ("null".equals(expression.getLiteralToken().getLexeme()))
 		{
 			return "nullptr";
 		}
@@ -1322,21 +1193,21 @@ public class CppGenerator implements ASTVisitor<String>
 	public String visitIdentifierExpression(IdentifierExpression expression)
 	{
 		Symbol symbol = expression.getResolvedSymbol();
-		if(symbol instanceof VariableSymbol)
+		if (symbol instanceof VariableSymbol)
 		{
 			VariableSymbol varSym = (VariableSymbol) symbol;
-			if(varSym.getOwnerClass() != null && !varSym.isStatic())
+			if (varSym.getOwnerClass() != null && !varSym.isStatic())
 			{ // It's an instance field
 				return "this->" + varSym.getName();
 			}
-			else if(varSym.getOwnerClass() != null && varSym.isStatic())
+			else if (varSym.getOwnerClass() != null && varSym.isStatic())
 			{
 				// It's a static field
 				return varSym.getOwnerClass().getFqn().replace(".", "::") + "::" + varSym.getName();
 			}
 			return varSym.getName();
 		}
-		if(symbol instanceof ClassSymbol)
+		if (symbol instanceof ClassSymbol)
 		{
 			return ((ClassSymbol) symbol).getFqn().replace(".", "::");
 		}
@@ -1354,7 +1225,7 @@ public class CppGenerator implements ASTVisitor<String>
 		Type targetType = expression.getTarget().getResolvedType();
 
 		// Check for a compound assignment operator (e.g., "+=", "-=") on a class type.
-		if(targetType instanceof ClassType && op.length() > 1 && op.endsWith("="))
+		if (targetType instanceof ClassType && op.length() > 1 && op.endsWith("="))
 		{
 			// Transform "a += b" into "a = (*a) + b".
 			// This makes compound assignment syntactic sugar for the binary operator.
@@ -1377,7 +1248,7 @@ public class CppGenerator implements ASTVisitor<String>
 				.collect(Collectors.joining(", "));
 
 		Symbol resolvedSymbol = expr.getCallee().getResolvedSymbol();
-		if(!(resolvedSymbol instanceof MethodSymbol))
+		if (!(resolvedSymbol instanceof MethodSymbol))
 		{
 			// Fallback or error for when the resolved symbol isn't a method
 			return expr.getCallee().accept(this) + "(" + args + ")";
@@ -1391,9 +1262,9 @@ public class CppGenerator implements ASTVisitor<String>
 				? resolvedMethod.getMangledName()
 				: resolvedMethod.getName();
 
-		if(expr.getCallee() instanceof IdentifierExpression)
+		if (expr.getCallee() instanceof IdentifierExpression)
 		{
-			if(resolvedMethod.isStatic())
+			if (resolvedMethod.isStatic())
 			{
 				calleeString = this.currentClassSymbol.getFqn().replace(".", "::") + "::" + methodName;
 			}
@@ -1402,7 +1273,7 @@ public class CppGenerator implements ASTVisitor<String>
 				calleeString = "this->" + methodName;
 			}
 		}
-		else if(expr.getCallee() instanceof DotExpression)
+		else if (expr.getCallee() instanceof DotExpression)
 		{
 			DotExpression dot = (DotExpression) expr.getCallee();
 			String left = dot.getLeft().accept(this);
@@ -1425,24 +1296,27 @@ public class CppGenerator implements ASTVisitor<String>
 		Symbol symbol = expr.getResolvedSymbol();
 		Type leftType = expr.getLeft().getResolvedType();
 
-		// *** MODIFIED ***: Handle .length on arrays
-		if(leftType instanceof ArrayType)
+		// +++ THIS IS THE FIX +++
+		// When accessing '.size' on an array, cast the result to an int.
+		if (leftType instanceof ArrayType)
 		{
-			if(memberName.equals("length"))
+			if (memberName.equals("size"))
 			{
-				return left + ".size()";
+				// Cast to int to resolve ambiguity with C++ function overloads.
+				return "static_cast<int>(" + left + ".size())";
 			}
 		}
 
-		if(symbol instanceof MethodSymbol && ((MethodSymbol) symbol).isStatic())
+		if (symbol instanceof MethodSymbol && ((MethodSymbol) symbol).isStatic())
 		{
 			return left + "::" + memberName;
 		}
-		else if(symbol instanceof VariableSymbol && ((VariableSymbol) symbol).isStatic())
+		else if (symbol instanceof VariableSymbol && ((VariableSymbol) symbol).isStatic())
 		{
 			return left + "::" + memberName;
 		}
 
+		// For regular member access, it's a shared_ptr, so use ->
 		return left + "->" + memberName;
 	}
 
@@ -1458,7 +1332,7 @@ public class CppGenerator implements ASTVisitor<String>
 	{
 		Type classType = expression.getResolvedType();
 
-		if(classType == null || !(classType instanceof ClassType))
+		if (classType == null || !(classType instanceof ClassType))
 		{
 			error(expression.getClassName().getFirstToken(), "Could not resolve class for 'new' expression (resolved type is null or not a ClassType).");
 			return "/* ERROR: Could not resolve class for new expression */ nullptr";
@@ -1512,12 +1386,12 @@ public class CppGenerator implements ASTVisitor<String>
 	{
 		String leftCode = expression.getLeft().accept(this);
 		Type targetType = resolveTypeFromToken(expression.getTypeToken());
-		if(targetType instanceof ClassType)
+		if (targetType instanceof ClassType)
 		{
 			String targetFqn = ((ClassType) targetType).getFqn().replace(".", "::");
 			return "(std::dynamic_pointer_cast<" + targetFqn + ">(" + leftCode + ") != nullptr)";
 		}
-		else if(targetType instanceof ArrayType)
+		else if (targetType instanceof ArrayType)
 		{
 			// `is` check for arrays is not directly supported in C++ RTTI this way.
 			// This is a language feature decision. For now, we return false.
@@ -1539,15 +1413,15 @@ public class CppGenerator implements ASTVisitor<String>
 	 */
 	private String getQualifiedNameFromExpressionInternal(Expression expression)
 	{
-		if(expression instanceof IdentifierExpression)
+		if (expression instanceof IdentifierExpression)
 		{
 			return ((IdentifierExpression) expression).getName().getLexeme();
 		}
-		else if(expression instanceof DotExpression)
+		else if (expression instanceof DotExpression)
 		{
 			DotExpression dot = (DotExpression) expression;
 			String leftPart = getQualifiedNameFromExpressionInternal(dot.getLeft());
-			if(leftPart == null)
+			if (leftPart == null)
 			{
 				return null;
 			}
@@ -1559,72 +1433,69 @@ public class CppGenerator implements ASTVisitor<String>
 	/**
 	 * REPLACEMENT for the original collectClassDependencies method.
 	 * This version performs a full traversal of the class's AST to find all dependencies.
+	 * It can be configured to include or exclude "core" classes.
 	 */
-	private Set<String> collectClassDependencies(ClassDeclaration classDecl)
+	private Set<String> collectClassDependencies(ClassDeclaration classDecl, boolean includeCoreClasses)
 	{
 		Set<String> dependencies = new HashSet<>();
 
 		// 1. Superclass dependency
-		if(currentClassSymbol != null && currentClassSymbol.getType().getSuperClassType() != null)
+		if (currentClassSymbol != null && currentClassSymbol.getType().getSuperClassType() != null)
 		{
-			addTypeDependency(currentClassSymbol.getType().getSuperClassType(), dependencies);
+			addTypeDependency(currentClassSymbol.getType().getSuperClassType(), dependencies, includeCoreClasses);
 		}
 
-		// 2. Field dependencies (declaration type and initializer)
-		for(FieldDeclaration field : classDecl.getFields())
+		// 2. Field dependencies
+		for (FieldDeclaration field : classDecl.getFields())
 		{
-			addTypeDependency(field.getResolvedType(), dependencies);
-			if(field.getInitializer() != null)
+			addTypeDependency(field.getResolvedType(), dependencies, includeCoreClasses);
+			if (field.getInitializer() != null)
 			{
-				collectDependenciesFrom(field.getInitializer(), dependencies);
+				collectDependenciesFrom(field.getInitializer(), dependencies, includeCoreClasses);
 			}
 		}
 
-		// 3. Constructor dependencies (parameters and body)
-		for(ConstructorDeclaration ctor : classDecl.getConstructors())
+		// 3. Constructor dependencies
+		for (ConstructorDeclaration ctor : classDecl.getConstructors())
 		{
-			// Parameters
-			for(int i = 0; i < ctor.getParameters().size(); i += 2)
+			for (int i = 0; i < ctor.getParameters().size(); i += 2)
 			{
 				Token typeToken = ctor.getParameters().get(i);
 				Type paramType = resolveTypeFromToken(typeToken);
-				addTypeDependency(paramType, dependencies);
+				addTypeDependency(paramType, dependencies, includeCoreClasses);
 			}
-			// Body
-			if(ctor.getBody() != null)
+			if (ctor.getBody() != null)
 			{
-				collectDependenciesFrom(ctor.getBody(), dependencies);
+				collectDependenciesFrom(ctor.getBody(), dependencies, includeCoreClasses);
 			}
-			// Chaining call (this() or super())
-			if(ctor.getChainingCall() != null)
+			if (ctor.getChainingCall() != null)
 			{
-				collectDependenciesFrom(ctor.getChainingCall(), dependencies);
+				collectDependenciesFrom(ctor.getChainingCall(), dependencies, includeCoreClasses);
 			}
 		}
 
-		// 4. Method dependencies (return type, parameters, and body)
-		for(MethodDeclaration method : classDecl.getMethods())
+		// 4. Method dependencies
+		for (MethodDeclaration method : classDecl.getMethods())
 		{
 			MethodSymbol methodSymbol = method.getResolvedSymbol();
-			if(methodSymbol == null)
-				continue;
-
-			// Return type
-			addTypeDependency(methodSymbol.getType(), dependencies);
-
-			// Parameter types (from the reliable resolved symbol)
-			if(methodSymbol.getParameterTypes() != null)
+			if (methodSymbol == null)
 			{
-				for(Type paramType : methodSymbol.getParameterTypes())
+				continue;
+			}
+
+			addTypeDependency(methodSymbol.getType(), dependencies, includeCoreClasses);
+
+			if (methodSymbol.getParameterTypes() != null)
+			{
+				for (Type paramType : methodSymbol.getParameterTypes())
 				{
-					addTypeDependency(paramType, dependencies);
+					addTypeDependency(paramType, dependencies, includeCoreClasses);
 				}
 			}
 
-			// Body
-			if(method.getBody() != null)
+			if (method.getBody() != null)
 			{
-				collectDependenciesFrom(method.getBody(), dependencies);
+				collectDependenciesFrom(method.getBody(), dependencies, includeCoreClasses);
 			}
 		}
 
@@ -1643,24 +1514,27 @@ public class CppGenerator implements ASTVisitor<String>
 	 * @param type         The type to check.
 	 * @param dependencies The set of dependency FQNs.
 	 */
-	private void addTypeDependency(Type type, Set<String> dependencies)
+	private void addTypeDependency(Type type, Set<String> dependencies, boolean includeCoreClasses)
 	{
-		if(type == null)
+		if (type == null)
+		{
 			return;
+		}
 
-		// Unwrap array types to get the base element type.
-		while(type instanceof ArrayType)
+		while (type instanceof ArrayType)
 		{
 			type = ((ArrayType) type).getElementType();
 		}
 
-		if(type instanceof ClassType)
+		if (type instanceof ClassType)
 		{
 			String fqn = ((ClassType) type).getFqn();
-			// Add dependency if it's not a core class and not the class we are currently processing.
-			if(fqn != null && !isCoreClass(fqn) && !fqn.equals(currentClassSymbol.getFqn()))
+			if (fqn != null && !fqn.equals(currentClassSymbol.getFqn()))
 			{
-				dependencies.add(fqn);
+				if (includeCoreClasses || !isCoreClass(fqn))
+				{
+					dependencies.add(fqn);
+				}
 			}
 		}
 	}
@@ -1668,100 +1542,103 @@ public class CppGenerator implements ASTVisitor<String>
 	/**
 	 * Recursively traverses a Statement AST node to find all type dependencies.
 	 *
-	 * @param stmt         The statement to traverse.
-	 * @param dependencies The set to add dependencies to.
+	 * @param stmt               The statement to traverse.
+	 * @param dependencies       The set to add dependencies to.
+	 * @param includeCoreClasses A flag to determine whether to include core classes (e.g., Object, String) as dependencies.
 	 */
-	private void collectDependenciesFrom(Statement stmt, Set<String> dependencies)
+	private void collectDependenciesFrom(Statement stmt, Set<String> dependencies, boolean includeCoreClasses)
 	{
-		if(stmt == null)
+		if (stmt == null)
+		{
 			return;
+		}
 
-		if(stmt instanceof BlockStatement)
+		if (stmt instanceof BlockStatement)
 		{
-			for(Statement s : ((BlockStatement) stmt).getStatements())
+			for (Statement s : ((BlockStatement) stmt).getStatements())
 			{
-				collectDependenciesFrom(s, dependencies);
+				collectDependenciesFrom(s, dependencies, includeCoreClasses);
 			}
 		}
-		else if(stmt instanceof ExpressionStatement)
+		else if (stmt instanceof ExpressionStatement)
 		{
-			collectDependenciesFrom(((ExpressionStatement) stmt).getExpression(), dependencies);
+			collectDependenciesFrom(((ExpressionStatement) stmt).getExpression(), dependencies, includeCoreClasses);
 		}
-		else if(stmt instanceof IfStatement)
+		else if (stmt instanceof IfStatement)
 		{
-			collectDependenciesFrom(((IfStatement) stmt).getCondition(), dependencies);
-			collectDependenciesFrom(((IfStatement) stmt).getThenBranch(), dependencies);
-			if(((IfStatement) stmt).getElseBranch() != null)
+			collectDependenciesFrom(((IfStatement) stmt).getCondition(), dependencies, includeCoreClasses);
+			collectDependenciesFrom(((IfStatement) stmt).getThenBranch(), dependencies, includeCoreClasses);
+			if (((IfStatement) stmt).getElseBranch() != null)
 			{
-				collectDependenciesFrom(((IfStatement) stmt).getElseBranch(), dependencies);
+				collectDependenciesFrom(((IfStatement) stmt).getElseBranch(), dependencies, includeCoreClasses);
 			}
 		}
-		else if(stmt instanceof WhileStatement)
+		else if (stmt instanceof WhileStatement)
 		{
-			collectDependenciesFrom(((WhileStatement) stmt).getCondition(), dependencies);
-			collectDependenciesFrom(((WhileStatement) stmt).getBody(), dependencies);
+			collectDependenciesFrom(((WhileStatement) stmt).getCondition(), dependencies, includeCoreClasses);
+			collectDependenciesFrom(((WhileStatement) stmt).getBody(), dependencies, includeCoreClasses);
 		}
-		else if(stmt instanceof ForStatement)
+		else if (stmt instanceof ForStatement)
 		{
-			if(((ForStatement) stmt).getInitializer() != null)
+			if (((ForStatement) stmt).getInitializer() != null)
 			{
 				// The initializer can be a declaration or an expression.
-				if(((ForStatement) stmt).getInitializer() instanceof Statement)
+				if (((ForStatement) stmt).getInitializer() instanceof Statement)
 				{
-					collectDependenciesFrom((Statement) ((ForStatement) stmt).getInitializer(), dependencies);
+					collectDependenciesFrom((Statement) ((ForStatement) stmt).getInitializer(), dependencies, includeCoreClasses);
 				}
 				else
 				{
-					collectDependenciesFrom((Expression) ((ForStatement) stmt).getInitializer(), dependencies);
+					collectDependenciesFrom((Expression) ((ForStatement) stmt).getInitializer(), dependencies, includeCoreClasses);
 				}
 			}
-			if(((ForStatement) stmt).getCondition() != null)
+			if (((ForStatement) stmt).getCondition() != null)
 			{
-				collectDependenciesFrom(((ForStatement) stmt).getCondition(), dependencies);
+				collectDependenciesFrom(((ForStatement) stmt).getCondition(), dependencies, includeCoreClasses);
 			}
-			if(((ForStatement) stmt).getIncrement() != null)
+			if (((ForStatement) stmt).getIncrement() != null)
 			{
-				collectDependenciesFrom(((ForStatement) stmt).getIncrement(), dependencies);
+				collectDependenciesFrom(((ForStatement) stmt).getIncrement(), dependencies, includeCoreClasses);
 			}
-			collectDependenciesFrom(((ForStatement) stmt).getBody(), dependencies);
+			collectDependenciesFrom(((ForStatement) stmt).getBody(), dependencies, includeCoreClasses);
 		}
-		else if(stmt instanceof ReturnStatement)
+		else if (stmt instanceof ReturnStatement)
 		{
-			if(((ReturnStatement) stmt).getValue() != null)
+			if (((ReturnStatement) stmt).getValue() != null)
 			{
-				collectDependenciesFrom(((ReturnStatement) stmt).getValue(), dependencies);
+				collectDependenciesFrom(((ReturnStatement) stmt).getValue(), dependencies, includeCoreClasses);
 			}
 		}
-		else if(stmt instanceof VariableDeclarationStatement)
+		else if (stmt instanceof VariableDeclarationStatement)
 		{
 			Type varType = resolveTypeFromToken(((VariableDeclarationStatement) stmt).getTypeToken(), ((VariableDeclarationStatement) stmt).getArrayRank());
-			addTypeDependency(varType, dependencies);
-			if(((VariableDeclarationStatement) stmt).getInitializer() != null)
+			addTypeDependency(varType, dependencies, includeCoreClasses);
+			if (((VariableDeclarationStatement) stmt).getInitializer() != null)
 			{
-				collectDependenciesFrom(((VariableDeclarationStatement) stmt).getInitializer(), dependencies);
+				collectDependenciesFrom(((VariableDeclarationStatement) stmt).getInitializer(), dependencies, includeCoreClasses);
 			}
 		}
-		else if(stmt instanceof SwitchStatement)
+		else if (stmt instanceof SwitchStatement)
 		{
-			collectDependenciesFrom(((SwitchStatement) stmt).getSwitchExpression(), dependencies);
-			for(SwitchCase sc : ((SwitchStatement) stmt).getCases())
+			collectDependenciesFrom(((SwitchStatement) stmt).getSwitchExpression(), dependencies, includeCoreClasses);
+			for (SwitchCase sc : ((SwitchStatement) stmt).getCases())
 			{
-				collectDependenciesFrom(sc.getValue(), dependencies);
-				for(Statement s : sc.getBody())
+				collectDependenciesFrom(sc.getValue(), dependencies, includeCoreClasses);
+				for (Statement s : sc.getBody())
 				{
-					collectDependenciesFrom(s, dependencies);
+					collectDependenciesFrom(s, dependencies, includeCoreClasses);
 				}
 			}
-			if(((SwitchStatement) stmt).getDefaultBlock() != null)
+			if (((SwitchStatement) stmt).getDefaultBlock() != null)
 			{
-				collectDependenciesFrom(((SwitchStatement) stmt).getDefaultBlock(), dependencies);
+				collectDependenciesFrom(((SwitchStatement) stmt).getDefaultBlock(), dependencies, includeCoreClasses);
 			}
 		}
-		else if(stmt instanceof ConstructorChainingCallStatement)
+		else if (stmt instanceof ConstructorChainingCallStatement)
 		{
-			for(Expression arg : ((ConstructorChainingCallStatement) stmt).getArguments())
+			for (Expression arg : ((ConstructorChainingCallStatement) stmt).getArguments())
 			{
-				collectDependenciesFrom(arg, dependencies);
+				collectDependenciesFrom(arg, dependencies, includeCoreClasses);
 			}
 		}
 	}
@@ -1769,81 +1646,115 @@ public class CppGenerator implements ASTVisitor<String>
 	/**
 	 * Recursively traverses an Expression AST node to find all type dependencies.
 	 *
-	 * @param expr         The expression to traverse.
-	 * @param dependencies The set to add dependencies to.
+	 * @param expr               The expression to traverse.
+	 * @param dependencies       The set to add dependencies to.
+	 * @param includeCoreClasses A flag to determine whether to include core classes as dependencies.
 	 */
-	private void collectDependenciesFrom(Expression expr, Set<String> dependencies)
+	private void collectDependenciesFrom(Expression expr, Set<String> dependencies, boolean includeCoreClasses)
 	{
-		if(expr == null)
+		if (expr == null)
+		{
 			return;
+		}
 
 		// Every expression node should have its type resolved by the semantic analyzer.
 		// This is the most reliable source for dependencies.
-		addTypeDependency(expr.getResolvedType(), dependencies);
+		addTypeDependency(expr.getResolvedType(), dependencies, includeCoreClasses);
 
 		// Recurse into sub-expressions.
-		if(expr instanceof BinaryExpression)
+		if (expr instanceof BinaryExpression)
 		{
-			collectDependenciesFrom(((BinaryExpression) expr).getLeft(), dependencies);
-			collectDependenciesFrom(((BinaryExpression) expr).getRight(), dependencies);
+			collectDependenciesFrom(((BinaryExpression) expr).getLeft(), dependencies, includeCoreClasses);
+			collectDependenciesFrom(((BinaryExpression) expr).getRight(), dependencies, includeCoreClasses);
 		}
-		else if(expr instanceof UnaryExpression)
+		else if (expr instanceof UnaryExpression)
 		{
-			collectDependenciesFrom(((UnaryExpression) expr).getRight(), dependencies);
+			collectDependenciesFrom(((UnaryExpression) expr).getRight(), dependencies, includeCoreClasses);
 		}
-		else if(expr instanceof PostfixUnaryExpression)
+		else if (expr instanceof PostfixUnaryExpression)
 		{
-			collectDependenciesFrom(((PostfixUnaryExpression) expr).getOperand(), dependencies);
+			collectDependenciesFrom(((PostfixUnaryExpression) expr).getOperand(), dependencies, includeCoreClasses);
 		}
-		else if(expr instanceof CallExpression)
+		else if (expr instanceof CallExpression)
 		{
-			collectDependenciesFrom(((CallExpression) expr).getCallee(), dependencies);
-			for(Expression arg : ((CallExpression) expr).getArguments())
+			collectDependenciesFrom(((CallExpression) expr).getCallee(), dependencies, includeCoreClasses);
+			for (Expression arg : ((CallExpression) expr).getArguments())
 			{
-				collectDependenciesFrom(arg, dependencies);
+				collectDependenciesFrom(arg, dependencies, includeCoreClasses);
 			}
 		}
-		else if(expr instanceof DotExpression)
+		else if (expr instanceof DotExpression)
 		{
-			collectDependenciesFrom(((DotExpression) expr).getLeft(), dependencies);
+			collectDependenciesFrom(((DotExpression) expr).getLeft(), dependencies, includeCoreClasses);
 		}
-		else if(expr instanceof AssignmentExpression)
+		else if (expr instanceof AssignmentExpression)
 		{
-			collectDependenciesFrom(((AssignmentExpression) expr).getTarget(), dependencies);
-			collectDependenciesFrom(((AssignmentExpression) expr).getValue(), dependencies);
+			collectDependenciesFrom(((AssignmentExpression) expr).getTarget(), dependencies, includeCoreClasses);
+			collectDependenciesFrom(((AssignmentExpression) expr).getValue(), dependencies, includeCoreClasses);
 		}
-		else if(expr instanceof NewExpression)
+		else if (expr instanceof NewExpression)
 		{
-			for(Expression arg : ((NewExpression) expr).getArguments())
+			for (Expression arg : ((NewExpression) expr).getArguments())
 			{
-				collectDependenciesFrom(arg, dependencies);
+				collectDependenciesFrom(arg, dependencies, includeCoreClasses);
 			}
 		}
-		else if(expr instanceof ArrayCreationExpression)
+		else if (expr instanceof ArrayCreationExpression)
 		{
-			collectDependenciesFrom(((ArrayCreationExpression) expr).getSizeExpression(), dependencies);
+			collectDependenciesFrom(((ArrayCreationExpression) expr).getSizeExpression(), dependencies, includeCoreClasses);
 		}
-		else if(expr instanceof ArrayInitializerExpression)
+		else if (expr instanceof ArrayInitializerExpression)
 		{
-			for(Expression element : ((ArrayInitializerExpression) expr).getElements())
+			for (Expression element : ((ArrayInitializerExpression) expr).getElements())
 			{
-				collectDependenciesFrom(element, dependencies);
+				collectDependenciesFrom(element, dependencies, includeCoreClasses);
 			}
 		}
-		else if(expr instanceof ArrayAccessExpression)
+		else if (expr instanceof ArrayAccessExpression)
 		{
-			collectDependenciesFrom(((ArrayAccessExpression) expr).getArray(), dependencies);
-			collectDependenciesFrom(((ArrayAccessExpression) expr).getIndex(), dependencies);
+			collectDependenciesFrom(((ArrayAccessExpression) expr).getArray(), dependencies, includeCoreClasses);
+			collectDependenciesFrom(((ArrayAccessExpression) expr).getIndex(), dependencies, includeCoreClasses);
 		}
-		else if(expr instanceof GroupingExpression)
+		else if (expr instanceof GroupingExpression)
 		{
-			collectDependenciesFrom(((GroupingExpression) expr).getExpression(), dependencies);
+			collectDependenciesFrom(((GroupingExpression) expr).getExpression(), dependencies, includeCoreClasses);
 		}
-		else if(expr instanceof IsExpression)
+		else if (expr instanceof IsExpression)
 		{
-			collectDependenciesFrom(((IsExpression) expr).getLeft(), dependencies);
+			collectDependenciesFrom(((IsExpression) expr).getLeft(), dependencies, includeCoreClasses);
 			Type targetType = resolveTypeFromToken(((IsExpression) expr).getTypeToken());
-			addTypeDependency(targetType, dependencies);
+			addTypeDependency(targetType, dependencies, includeCoreClasses);
 		}
+	}
+
+	/**
+	 * Processes the C++ target string of a wrapper method, replacing placeholders
+	 * like ${paramName} with the actual parameter names.
+	 *
+	 * @param method          The MethodSymbol of the wrapper method.
+	 * @param parameterTokens The list of parameter tokens from the AST node.
+	 * @return The processed C++ code for the method's body.
+	 */
+	private String processWrapperBody(MethodSymbol method, List<Token> parameterTokens)
+	{
+		String body = method.getCppTarget();
+		if (body == null)
+		{
+			return "";
+		}
+
+		for (int i = 0; i < parameterTokens.size(); i += 2)
+		{
+			Token paramNameToken = parameterTokens.get(i + 1);
+			String paramName = paramNameToken.getLexeme();
+			String placeholder = "${" + paramName + "}";
+			body = body.replace(placeholder, paramName);
+		}
+
+		// +++ FIX: Replace direct member access with a call to the public raw() method. +++
+		// This handles cases like `...->toString()->_data` and `anyString->_data`
+		body = body.replace("->_data", "->raw()");
+
+		return body;
 	}
 }

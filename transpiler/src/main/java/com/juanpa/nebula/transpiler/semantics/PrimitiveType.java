@@ -21,7 +21,7 @@ public class PrimitiveType extends Type
 	public static final PrimitiveType CHAR = new PrimitiveType("char");
 	public static final PrimitiveType VOID = new PrimitiveType("void"); // For method return types
 
-	private PrimitiveType(String name)
+	public PrimitiveType(String name)
 	{
 		super(name);
 	}

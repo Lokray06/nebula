@@ -11,10 +11,11 @@ import com.juanpa.nebula.transpiler.lexer.Token;
 public class VariableSymbol extends Symbol
 {
 	private boolean initialized;
-	private final boolean isStatic; // Indicates if it's a static field
-	private final boolean isConst;  // Indicates if it's a constant variable/field
-	private ClassSymbol ownerClass; // NEW: Reference to the ClassSymbol this variable (if a field) belongs to
-
+	private final boolean isStatic;
+	private final boolean isConst;
+	private final boolean isWrapper; // ADD THIS
+	private final String cppTarget;  // ADD THIS
+	private ClassSymbol ownerClass;
 
 	/**
 	 * Constructs a VariableSymbol.
@@ -27,27 +28,32 @@ public class VariableSymbol extends Symbol
 	 * @param isConst          True if this is a constant variable/field, false otherwise.
 	 * @param isPublic         True if this field is public, false otherwise. (Relevant for fields)
 	 */
-	public VariableSymbol(String name, Type type, Token declarationToken, boolean initialized, boolean isStatic, boolean isConst, boolean isPublic)
+	public VariableSymbol(String name, Type type, Token declarationToken, boolean initialized, boolean isStatic, boolean isConst, boolean isPublic, boolean isWrapper, String cppTarget)
 	{
-		super(name, type, declarationToken, isPublic); // Pass isPublic to super
+		super(name, type, declarationToken, isPublic);
 		this.initialized = initialized;
 		this.isStatic = isStatic;
 		this.isConst = isConst;
-		this.ownerClass = null; // Initialize to null; set by SemanticAnalyzer for fields
+		this.ownerClass = null;
+		this.isWrapper = isWrapper; // ADD THIS
+		this.cppTarget = cppTarget; // ADD THIS
 	}
 
-	/**
-	 * Constructs a VariableSymbol (for non-static, non-const, non-public variables, e.g., local vars, params).
-	 */
+	// To maintain compatibility, you need to create a constructor chain.
+	// The most specific one is above. Let's adapt the existing ones.
+	public VariableSymbol(String name, Type type, Token declarationToken, boolean initialized, boolean isStatic, boolean isConst, boolean isPublic)
+	{
+		this(name, type, declarationToken, initialized, isStatic, isConst, isPublic, false, null);
+	}
+
 	public VariableSymbol(String name, Type type, Token declarationToken, boolean initialized)
 	{
-		this(name, type, declarationToken, initialized, false, false, false); // Default to non-static, non-const, non-public
+		this(name, type, declarationToken, initialized, false, false, false, false, null);
 	}
 
-	// Overloaded constructor for parameters/local variables where public/static/const might be less relevant or default
 	public VariableSymbol(String name, Type type, Token declarationToken, boolean initialized, boolean isStatic, boolean isConst)
 	{
-		this(name, type, declarationToken, initialized, isStatic, isConst, false); // Default to non-public
+		this(name, type, declarationToken, initialized, isStatic, isConst, false, false, null);
 	}
 
 
@@ -75,6 +81,16 @@ public class VariableSymbol extends Symbol
 	public boolean isConst()
 	{
 		return isConst;
+	}
+
+	public boolean isWrapper()
+	{
+		return isWrapper;
+	}
+
+	public String getCppTarget()
+	{
+		return cppTarget;
 	}
 
 	/**

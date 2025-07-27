@@ -50,6 +50,8 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	private MethodSymbol currentConstructor;
 	private Type expectedTypeForNextExpression = null; // State for context-aware resolution
 
+	private Map<String, ClassSymbol> preloadedNdkSymbols = new HashMap<>();
+
 	public SemanticAnalyzer(ErrorReporter errorReporter)
 	{
 		this.errorReporter = errorReporter;
@@ -65,6 +67,16 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// Setup global scope
 		SymbolTable globalScope = new SymbolTable(null, "Global");
 		enterScope(globalScope);
+
+		// Integrate preloaded NDK symbols before any analysis begins.
+		if (!preloadedNdkSymbols.isEmpty())
+		{
+			System.out.println("--- Semantic Analysis: Integrating Preloaded Symbols ---");
+			declaredClasses.putAll(preloadedNdkSymbols);
+			// Also define the preloaded class symbols in the global scope for lookup.
+			preloadedNdkSymbols.values().forEach(globalScope::define);
+		}
+
 		// Predefine primitives
 		defineGlobalType(PrimitiveType.VOID);
 		defineGlobalType(PrimitiveType.INT);
@@ -76,12 +88,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		// Phase 1: Class discovery
 		System.out.println("--- Semantic Analysis: First Pass - Class Discovery ---");
-		for(NamespaceDeclaration nsDecl : program.getNamespaceDeclarations())
+		for (NamespaceDeclaration nsDecl : program.getNamespaceDeclarations())
 		{
 			String oldNs = this.currentNamespacePrefix;
 			// Build the current namespace prefix string
 			String rawNamespaceName = getQualifiedNameFromExpression(nsDecl.getNameExpression());
-			if(oldNs.isEmpty())
+			if (oldNs.isEmpty())
 			{
 				this.currentNamespacePrefix = rawNamespaceName;
 			}
@@ -90,15 +102,14 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				this.currentNamespacePrefix = oldNs + "." + rawNamespaceName;
 			}
 
-			for(ClassDeclaration cd : nsDecl.getClassDeclarations())
+			for (ClassDeclaration cd : nsDecl.getClassDeclarations())
 			{
+				boolean isNative = cd.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.NATIVE); // ADD this
 				String simpleName = cd.getName().getLexeme();
 				String fullName = currentNamespacePrefix.isEmpty() ? simpleName : currentNamespacePrefix + "." + simpleName;
-				ClassSymbol cs = new ClassSymbol(simpleName,
-						new ClassType(fullName, null, null),
-						cd.getName(), // Token
-						new SymbolTable(globalScope, "Class:" + simpleName)); // Class scope parented to global for now
-				((ClassType) cs.getType()).classSymbol = cs;
+				// MODIFY constructor call
+				ClassSymbol cs = new ClassSymbol(simpleName, new ClassType(fullName, null, null), cd.getName(), new SymbolTable(globalScope, "Class:" + simpleName), isNative); // PASS isNative
+				cs.getType().classSymbol = cs;
 				declaredClasses.put(fullName, cs);
 				globalScope.define(cs); // Define class symbol in global scope for lookup
 
@@ -110,13 +121,19 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 		System.out.println("--- First Pass Complete ---");
 
+		if (!preloadedNdkSymbols.isEmpty())
+		{
+			System.out.println("--- Semantic Analysis: Linking Preloaded Symbol Types ---");
+			linkPreloadedSymbols();
+		}
+
 		// Phase 2: Member definition
 		System.out.println("--- Semantic Analysis: Second Pass - Member Definition ---");
-		for(NamespaceDeclaration nsDecl : program.getNamespaceDeclarations())
+		for (NamespaceDeclaration nsDecl : program.getNamespaceDeclarations())
 		{
 			String oldNs = this.currentNamespacePrefix;
 			String rawNamespaceName = getQualifiedNameFromExpression(nsDecl.getNameExpression());
-			if(oldNs.isEmpty())
+			if (oldNs.isEmpty())
 			{
 				this.currentNamespacePrefix = rawNamespaceName;
 			}
@@ -125,32 +142,40 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				this.currentNamespacePrefix = oldNs + "." + rawNamespaceName;
 			}
 
-			for(ClassDeclaration cd : nsDecl.getClassDeclarations())
+			for (ClassDeclaration cd : nsDecl.getClassDeclarations())
 			{
 				String fullName = currentNamespacePrefix.isEmpty() ? cd.getName().getLexeme() : currentNamespacePrefix + "." + cd.getName().getLexeme();
 				ClassSymbol cs = declaredClasses.get(fullName);
 				// Define fields
-				for(FieldDeclaration fd : cd.getFields())
+				for (FieldDeclaration fd : cd.getFields())
 				{
 					Type t = getTypeFromToken(fd.getType());
-					if(t == null)
+					if (t == null)
+					{
 						t = ErrorType.INSTANCE;
+					}
 					boolean isStatic = fd.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.STATIC);
 					boolean isPublic = fd.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.PUBLIC);
 					boolean isPrivate = !isPublic;
-					VariableSymbol vs = new VariableSymbol(fd.getName().getLexeme(), t, fd.getName(), fd.getInitializer() != null, isStatic, false, isPublic);
-					vs.setOwnerClass(cs); // Set owner class for fields
+					boolean isWrapper = fd.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.WRAPPER); // ADD this
+					String cppTarget = isWrapper && fd.getCppTarget() != null ? (String) fd.getCppTarget().getLiteral() : null; // ADD this
+
+					// MODIFY constructor call
+					VariableSymbol vs = new VariableSymbol(fd.getName().getLexeme(), t, fd.getName(), fd.getInitializer() != null, isStatic, false, isPublic, isWrapper, cppTarget);
+					vs.setOwnerClass(cs);
 					cs.getClassScope().define(vs);
 				}
 				// Define constructors
-				for(ConstructorDeclaration ctor : cd.getConstructors())
+				for (ConstructorDeclaration ctor : cd.getConstructors())
 				{
 					List<Type> params = new ArrayList<>();
-					for(int i = 0; i < ctor.getParameters().size(); i += 2)
+					for (int i = 0; i < ctor.getParameters().size(); i += 2)
 					{
 						Type pt = getTypeFromToken(ctor.getParameters().get(i));
-						if(pt == null)
+						if (pt == null)
+						{
 							pt = ErrorType.INSTANCE;
+						}
 						params.add(pt);
 					}
 					MethodSymbol ms = new MethodSymbol(ctor.getName().getLexeme(), params, ctor.getName(),
@@ -160,7 +185,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 					cs.defineMethod(ms);
 				}
 				// Synthetic default constructor
-				if(cd.getConstructors().isEmpty())
+				if (cd.getConstructors().isEmpty())
 				{
 					MethodSymbol dft = new MethodSymbol(cd.getName().getLexeme(), Collections.emptyList(), cd.getName(),
 							new SymbolTable(cs.getClassScope(), "ImplicitCtor"), true);
@@ -168,23 +193,44 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 					cs.defineMethod(dft);
 				}
 				// Define methods
-				for(MethodDeclaration md : cd.getMethods())
+				for (MethodDeclaration md : cd.getMethods())
 				{
 					Type rt = getTypeFromToken(md.getReturnType());
-					if(rt == null)
+					if (rt == null)
+					{
 						rt = ErrorType.INSTANCE;
+					}
 					List<Type> params = new ArrayList<>();
-					for(int i = 0; i < md.getParameters().size(); i += 2)
+					for (int i = 0; i < md.getParameters().size(); i += 2)
 					{
 						Type pt = getTypeFromToken(md.getParameters().get(i));
-						if(pt == null)
+						if (pt == null)
+						{
 							pt = ErrorType.INSTANCE;
+						}
 						params.add(pt);
 					}
 					boolean isStatic = md.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.STATIC);
 					boolean isPublic = md.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.PUBLIC);
-					MethodSymbol ms = new MethodSymbol(md.getName().getLexeme(), rt, params, md.getName(),
-							new SymbolTable(cs.getClassScope(), "Method:" + md.getName() + params.hashCode()), isStatic, isPublic);
+					boolean isWrapper = md.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.WRAPPER); // ADD this
+					String cppTarget = isWrapper && md.getCppTarget() != null ? (String) md.getCppTarget().getLiteral() : null; // ADD this
+
+					// Determine if it's an operator before creating the symbol
+					boolean isOperator = md.getOperatorKeyword() != null;
+
+					// Find the line where you create the MethodSymbol and update it
+					MethodSymbol ms = new MethodSymbol(
+							md.getName().getLexeme(),
+							rt,
+							params,
+							md.getName(),
+							new SymbolTable(cs.getClassScope(), "Method:" + md.getName() + params.hashCode()),
+							isStatic,
+							isPublic,
+							isWrapper,
+							cppTarget,
+							isOperator // Pass the new flag here
+					);
 					ms.setOwnerClass(cs);
 					cs.defineMethod(ms);
 				}
@@ -195,13 +241,13 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		// NEW: Phase 3 - Mangle names for methods overloaded by return type
 		System.out.println("--- Semantic Analysis: Third Pass - Name Mangling ---");
-		for(ClassSymbol cs : declaredClasses.values())
+		for (ClassSymbol cs : declaredClasses.values())
 		{
 			// Group methods by signature (name + param types)
 			Map<String, List<MethodSymbol>> signatureMap = new HashMap<>();
-			for(List<MethodSymbol> overloads : cs.methodsByName.values())
+			for (List<MethodSymbol> overloads : cs.methodsByName.values())
 			{
-				for(MethodSymbol ms : overloads)
+				for (MethodSymbol ms : overloads)
 				{
 					// Create a unique signature string based on name and parameter types
 					String signature = ms.getName() + "(" + ms.getParameterTypes().stream().map(Type::getName).collect(Collectors.joining(",")) + ")";
@@ -210,11 +256,11 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 
 			// For each signature with more than one method, mangle their names
-			for(List<MethodSymbol> returnOverloads : signatureMap.values())
+			for (List<MethodSymbol> returnOverloads : signatureMap.values())
 			{
-				if(returnOverloads.size() > 1)
+				if (returnOverloads.size() > 1)
 				{
-					for(MethodSymbol ms : returnOverloads)
+					for (MethodSymbol ms : returnOverloads)
 					{
 						String baseName = ms.getName();
 						String returnTypeName = ms.getType().getName();
@@ -230,25 +276,27 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// --- PASS 4: INHERITANCE LINKING ---
 		// Before analyzing any code blocks, iterate through all classes and set up their inheritance.
 		System.out.println("--- Semantic Analysis: Fourth Pass - Inheritance Linking ---");
-		for(NamespaceDeclaration nsDecl : program.getNamespaceDeclarations())
+		for (NamespaceDeclaration nsDecl : program.getNamespaceDeclarations())
 		{
 			String oldNs = this.currentNamespacePrefix;
 			this.currentNamespacePrefix = oldNs.isEmpty() ? getQualifiedNameFromExpression(nsDecl.getNameExpression()) : oldNs + "." + getQualifiedNameFromExpression(nsDecl.getNameExpression());
 
-			for(ClassDeclaration cd : nsDecl.getClassDeclarations())
+			for (ClassDeclaration cd : nsDecl.getClassDeclarations())
 			{
 				String fqn = this.currentNamespacePrefix + "." + cd.getName().getLexeme();
 				ClassSymbol classSymbol = declaredClasses.get(fqn);
-				if(classSymbol == null)
+				if (classSymbol == null)
+				{
 					continue;
+				}
 
-				if(cd.getExtendsKeyword() != null)
+				if (cd.getExtendsKeyword() != null)
 				{
 					// Logic to handle explicit 'extends'
 					String superClassName = cd.getSuperClassName().getLexeme();
 					String fqnSuper = getFullyQualifiedClassName(superClassName); // Use existing helper
 					ClassSymbol superSymbol = declaredClasses.get(fqnSuper);
-					if(superSymbol != null)
+					if (superSymbol != null)
 					{
 						((ClassType) classSymbol.getType()).setSuperClassType(superSymbol.getType());
 					}
@@ -257,11 +305,11 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 						error(cd.getSuperClassName(), "Cannot find superclass '" + superClassName + "'.");
 					}
 				}
-				else if(!fqn.equals("nebula.core.Object"))
+				else if (!fqn.equals("nebula.core.Object"))
 				{
 					// Default all other classes to extend Object.
 					ClassSymbol objectSymbol = declaredClasses.get("nebula.core.Object");
-					if(objectSymbol != null)
+					if (objectSymbol != null)
 					{
 						((ClassType) classSymbol.getType()).setSuperClassType(objectSymbol.getType());
 					}
@@ -273,7 +321,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 
 		// Process imports (can happen before the final pass)
-		for(ImportDirective id : program.getImportDirectives())
+		for (ImportDirective id : program.getImportDirectives())
 		{
 			id.accept(this);
 		}
@@ -325,9 +373,81 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	 */
 	private void exitScope()
 	{
-		if(currentScope != null)
+		if (currentScope != null)
 		{
 			currentScope = currentScope.getEnclosingScope();
+		}
+	}
+
+	public void preloadSymbols(Map<String, ClassSymbol> symbols)
+	{
+		this.preloadedNdkSymbols = symbols;
+	}
+
+	//Method for resolving dummy types
+	private void linkPreloadedSymbols()
+	{
+		for (ClassSymbol cs : preloadedNdkSymbols.values())
+		{
+			// 1. Link Superclass Type
+			Type superClassType = cs.getType().getSuperClassType();
+			if (superClassType != null)
+			{
+				ClassSymbol realSuperSymbol = declaredClasses.get(superClassType.getName());
+				if (realSuperSymbol != null)
+				{
+					cs.getType().setSuperClassType(realSuperSymbol.getType());
+				}
+				else
+				{
+					// This could be an error, or the superclass is not part of the set (e.g. java.lang.Object)
+				}
+			}
+
+			// 2. Link Field Types
+			for (Symbol sym : cs.getClassScope().symbols.values())
+			{
+				if (sym instanceof VariableSymbol)
+				{
+					VariableSymbol vs = (VariableSymbol) sym;
+					ClassSymbol realTypeSymbol = declaredClasses.get(vs.getType().getName());
+					if (realTypeSymbol != null)
+					{
+						((VariableSymbol) sym).setType(realTypeSymbol.getType()); // Nasty cast, but we know what we're doing
+					}
+				}
+			}
+
+			// 3. Link Method Return and Parameter Types
+			for (List<MethodSymbol> overloads : cs.methodsByName.values())
+			{
+				for (MethodSymbol ms : overloads)
+				{
+					// Link return type
+					ClassSymbol realReturnSymbol = declaredClasses.get(ms.getType().getName());
+					if (realReturnSymbol != null)
+					{
+						// Set the return type
+						ms.setType(realReturnSymbol.getType());
+					}
+
+					// Link parameter types
+					List<Type> realParamTypes = new ArrayList<>();
+					for (Type paramType : ms.getParameterTypes())
+					{
+						ClassSymbol realParamSymbol = declaredClasses.get(paramType.getName());
+						if (realParamSymbol != null)
+						{
+							realParamTypes.add(realParamSymbol.getType());
+						}
+						else
+						{
+							realParamTypes.add(paramType); // Keep the dummy if not found
+						}
+					}
+					ms.setParameterTypes(realParamTypes);
+				}
+			}
 		}
 	}
 
@@ -353,13 +473,13 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	private Type resolveType(Token typeToken, int arrayRank)
 	{
 		Type baseType = getTypeFromToken(typeToken);
-		if(baseType instanceof ErrorType)
+		if (baseType instanceof ErrorType)
 		{
 			return ErrorType.INSTANCE;
 		}
 
 		Type currentType = baseType;
-		for(int i = 0; i < arrayRank; i++)
+		for (int i = 0; i < arrayRank; i++)
 		{
 			currentType = new ArrayType(currentType);
 		}
@@ -374,7 +494,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	 */
 	public Type getTypeFromToken(Token token)
 	{
-		switch(token.getType())
+		switch (token.getType())
 		{
 			case INT:
 				return PrimitiveType.INT;
@@ -384,7 +504,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				return PrimitiveType.CHAR;
 			case STRING_KEYWORD: // The 'string' keyword maps to the Nebula.Lang.String class
 				ClassSymbol stringClass = declaredClasses.get("nebula.core.String");
-				if(stringClass != null)
+				if (stringClass != null)
 				{
 					return stringClass.getType();
 				}
@@ -406,7 +526,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				String fullyQualifiedName = getFullyQualifiedClassName(className);
 
 				ClassSymbol classSymbol = declaredClasses.get(fullyQualifiedName);
-				if(classSymbol != null)
+				if (classSymbol != null)
 				{
 					return classSymbol.getType();
 				}
@@ -428,26 +548,26 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	private String getFullyQualifiedClassName(String simpleClassName)
 	{
 		// 1. Check if the simple name directly maps to a fully qualified class (e.g., if it's already an FQN, or if `String` is globally known)
-		if(declaredClasses.containsKey(simpleClassName))
+		if (declaredClasses.containsKey(simpleClassName))
 		{
 			return simpleClassName;
 		}
 
 		// 2. Check within the current namespace prefix
-		if(!currentNamespacePrefix.isEmpty())
+		if (!currentNamespacePrefix.isEmpty())
 		{
 			String qualifiedInCurrentNamespace = currentNamespacePrefix + "." + simpleClassName;
-			if(declaredClasses.containsKey(qualifiedInCurrentNamespace))
+			if (declaredClasses.containsKey(qualifiedInCurrentNamespace))
 			{
 				return qualifiedInCurrentNamespace;
 			}
 		}
 
 		// 3. Check imported namespaces (from 'import' directives)
-		for(String importedNs : importedNamespaces)
+		for (String importedNs : importedNamespaces)
 		{
 			String qualifiedName = importedNs + "." + simpleClassName;
-			if(declaredClasses.containsKey(qualifiedName))
+			if (declaredClasses.containsKey(qualifiedName))
 			{
 				return qualifiedName;
 			}
@@ -455,10 +575,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		// 4. Check well-known core namespaces (e.g., Nebula.Lang, Com.NebulaLang.Core)
 		String[] coreNamespaces = {"nebula.core", "nebula.io"}; // Added nebula.io as a common core namespace
-		for(String ns : coreNamespaces)
+		for (String ns : coreNamespaces)
 		{
 			String qualifiedName = ns + "." + simpleClassName;
-			if(declaredClasses.containsKey(qualifiedName))
+			if (declaredClasses.containsKey(qualifiedName))
 			{
 				return qualifiedName;
 			}
@@ -479,15 +599,15 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	 */
 	private String getQualifiedNameFromExpression(Expression expression)
 	{
-		if(expression instanceof IdentifierExpression)
+		if (expression instanceof IdentifierExpression)
 		{
 			return ((IdentifierExpression) expression).getName().getLexeme();
 		}
-		else if(expression instanceof DotExpression)
+		else if (expression instanceof DotExpression)
 		{
 			DotExpression dot = (DotExpression) expression;
 			String leftPart = getQualifiedNameFromExpression(dot.getLeft());
-			if(leftPart == null)
+			if (leftPart == null)
 			{
 				return null;
 			}
@@ -507,7 +627,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	 */
 	private Type getBinaryExpressionResultType(Token operator, Type leftType, Type rightType)
 	{
-		if(leftType instanceof ErrorType || rightType instanceof ErrorType)
+		if (leftType instanceof ErrorType || rightType instanceof ErrorType)
 		{
 			return ErrorType.INSTANCE;
 		}
@@ -515,25 +635,25 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// Handle string concatenation first (String is a ClassType: Nebula.Lang.String)
 		ClassSymbol stringClassSymbol = declaredClasses.get("nebula.core.String");
 		ClassType stringClassType = null;
-		if(stringClassSymbol != null)
+		if (stringClassSymbol != null)
 		{
 			stringClassType = (ClassType) stringClassSymbol.getType();
 		}
 
-		if(operator.getType() == TokenType.PLUS && (leftType.equals(stringClassType) || rightType.equals(stringClassType)))
+		if (operator.getType() == TokenType.PLUS && (leftType.equals(stringClassType) || rightType.equals(stringClassType)))
 		{
 			return stringClassType;
 		}
 
 		// Check general compatibility using the isCompatibleWith method.
-		if(!leftType.isCompatibleWith(rightType))
+		if (!leftType.isCompatibleWith(rightType))
 		{
 			error(operator, "Incompatible types for binary operation '" + operator.getLexeme() + "': " + leftType.getName() + " and " + rightType.getName() + ".");
 			return ErrorType.INSTANCE;
 		}
 
 		// Arithmetic operations (+, -, *, /, %)
-		if(operator.getType() == TokenType.PLUS || operator.getType() == TokenType.MINUS ||
+		if (operator.getType() == TokenType.PLUS || operator.getType() == TokenType.MINUS ||
 				operator.getType() == TokenType.STAR || operator.getType() == TokenType.SLASH ||
 				operator.getType() == TokenType.MODULO)
 		{
@@ -542,12 +662,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		// Comparison operations (==, !=, <, >, <=, >=) always result in bool
-		if(operator.getType() == TokenType.EQUAL_EQUAL || operator.getType() == TokenType.BANG_EQUAL ||
+		if (operator.getType() == TokenType.EQUAL_EQUAL || operator.getType() == TokenType.BANG_EQUAL ||
 				operator.getType() == TokenType.LESS || operator.getType() == TokenType.GREATER ||
 				operator.getType() == TokenType.LESS_EQUAL || operator.getType() == TokenType.GREATER_EQUAL)
 		{
 			// Ensure types are comparable
-			if(!Type.isComparable(leftType, rightType))
+			if (!Type.isComparable(leftType, rightType))
 			{
 				error(operator, "Types '" + leftType.getName() + "' and '" + rightType.getName() + "' are not comparable with '" + operator.getLexeme() + "'.");
 				return ErrorType.INSTANCE;
@@ -556,9 +676,9 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		// Logical operations (&&, ||)
-		if(operator.getType() == TokenType.AMPERSAND_AMPERSAND || operator.getType() == TokenType.PIPE_PIPE)
+		if (operator.getType() == TokenType.AMPERSAND_AMPERSAND || operator.getType() == TokenType.PIPE_PIPE)
 		{
-			if(!leftType.equals(PrimitiveType.BOOL) || !rightType.equals(PrimitiveType.BOOL))
+			if (!leftType.equals(PrimitiveType.BOOL) || !rightType.equals(PrimitiveType.BOOL))
 			{
 				error(operator, "Logical operators '&&' and '||' require boolean operands.");
 				return ErrorType.INSTANCE;
@@ -579,22 +699,22 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	 */
 	private Type getUnaryExpressionResultType(Token operator, Type operandType)
 	{
-		if(operandType instanceof ErrorType)
+		if (operandType instanceof ErrorType)
 		{
 			return ErrorType.INSTANCE;
 		}
 
-		switch(operator.getType())
+		switch (operator.getType())
 		{
 			case BANG: // Logical NOT (!)
-				if(!operandType.equals(PrimitiveType.BOOL))
+				if (!operandType.equals(PrimitiveType.BOOL))
 				{
 					error(operator, "Unary operator '!' can only be applied to a boolean expression.");
 					return ErrorType.INSTANCE;
 				}
 				return PrimitiveType.BOOL;
 			case MINUS: // Negation (-)
-				if(!(operandType.equals(PrimitiveType.INT) || operandType.equals(PrimitiveType.DOUBLE) || operandType.equals(PrimitiveType.FLOAT) || operandType.equals(PrimitiveType.BYTE) || operandType.equals(PrimitiveType.CHAR)))
+				if (!(operandType.equals(PrimitiveType.INT) || operandType.equals(PrimitiveType.DOUBLE) || operandType.equals(PrimitiveType.FLOAT) || operandType.equals(PrimitiveType.BYTE) || operandType.equals(PrimitiveType.CHAR)))
 				{
 					error(operator, "Unary operator '-' can only be applied to numeric expressions.");
 					return ErrorType.INSTANCE;
@@ -602,7 +722,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				return operandType; // Type remains the same (int -> int, double -> double)
 			case PLUS_PLUS:   // Increment (++)
 			case MINUS_MINUS: // Decrement (--)
-				if(!(operandType.isNumeric())) // Use isNumeric helper
+				if (!(operandType.isNumeric())) // Use isNumeric helper
 				{
 					error(operator, "Increment/decrement operators '++' and '--' can only be applied to numeric expressions.");
 					return ErrorType.INSTANCE;
@@ -623,7 +743,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// Set up initial currentConstructor to null before main traversal
 		this.currentConstructor = null;
 
-		for(NamespaceDeclaration namespaceDecl : program.getNamespaceDeclarations())
+		for (NamespaceDeclaration namespaceDecl : program.getNamespaceDeclarations())
 		{
 			namespaceDecl.accept(this);
 		}
@@ -641,23 +761,23 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		ClassSymbol classSym = declaredClasses.get(qualifiedName);
 
 		// If not found by exact FQN, try to resolve as a class within already imported namespaces
-		if(classSym == null)
+		if (classSym == null)
 		{
 			String resolvedFQN = resolveAgainstImportedNamespaces(qualifiedName);
-			if(resolvedFQN != null)
+			if (resolvedFQN != null)
 			{
 				classSym = declaredClasses.get(resolvedFQN);
 			}
 		}
 
-		if(classSym != null)
+		if (classSym != null)
 		{
 			// This is a direct class import or a class within an imported namespace
 			String simpleName = getSimpleNameFromQualifiedName(qualifiedName); // Extract simple name
 			importedClasses.put(simpleName, classSym);
 			// If it's a static import, add the class to importedStaticClasses.
 			// More granular static member import would need further resolution here.
-			if(isStatic)
+			if (isStatic)
 			{
 				importedStaticClasses.add(classSym);
 			}
@@ -665,7 +785,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		else // Not a directly known class, might be a namespace or an undeclared class
 		{
 			// If it's a static import, and we didn't find a class, it's an error (static imports are always for classes/members)
-			if(isStatic)
+			if (isStatic)
 			{
 				error(directive.getImportKeyword(), "Could not resolve static import '" + qualifiedName + "'. It must refer to a known class.");
 			}
@@ -696,7 +816,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		String oldNamespacePrefix = this.currentNamespacePrefix;
 
 		String fqnForNamespace = "";
-		if(oldNamespacePrefix.isEmpty())
+		if (oldNamespacePrefix.isEmpty())
 		{
 			fqnForNamespace = rawNamespaceName;
 		}
@@ -710,7 +830,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		SymbolTable namespaceScope = new SymbolTable(currentScope, "Namespace:" + fqnForNamespace);
 		enterScope(namespaceScope);
 
-		for(ClassDeclaration classDecl : declaration.getClassDeclarations())
+		for (ClassDeclaration classDecl : declaration.getClassDeclarations())
 		{
 			classDecl.accept(this); // Recursive call for class declarations
 		}
@@ -729,7 +849,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 
 		ClassSymbol classSymbol = declaredClasses.get(fullClassName);
-		if(classSymbol == null)
+		if (classSymbol == null)
 		{
 			error(declaration.getName(), "Internal error: Class symbol not found for " + fullClassName + ". This indicates an error in class discovery or lookup.");
 			return ErrorType.INSTANCE; // Return ErrorType
@@ -746,12 +866,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 
 		// Propagate the actual superclass type to the ClassType object
-		if(declaration.getExtendsKeyword() != null)
+		if (declaration.getExtendsKeyword() != null)
 		{
 			String superClassName = declaration.getSuperClassName().getLexeme();
 			String fullSuperClassName = getFullyQualifiedClassName(superClassName);
 			ClassSymbol superSym = declaredClasses.get(fullSuperClassName);
-			if(superSym != null)
+			if (superSym != null)
 			{
 				((ClassType) currentClass.getType()).setSuperClassType(superSym.getType());
 			}
@@ -765,7 +885,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		else
 		{
 			// Explicitly set Object as superclass if no 'extends' clause (unless it's Object itself)
-			if(!fullClassName.equals("nebula.core.Object"))
+			if (!fullClassName.equals("nebula.core.Object"))
 			{
 				((ClassType) currentClass.getType()).setSuperClassType(declaredClasses.get("nebula.core.Object").getType());
 			}
@@ -773,10 +893,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 
 		// Phase 1: Analyze field initializers
-		for(FieldDeclaration fieldDecl : declaration.getFields())
+		for (FieldDeclaration fieldDecl : declaration.getFields())
 		{
 			boolean oldStaticContext = inStaticContext;
-			if(fieldDecl.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.STATIC))
+			if (fieldDecl.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.STATIC))
 			{
 				inStaticContext = true; // Set static context for static field initializers
 			}
@@ -785,13 +905,13 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		// Phase 2: Visit the bodies of methods and constructors
-		for(ConstructorDeclaration constructorDecl : declaration.getConstructors())
+		for (ConstructorDeclaration constructorDecl : declaration.getConstructors())
 		{
 			List<Type> constructorParamTypes = new ArrayList<>();
-			for(int i = 0; i < constructorDecl.getParameters().size(); i += 2)
+			for (int i = 0; i < constructorDecl.getParameters().size(); i += 2)
 			{
 				Type paramType = getTypeFromToken(constructorDecl.getParameters().get(i));
-				if(paramType == null || paramType instanceof ErrorType)
+				if (paramType == null || paramType instanceof ErrorType)
 				{
 					paramType = ErrorType.INSTANCE;
 				}
@@ -802,12 +922,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			Symbol resolvedSymbol = classSymbol.resolveMember(constructorDecl.getName().getLexeme(), constructorParamTypes);
 			MethodSymbol resolvedConstructor = null;
 
-			if(resolvedSymbol instanceof MethodSymbol && ((MethodSymbol) resolvedSymbol).isConstructor())
+			if (resolvedSymbol instanceof MethodSymbol && ((MethodSymbol) resolvedSymbol).isConstructor())
 			{
 				resolvedConstructor = (MethodSymbol) resolvedSymbol;
 			}
 
-			if(resolvedConstructor != null)
+			if (resolvedConstructor != null)
 			{
 				MethodSymbol oldCurrentMethod = currentMethod;
 				MethodSymbol oldCurrentConstructor = currentConstructor; // Save current constructor state
@@ -818,23 +938,25 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				enterScope(currentMethod.getMethodScope());
 
 				// Define parameters as local variables in the constructor's scope
-				for(int i = 0; i < constructorDecl.getParameters().size(); i += 2)
+				for (int i = 0; i < constructorDecl.getParameters().size(); i += 2)
 				{
 					Token paramTypeToken = constructorDecl.getParameters().get(i);
 					Token paramNameToken = constructorDecl.getParameters().get(i + 1);
 					Type paramType = getTypeFromToken(paramTypeToken);
-					if(paramType == null || paramType instanceof ErrorType)
+					if (paramType == null || paramType instanceof ErrorType)
+					{
 						continue;
+					}
 
 					VariableSymbol paramSymbol = new VariableSymbol(paramNameToken.getLexeme(), paramType, paramNameToken, true, false, false, false);
 					currentScope.define(paramSymbol);
 				}
 
 				// Before visiting the body, check if the first statement is a chaining call.
-				if(constructorDecl.getBody() != null && !constructorDecl.getBody().getStatements().isEmpty())
+				if (constructorDecl.getBody() != null && !constructorDecl.getBody().getStatements().isEmpty())
 				{
 					Statement firstStatement = constructorDecl.getBody().getStatements().get(0);
-					if(firstStatement instanceof ConstructorChainingCallStatement)
+					if (firstStatement instanceof ConstructorChainingCallStatement)
 					{
 						// If it is, link it to the constructor's AST node.
 						constructorDecl.setChainingCall((ConstructorChainingCallStatement) firstStatement);
@@ -857,13 +979,13 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// Check if a constructor with no arguments is already defined
 		Symbol noArgCtorSymbol = classSymbol.resolveMember(classSymbol.getName(), emptyParams);
 		MethodSymbol defaultConstructorSymbol = null;
-		if(noArgCtorSymbol instanceof MethodSymbol && ((MethodSymbol) noArgCtorSymbol).isConstructor())
+		if (noArgCtorSymbol instanceof MethodSymbol && ((MethodSymbol) noArgCtorSymbol).isConstructor())
 		{
 			defaultConstructorSymbol = (MethodSymbol) noArgCtorSymbol;
 		}
 
 		// Only process if the default constructor exists and the class declared no explicit constructors
-		if(declaration.getConstructors().isEmpty() && defaultConstructorSymbol != null)
+		if (declaration.getConstructors().isEmpty() && defaultConstructorSymbol != null)
 		{
 			MethodSymbol oldCurrentMethod = currentMethod;
 			MethodSymbol oldCurrentConstructor = currentConstructor;
@@ -880,14 +1002,14 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 
-		for(MethodDeclaration methodDecl : declaration.getMethods())
+		for (MethodDeclaration methodDecl : declaration.getMethods())
 		{
 			List<Type> methodParamTypes = new ArrayList<>();
-			for(int i = 0; i < methodDecl.getParameters().size(); i += 2)
+			for (int i = 0; i < methodDecl.getParameters().size(); i += 2)
 			{
 				Token paramTypeToken = methodDecl.getParameters().get(i);
 				Type paramType = getTypeFromToken(paramTypeToken);
-				if(paramType == null || paramType instanceof ErrorType)
+				if (paramType == null || paramType instanceof ErrorType)
 				{
 					paramType = ErrorType.INSTANCE;
 				}
@@ -900,26 +1022,26 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			// Find the exact MethodSymbol by matching name, parameter types, AND return type
 			List<MethodSymbol> candidates = classSymbol.methodsByName.get(methodDecl.getName().getLexeme());
 			MethodSymbol resolvedMethod = null;
-			if(candidates != null)
+			if (candidates != null)
 			{
-				for(MethodSymbol candidate : candidates)
+				for (MethodSymbol candidate : candidates)
 				{
-					if(candidate.getParameterTypes().size() == methodParamTypes.size() &&
+					if (candidate.getParameterTypes().size() == methodParamTypes.size() &&
 							candidate.getType().equals(methodReturnType))
 					{
 						// A simple parameter type comparison. For full correctness, this should use isAssignableTo.
 						// But for finding the exact declaration, simple equality is better.
 						boolean paramsMatch = true;
-						for(int i = 0; i < methodParamTypes.size(); i++)
+						for (int i = 0; i < methodParamTypes.size(); i++)
 						{
-							if(!candidate.getParameterTypes().get(i).equals(methodParamTypes.get(i)))
+							if (!candidate.getParameterTypes().get(i).equals(methodParamTypes.get(i)))
 							{
 								paramsMatch = false;
 								break;
 							}
 						}
 
-						if(paramsMatch)
+						if (paramsMatch)
 						{
 							resolvedMethod = candidate;
 							break;
@@ -928,9 +1050,30 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				}
 			}
 
-			if(resolvedMethod != null)
+			if (resolvedMethod != null)
 			{
-				methodDecl.setResolvedSymbol(resolvedMethod); // Link the AST node to its symbol
+				methodDecl.setResolvedSymbol(resolvedMethod);
+
+				// ADD SEMANTIC CHECKS
+				boolean isWrapper = resolvedMethod.isWrapper();
+				if (isWrapper)
+				{
+					if (methodDecl.getBody() != null)
+					{
+						error(methodDecl.getName(), "A wrapper method cannot have a Nebula body { ... }.");
+					}
+					if (resolvedMethod.getCppTarget() == null)
+					{
+						error(methodDecl.getName(), "A wrapper method must have a C++ target string (-> \"...\").");
+					}
+				}
+				else
+				{
+					if (methodDecl.getCppTarget() != null)
+					{
+						error(methodDecl.getName(), "A non-wrapper method cannot have a C++ target string.");
+					}
+				}
 
 				MethodSymbol oldCurrentMethod = currentMethod;
 				this.currentMethod = resolvedMethod;
@@ -938,20 +1081,22 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 				enterScope(currentMethod.getMethodScope());
 
-				for(int i = 0; i < methodDecl.getParameters().size(); i += 2)
+				for (int i = 0; i < methodDecl.getParameters().size(); i += 2)
 				{
 					Token paramTypeToken = methodDecl.getParameters().get(i);
 					Token paramNameToken = methodDecl.getParameters().get(i + 1);
 					Type paramType = getTypeFromToken(paramTypeToken);
-					if(paramType == null || paramType instanceof ErrorType)
+					if (paramType == null || paramType instanceof ErrorType)
+					{
 						continue;
+					}
 
 					VariableSymbol paramSymbol = new VariableSymbol(paramNameToken.getLexeme(), paramType, paramNameToken, true, false, false, false);
 					currentScope.define(paramSymbol);
 				}
 
-				if(methodDecl.getBody() != null)
-				{ // Only visit if a body exists (not a semicolon method)
+				if (methodDecl.getBody() != null && !isWrapper)
+				{
 					methodDecl.getBody().accept(this);
 				}
 				exitScope();
@@ -964,7 +1109,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 		}
 
-		exitScope(); // Exit the class scope
+		exitScope();
 		currentClass = null;
 		return PrimitiveType.VOID;
 	}
@@ -991,7 +1136,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	public Type visitConstructorChainingCallStatement(ConstructorChainingCallStatement statement)
 	{
 		// Validation: Must be inside a constructor
-		if(currentClass == null || currentMethod == null || !currentMethod.isConstructor())
+		if (currentClass == null || currentMethod == null || !currentMethod.isConstructor())
 		{
 			error(statement.getKeyword(), "Constructor call (this(...) or super(...)) can only be made from within a constructor.");
 			return ErrorType.INSTANCE;
@@ -999,10 +1144,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		// Collect argument types
 		List<Type> argTypes = new ArrayList<>();
-		for(Expression arg : statement.getArguments())
+		for (Expression arg : statement.getArguments())
 		{
 			Type argType = arg.accept(this);
-			if(argType == null || argType instanceof ErrorType)
+			if (argType == null || argType instanceof ErrorType)
 			{
 				return ErrorType.INSTANCE; // Propagate error
 			}
@@ -1012,16 +1157,16 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		MethodSymbol targetConstructor = null;
 		ClassSymbol classToCallConstructorOn = null;
 
-		if(statement.getKeyword().getType() == TokenType.THIS)
+		if (statement.getKeyword().getType() == TokenType.THIS)
 		{
 			classToCallConstructorOn = currentClass; // Calling a constructor of the current class
 		}
-		else if(statement.getKeyword().getType() == TokenType.SUPER)
+		else if (statement.getKeyword().getType() == TokenType.SUPER)
 		{
-			if(currentClass.getType().getSuperClassType() instanceof ClassType)
+			if (currentClass.getType().getSuperClassType() instanceof ClassType)
 			{
 				classToCallConstructorOn = ((ClassType) currentClass.getType().getSuperClassType()).getClassSymbol();
-				if(classToCallConstructorOn == null)
+				if (classToCallConstructorOn == null)
 				{
 					error(statement.getKeyword(), "Internal error: Superclass symbol not found for 'super()' call.");
 					return ErrorType.INSTANCE;
@@ -1039,7 +1184,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return ErrorType.INSTANCE;
 		}
 
-		if(classToCallConstructorOn == null)
+		if (classToCallConstructorOn == null)
 		{
 			error(statement.getKeyword(), "Internal error: Cannot determine class for constructor call (this/super).");
 			return ErrorType.INSTANCE;
@@ -1048,23 +1193,23 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// FIX: Explicitly resolve the constructor and check if it's a constructor symbol
 		Symbol resolvedSymbol = classToCallConstructorOn.resolveMember(classToCallConstructorOn.getName(), argTypes);
 
-		if(resolvedSymbol instanceof MethodSymbol)
+		if (resolvedSymbol instanceof MethodSymbol)
 		{
 			MethodSymbol candidate = (MethodSymbol) resolvedSymbol;
-			if(candidate.isConstructor())
+			if (candidate.isConstructor())
 			{
 				targetConstructor = candidate;
 			}
 		}
 
-		if(targetConstructor == null)
+		if (targetConstructor == null)
 		{
 			StringBuilder argTypesBuilder = new StringBuilder();
 			// FIX: Use 'argTypes' instead of 'actualArgumentTypes' here
-			for(int i = 0; i < argTypes.size(); i++)
+			for (int i = 0; i < argTypes.size(); i++)
 			{
 				argTypesBuilder.append(argTypes.get(i).getName());
-				if(i < argTypes.size() - 1)
+				if (i < argTypes.size() - 1)
 				{
 					argTypesBuilder.append(", ");
 				}
@@ -1076,7 +1221,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		// Semantic check: Prevent recursive constructor calls (e.g., A() calls A())
-		if(targetConstructor == currentConstructor)
+		if (targetConstructor == currentConstructor)
 		{
 			error(statement.getKeyword(), "Recursive constructor call detected: A constructor cannot directly call itself.");
 			return ErrorType.INSTANCE;
@@ -1098,18 +1243,40 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	public Type visitFieldDeclaration(FieldDeclaration declaration)
 	{
 		Type fieldType = getTypeFromToken(declaration.getType());
-		if(fieldType instanceof ErrorType)
+		if (fieldType instanceof ErrorType)
 		{
 			return PrimitiveType.VOID;
 		}
 
-		if(fieldType.equals(PrimitiveType.VOID))
+		if (fieldType.equals(PrimitiveType.VOID))
 		{
 			error(declaration.getType(), "Cannot declare a field of type 'void'.");
 			return PrimitiveType.VOID;
 		}
 
 		declaration.setResolvedType(fieldType); // Set the resolved Type onto the AST node
+
+		boolean isWrapper = declaration.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.WRAPPER);
+
+		// ADD SEMANTIC CHECKS
+		if (isWrapper)
+		{
+			if (declaration.getInitializer() != null)
+			{
+				error(declaration.getName(), "A wrapper field cannot have a Nebula initializer.");
+			}
+			if (declaration.getCppTarget() == null)
+			{
+				error(declaration.getName(), "A wrapper field must have a C++ target string (-> \"...\").");
+			}
+		}
+		else
+		{
+			if (declaration.getCppTarget() != null)
+			{
+				error(declaration.getName(), "A non-wrapper field cannot have a C++ target string.");
+			}
+		}
 
 		boolean isStaticField = declaration.getModifiers().stream()
 				.anyMatch(m -> m.getType() == TokenType.STATIC);
@@ -1120,7 +1287,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		boolean isPrivateField = declaration.getModifiers().stream()
 				.anyMatch(m -> m.getType() == TokenType.PRIVATE);
 
-		if(!isPublicField && !isPrivateField)
+		if (!isPublicField && !isPrivateField)
 		{
 			isPrivateField = true;
 		}
@@ -1128,7 +1295,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// Fetch the field symbol that was defined in the first pass
 		Symbol fieldSymInScope = currentScope.resolve(declaration.getName().getLexeme());
 		VariableSymbol fieldSymbol = null;
-		if(fieldSymInScope instanceof VariableSymbol)
+		if (fieldSymInScope instanceof VariableSymbol)
 		{
 			fieldSymbol = (VariableSymbol) fieldSymInScope;
 		}
@@ -1138,19 +1305,20 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return PrimitiveType.VOID;
 		}
 
-
-		if(declaration.getInitializer() != null)
+		if (declaration.getInitializer() != null)
 		{
 			boolean oldStaticContext = inStaticContext;
 			inStaticContext = isStaticField;
 			Type initializerType = declaration.getInitializer().accept(this);
 			inStaticContext = oldStaticContext;
 
-			if(initializerType instanceof ErrorType)
+			if (initializerType instanceof ErrorType)
+			{
 				return PrimitiveType.VOID; // Propagate error
+			}
 
 			// *** MODIFIED ***: Corrected assignment check direction.
-			if(!initializerType.isAssignableTo(fieldType))
+			if (!initializerType.isAssignableTo(fieldType))
 			{
 				error(declaration.getName(), "Incompatible types in field initialization: cannot assign '" + initializerType.getName() + "' to '" + fieldType.getName() + "'.");
 			}
@@ -1158,7 +1326,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 		else
 		{
-			if(isConstField)
+			if (isConstField)
 			{
 				error(declaration.getName(), "Constant field '" + declaration.getName().getLexeme() + "' must be initialized.");
 			}
@@ -1173,7 +1341,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		SymbolTable blockScope = new SymbolTable(currentScope, "Block");
 		enterScope(blockScope);
 
-		for(com.juanpa.nebula.transpiler.ast.statements.Statement stmt : statement.getStatements())
+		for (com.juanpa.nebula.transpiler.ast.statements.Statement stmt : statement.getStatements())
 		{
 			stmt.accept(this);
 		}
@@ -1192,16 +1360,18 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	public Type visitIfStatement(IfStatement statement)
 	{
 		Type conditionType = statement.getCondition().accept(this);
-		if(conditionType instanceof ErrorType)
+		if (conditionType instanceof ErrorType)
+		{
 			return ErrorType.INSTANCE;
+		}
 
-		if(!conditionType.equals(PrimitiveType.BOOL))
+		if (!conditionType.equals(PrimitiveType.BOOL))
 		{
 			error(statement.getCondition().getFirstToken(), "If condition must be a boolean expression.");
 		}
 
 		statement.getThenBranch().accept(this);
-		if(statement.getElseBranch() != null)
+		if (statement.getElseBranch() != null)
 		{
 			statement.getElseBranch().accept(this);
 		}
@@ -1212,10 +1382,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	public Type visitWhileStatement(WhileStatement statement)
 	{
 		Type conditionType = statement.getCondition().accept(this);
-		if(conditionType instanceof ErrorType)
+		if (conditionType instanceof ErrorType)
+		{
 			return ErrorType.INSTANCE;
+		}
 
-		if(!conditionType.equals(PrimitiveType.BOOL))
+		if (!conditionType.equals(PrimitiveType.BOOL))
 		{
 			error(statement.getCondition().getFirstToken(), "While condition must be a boolean expression.");
 		}
@@ -1228,7 +1400,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	{
 		// Check for the simplified syntax pattern: no initializer, no increment, but a condition.
 		// This assumes the parser produces this AST shape for semicolon-less for loops.
-		if(statement.getInitializer() == null && statement.getCondition() != null && statement.getIncrement() == null)
+		if (statement.getInitializer() == null && statement.getCondition() != null && statement.getIncrement() == null)
 		{
 			desugarSimplifiedForLoop(statement);
 			// After this call, the `statement` object is mutated to be a standard for loop.
@@ -1239,27 +1411,27 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		SymbolTable forScope = new SymbolTable(currentScope, "ForLoop");
 		enterScope(forScope);
 
-		if(statement.getInitializer() != null)
+		if (statement.getInitializer() != null)
 		{
 			statement.getInitializer().accept(this);
 		}
 
-		if(statement.getCondition() != null)
+		if (statement.getCondition() != null)
 		{
 			Type conditionType = statement.getCondition().accept(this);
-			if(conditionType instanceof ErrorType)
+			if (conditionType instanceof ErrorType)
 			{
 				exitScope(); // Clean up scope
 				return ErrorType.INSTANCE;
 			}
 
-			if(!conditionType.equals(PrimitiveType.BOOL))
+			if (!conditionType.equals(PrimitiveType.BOOL))
 			{
 				error(statement.getCondition().getFirstToken(), "For loop condition must be a boolean expression.");
 			}
 		}
 
-		if(statement.getIncrement() != null)
+		if (statement.getIncrement() != null)
 		{
 			statement.getIncrement().accept(this);
 		}
@@ -1287,7 +1459,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		Expression newIncrement;
 
 		// The simplified syntax must be a binary expression like `i < 10` or `(j=2) < 10`.
-		if(!(originalCondition instanceof BinaryExpression))
+		if (!(originalCondition instanceof BinaryExpression))
 		{
 			error(originalCondition.getFirstToken(), "Simplified for loop condition must be a binary comparison (e.g., i < 10).");
 			return;
@@ -1299,13 +1471,13 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		Token operator = binaryCond.getOperator();
 
 		// Check for supported operators
-		if(operator.getType() != TokenType.LESS && operator.getType() != TokenType.LESS_EQUAL)
+		if (operator.getType() != TokenType.LESS && operator.getType() != TokenType.LESS_EQUAL)
 		{
 			error(operator, "Simplified for loop only supports '<' and '<=' operators.");
 			return;
 		}
 
-		if(left instanceof IdentifierExpression)
+		if (left instanceof IdentifierExpression)
 		{ // Case: for(i < 10)
 			loopVarIdentifier = (IdentifierExpression) left;
 
@@ -1318,10 +1490,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			newCondition = originalCondition;
 
 		}
-		else if(left instanceof AssignmentExpression)
+		else if (left instanceof AssignmentExpression)
 		{ // Case: for(j = 2 < 10), parsed as ((j=2) < 10)
 			AssignmentExpression assignment = (AssignmentExpression) left;
-			if(!(assignment.getTarget() instanceof IdentifierExpression))
+			if (!(assignment.getTarget() instanceof IdentifierExpression))
 			{
 				error(assignment.getTarget().getFirstToken(), "Loop variable in simplified for loop must be a simple identifier.");
 				return;
@@ -1355,7 +1527,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	@Override
 	public Type visitReturnStatement(ReturnStatement statement)
 	{
-		if(currentMethod == null)
+		if (currentMethod == null)
 		{
 			error(statement.getKeyword(), "Return statement must be inside a method or constructor.");
 			return PrimitiveType.VOID;
@@ -1363,9 +1535,9 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		Type expectedReturnType = currentMethod.getType();
 
-		if(statement.getValue() == null)
+		if (statement.getValue() == null)
 		{
-			if(!expectedReturnType.equals(PrimitiveType.VOID))
+			if (!expectedReturnType.equals(PrimitiveType.VOID))
 			{
 				error(statement.getKeyword(), "Method '" + currentMethod.getName() + "' expects a return value of type '" + expectedReturnType.getName() + "'.");
 			}
@@ -1377,11 +1549,13 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			Type actualReturnType = statement.getValue().accept(this);
 			this.expectedTypeForNextExpression = null; // Reset context
 
-			if(actualReturnType instanceof ErrorType)
+			if (actualReturnType instanceof ErrorType)
+			{
 				return ErrorType.INSTANCE;
+			}
 
 			// *** MODIFIED ***: Corrected assignment check direction.
-			if(!actualReturnType.isAssignableTo(expectedReturnType))
+			if (!actualReturnType.isAssignableTo(expectedReturnType))
 			{
 				error(statement.getKeyword(), "Cannot return value of type '" + actualReturnType.getName() + "'. Expected '" + expectedReturnType.getName() + "'.");
 			}
@@ -1393,7 +1567,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	public Type visitVariableDeclarationStatement(VariableDeclarationStatement statement)
 	{
 		Type declaredType;
-		if(statement.getTypeToken().getType() == TokenType.VAR)
+		if (statement.getTypeToken().getType() == TokenType.VAR)
 		{
 			declaredType = null; // Type will be inferred
 		}
@@ -1401,11 +1575,11 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		{
 			// *** MODIFIED ***: Use the new helper to handle array ranks
 			declaredType = resolveType(statement.getTypeToken(), statement.getArrayRank());
-			if(declaredType instanceof ErrorType)
+			if (declaredType instanceof ErrorType)
 			{
 				return PrimitiveType.VOID; // Error already reported
 			}
-			if(declaredType.equals(PrimitiveType.VOID))
+			if (declaredType.equals(PrimitiveType.VOID))
 			{
 				error(statement.getTypeToken(), "Cannot declare a variable of type 'void'.");
 				return PrimitiveType.VOID;
@@ -1415,37 +1589,39 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		boolean isConstVar = statement.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.CONST);
 
 		Type initializerType = null;
-		if(statement.getInitializer() != null)
+		if (statement.getInitializer() != null)
 		{
 			// Set context before visiting the initializer if type is explicit
-			if(declaredType != null)
+			if (declaredType != null)
 			{
 				this.expectedTypeForNextExpression = declaredType;
 			}
 			initializerType = statement.getInitializer().accept(this);
 			this.expectedTypeForNextExpression = null; // Reset context
 
-			if(initializerType instanceof ErrorType)
+			if (initializerType instanceof ErrorType)
+			{
 				return PrimitiveType.VOID;
+			}
 
-			if(declaredType == null)
+			if (declaredType == null)
 			{ // Infer type for 'var'
 				declaredType = initializerType;
 			}
 		}
 
-		if(statement.getTypeToken().getType() == TokenType.VAR && statement.getInitializer() == null)
+		if (statement.getTypeToken().getType() == TokenType.VAR && statement.getInitializer() == null)
 		{
 			error(statement.getTypeToken(), "'var' requires an initializer.");
 			declaredType = ErrorType.INSTANCE;
 		}
-		else if(isConstVar && statement.getInitializer() == null)
+		else if (isConstVar && statement.getInitializer() == null)
 		{
 			error(statement.getName(), "Constant variable '" + statement.getName().getLexeme() + "' must be initialized.");
 		}
 
 		// *** MODIFIED ***: Corrected assignment check direction.
-		if(declaredType != null && initializerType != null && !initializerType.isAssignableTo(declaredType))
+		if (declaredType != null && initializerType != null && !initializerType.isAssignableTo(declaredType))
 		{
 			error(statement.getName(), "Incompatible types in variable declaration: cannot assign '" + initializerType.getName() + "' to '" + declaredType.getName() + "'.");
 		}
@@ -1463,8 +1639,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		try
 		{
 			currentScope.define(variableSymbol);
-		}
-		catch(IllegalArgumentException e)
+		} catch (IllegalArgumentException e)
 		{
 			error(statement.getName(), "Variable '" + statement.getName().getLexeme() + "' is already defined in this scope.");
 		}
@@ -1481,7 +1656,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		expression.setResolvedType(resultType);
 
-		if(resultType instanceof ErrorType)
+		if (resultType instanceof ErrorType)
 		{
 			// Error reported by getBinaryExpressionResultType
 		}
@@ -1496,7 +1671,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		expression.setResolvedType(resultType);
 
-		if((expression.getOperator().getType() == TokenType.PLUS_PLUS || expression.getOperator().getType() == TokenType.MINUS_MINUS) &&
+		if ((expression.getOperator().getType() == TokenType.PLUS_PLUS || expression.getOperator().getType() == TokenType.MINUS_MINUS) &&
 				!(expression.getRight() instanceof IdentifierExpression || expression.getRight() instanceof DotExpression || expression.getRight() instanceof ArrayAccessExpression))
 		{
 			error(expression.getOperator(), "Increment/decrement operators '++' and '--' must be applied to a variable, property, or array element.");
@@ -1511,26 +1686,38 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	{
 		Type resultType = ErrorType.INSTANCE; // Default to error
 
-		if(expression.getLiteralToken().getType() == TokenType.INTEGER_LITERAL)
+		if (expression.getLiteralToken().getType() == TokenType.INTEGER_LITERAL)
+		{
 			resultType = PrimitiveType.INT;
-		if(expression.getLiteralToken().getType() == TokenType.DOUBLE_LITERAL)
+		}
+		if (expression.getLiteralToken().getType() == TokenType.DOUBLE_LITERAL)
+		{
 			resultType = PrimitiveType.DOUBLE;
-		if(expression.getLiteralToken().getType() == TokenType.FLOAT_LITERAL)
+		}
+		if (expression.getLiteralToken().getType() == TokenType.FLOAT_LITERAL)
+		{
 			resultType = PrimitiveType.FLOAT;
-		if(expression.getLiteralToken().getType() == TokenType.STRING_LITERAL)
+		}
+		if (expression.getLiteralToken().getType() == TokenType.STRING_LITERAL)
+		{
 			resultType = declaredClasses.get("nebula.core.String").getType();
-		if(expression.getLiteralToken().getType() == TokenType.CHAR_LITERAL)
+		}
+		if (expression.getLiteralToken().getType() == TokenType.CHAR_LITERAL)
+		{
 			resultType = PrimitiveType.CHAR;
-		if(expression.getLiteralToken().getType() == TokenType.BOOLEAN_LITERAL)
+		}
+		if (expression.getLiteralToken().getType() == TokenType.BOOLEAN_LITERAL)
+		{
 			resultType = PrimitiveType.BOOL;
-		if(expression.getLiteralToken().getLiteral() == null && expression.getLiteralToken().getLexeme().equals("null"))
+		}
+		if (expression.getLiteralToken().getLiteral() == null && expression.getLiteralToken().getLexeme().equals("null"))
 		{
 			resultType = NullType.INSTANCE; // Handle 'null' literal
 		}
 
 		expression.setResolvedType(resultType);
 
-		if(resultType instanceof ErrorType)
+		if (resultType instanceof ErrorType)
 		{
 			error(expression.getLiteralToken(), "Unknown literal type.");
 		}
@@ -1544,24 +1731,24 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		// 1. Look in the current scope chain (local variables, parameters, class members).
 		Symbol symbol = currentScope.resolve(name);
-		if(symbol != null)
+		if (symbol != null)
 		{
 			expression.setResolvedSymbol(symbol); // Set resolved symbol
 			// : Set the resolved type on the AST node.
 			expression.setResolvedType(symbol.getType());
 
-			if(symbol instanceof VariableSymbol)
+			if (symbol instanceof VariableSymbol)
 			{
 				VariableSymbol var = (VariableSymbol) symbol;
 				// Check for illegal forward reference to instance field in its own initializer
-				if(!var.isStatic() && inStaticContext && currentMethod == null)
+				if (!var.isStatic() && inStaticContext && currentMethod == null)
 				{
 					error(expression.getName(), "Cannot reference an instance member '" + var.getName() + "' from a static field initializer.");
 				}
 				// Simplified initialization check:
 				// Parameters are initialized upon definition, so `!var.isInitialized()` will be false for them.
 				// This condition correctly flags only truly uninitialized local variables/fields.
-				if(!var.isInitialized())
+				if (!var.isInitialized())
 				{
 					error(expression.getName(), "Variable '" + symbol.getName() + "' might not have been initialized.");
 				}
@@ -1570,7 +1757,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		// 2. Look for a single imported static member (e.g., `import static System.Console.WriteLine;`).
-		if(importedStaticMembers.containsKey(name))
+		if (importedStaticMembers.containsKey(name))
 		{
 			Symbol staticMember = importedStaticMembers.get(name);
 			expression.setResolvedSymbol(staticMember); // Set resolved symbol
@@ -1579,16 +1766,16 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		// 3. Search through wildcard imported classes for a static member (e.g., `import static System.Console.*`).
-		for(ClassSymbol staticClass : importedStaticClasses)
+		for (ClassSymbol staticClass : importedStaticClasses)
 		{
 			Symbol memberCandidate = staticClass.resolveMember(name); // Try resolving without arguments
-			if(memberCandidate instanceof MethodSymbol && memberCandidate.isStatic())
+			if (memberCandidate instanceof MethodSymbol && memberCandidate.isStatic())
 			{
 				expression.setResolvedSymbol(staticClass); // For static method calls, set the class as the target for resolution
 				expression.setResolvedType(staticClass.getType());
 				return staticClass.getType(); // Return the type of the class itself
 			}
-			else if(memberCandidate instanceof VariableSymbol && memberCandidate.isStatic())
+			else if (memberCandidate instanceof VariableSymbol && memberCandidate.isStatic())
 			{
 				expression.setResolvedSymbol(memberCandidate); // Set the static field symbol
 				expression.setResolvedType(memberCandidate.getType());
@@ -1598,7 +1785,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 
 		// 4. Look for an imported class simple name (e.g., `import System.Console;` allows using `Console`).
-		if(importedClasses.containsKey(name))
+		if (importedClasses.containsKey(name))
 		{
 			ClassSymbol classSymbol = importedClasses.get(name);
 			expression.setResolvedSymbol(classSymbol); // Set resolved symbol
@@ -1608,7 +1795,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		// 5. Check for a class in the current namespace.
 		String fqnInCurrentNs = currentNamespacePrefix.isEmpty() ? name : currentNamespacePrefix + "." + name;
-		if(declaredClasses.containsKey(fqnInCurrentNs))
+		if (declaredClasses.containsKey(fqnInCurrentNs))
 		{
 			ClassSymbol classSymbol = declaredClasses.get(fqnInCurrentNs);
 			expression.setResolvedSymbol(classSymbol); // Set resolved symbol
@@ -1619,7 +1806,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// 6. Check if it's a namespace prefix or a top-level declared class that is not fully qualified here.
 		// If it's a potential namespace prefix that will be completed by a DotExpression, return null.
 		// We can't set a NamespaceSymbol if the user doesn't have it.
-		if(isStartOfAnyQualifiedClassName(name))
+		if (isStartOfAnyQualifiedClassName(name))
 		{ // This helper checks if it's a prefix of any known FQN
 			// If it's a prefix, it's not a complete type/variable/member itself, but part of a qualified name.
 			// Return null to signal that the DotExpression should continue resolving.
@@ -1644,18 +1831,18 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	private boolean isStartOfAnyQualifiedClassName(String name)
 	{
 		// Check if any declared class FQN starts with 'name' (followed by a dot)
-		for(String fqn : declaredClasses.keySet())
+		for (String fqn : declaredClasses.keySet())
 		{
-			if(fqn.startsWith(name + ".") || fqn.equals(name)) // Include equals(name) for top-level class names (e.g., "Object")
+			if (fqn.startsWith(name + ".") || fqn.equals(name)) // Include equals(name) for top-level class names (e.g., "Object")
 			{
 				return true;
 			}
 		}
 
 		// Check if any imported namespace starts with 'name' (followed by a dot)
-		for(String importedNs : importedNamespaces)
+		for (String importedNs : importedNamespaces)
 		{
-			if(importedNs.startsWith(name + ".") || importedNs.equals(name))
+			if (importedNs.startsWith(name + ".") || importedNs.equals(name))
 			{
 				return true;
 			}
@@ -1680,12 +1867,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// The type of an assignment expression is the type of its target.
 		expression.setResolvedType(targetType);
 
-		if(targetType instanceof ErrorType || valueType instanceof ErrorType)
+		if (targetType instanceof ErrorType || valueType instanceof ErrorType)
 		{
 			return ErrorType.INSTANCE;
 		}
 
-		if(!(expression.getTarget() instanceof IdentifierExpression ||
+		if (!(expression.getTarget() instanceof IdentifierExpression ||
 				expression.getTarget() instanceof DotExpression ||
 				expression.getTarget() instanceof ArrayAccessExpression))
 		{
@@ -1694,23 +1881,23 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		Symbol resolvedTargetSymbol = null;
-		if(expression.getTarget() instanceof IdentifierExpression)
+		if (expression.getTarget() instanceof IdentifierExpression)
 		{
 			resolvedTargetSymbol = ((IdentifierExpression) expression.getTarget()).getResolvedSymbol();
 		}
-		else if(expression.getTarget() instanceof DotExpression)
+		else if (expression.getTarget() instanceof DotExpression)
 		{
 			resolvedTargetSymbol = ((DotExpression) expression.getTarget()).getResolvedSymbol();
 		}
-		else if(expression.getTarget() instanceof ArrayAccessExpression)
+		else if (expression.getTarget() instanceof ArrayAccessExpression)
 		{
 			// For array access, the base array/string itself might be the target symbol
 			Expression baseArray = ((ArrayAccessExpression) expression.getTarget()).getArray();
-			if(baseArray instanceof IdentifierExpression)
+			if (baseArray instanceof IdentifierExpression)
 			{
 				resolvedTargetSymbol = ((IdentifierExpression) baseArray).getResolvedSymbol();
 			}
-			else if(baseArray instanceof DotExpression)
+			else if (baseArray instanceof DotExpression)
 			{
 				resolvedTargetSymbol = ((DotExpression) baseArray).getResolvedSymbol();
 			}
@@ -1718,10 +1905,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 
-		if(resolvedTargetSymbol instanceof VariableSymbol)
+		if (resolvedTargetSymbol instanceof VariableSymbol)
 		{
 			VariableSymbol varSymbol = (VariableSymbol) resolvedTargetSymbol;
-			if(varSymbol.isConst())
+			if (varSymbol.isConst())
 			{
 				error(expression.getOperator(), "Cannot assign to constant variable/field '" + varSymbol.getName() + "'.");
 				return ErrorType.INSTANCE;
@@ -1735,17 +1922,17 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// where the base is not a VariableSymbol, and generally array literals are not mutable in this way.
 
 		// *** MODIFIED ***: Corrected assignment check direction.
-		if(!valueType.isAssignableTo(targetType))
+		if (!valueType.isAssignableTo(targetType))
 		{
 			error(expression.getOperator(), "Incompatible types in assignment: cannot assign '" + valueType.getName() + "' to '" + targetType.getName() + "'.");
 			return ErrorType.INSTANCE;
 		}
 
 		// For compound assignments (+=, -=, etc.), check compatibility for the implicit binary operation
-		if(expression.getOperator().getType() != TokenType.ASSIGN)
+		if (expression.getOperator().getType() != TokenType.ASSIGN)
 		{
 			TokenType baseBinaryOpType = null;
-			switch(expression.getOperator().getType())
+			switch (expression.getOperator().getType())
 			{
 				case PLUS_ASSIGN:
 					baseBinaryOpType = TokenType.PLUS;
@@ -1770,12 +1957,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 					expression.getOperator().getLine(), expression.getOperator().getColumn());
 
 			Type binaryOpResultType = getBinaryExpressionResultType(baseBinaryOpToken, targetType, valueType);
-			if(binaryOpResultType instanceof ErrorType)
+			if (binaryOpResultType instanceof ErrorType)
 			{
 				return ErrorType.INSTANCE;
 			}
 			// *** MODIFIED ***: Corrected assignment check direction.
-			if(!binaryOpResultType.isAssignableTo(targetType))
+			if (!binaryOpResultType.isAssignableTo(targetType))
 			{
 				error(expression.getOperator(), "The result of the compound assignment operation ('" + expression.getOperator().getLexeme() + "') is not assignable back to the target type '" + targetType.getName() + "'.");
 				return ErrorType.INSTANCE;
@@ -1792,11 +1979,13 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		// First pass on arguments to get their types without context
 		List<Type> actualArgumentTypes = new ArrayList<>();
-		for(Expression arg : expression.getArguments())
+		for (Expression arg : expression.getArguments())
 		{
 			Type argType = arg.accept(this);
-			if(argType instanceof ErrorType)
+			if (argType instanceof ErrorType)
+			{
 				return ErrorType.INSTANCE;
+			}
 			actualArgumentTypes.add(argType);
 		}
 
@@ -1804,14 +1993,14 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		String methodName = null;
 
 		// This large block replaces the original resolution logic with a call to the new helper
-		if(callee instanceof IdentifierExpression)
+		if (callee instanceof IdentifierExpression)
 		{
 			IdentifierExpression idCallee = (IdentifierExpression) callee;
 			methodName = idCallee.getName().getLexeme();
-			if(currentClass != null)
+			if (currentClass != null)
 			{
 				resolvedMethod = resolveMethodCall(idCallee.getName(), currentClass, methodName, actualArgumentTypes);
-				if(resolvedMethod != null && !resolvedMethod.isStatic() && inStaticContext)
+				if (resolvedMethod != null && !resolvedMethod.isStatic() && inStaticContext)
 				{
 					error(idCallee.getName(), "Cannot call non-static method '" + methodName + "' from a static context without an instance.");
 					return ErrorType.INSTANCE;
@@ -1824,7 +2013,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				return ErrorType.INSTANCE;
 			}
 		}
-		else if(callee instanceof DotExpression)
+		else if (callee instanceof DotExpression)
 		{
 			DotExpression dotCallee = (DotExpression) callee;
 			methodName = dotCallee.getMemberName().getLexeme();
@@ -1832,21 +2021,21 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			Symbol leftResolvedSymbol = dotCallee.getLeft().getResolvedSymbol();
 			ClassSymbol ownerClass = null;
 
-			if(leftType instanceof ClassType)
+			if (leftType instanceof ClassType)
 			{
 				ownerClass = ((ClassType) leftType).getClassSymbol();
 			}
-			else if(leftType == null && leftResolvedSymbol instanceof ClassSymbol)
+			else if (leftType == null && leftResolvedSymbol instanceof ClassSymbol)
 			{
 				ownerClass = (ClassSymbol) leftResolvedSymbol;
 			}
 
 			resolvedMethod = resolveMethodCall(dotCallee.getMemberName(), ownerClass, methodName, actualArgumentTypes);
 
-			if(resolvedMethod != null)
+			if (resolvedMethod != null)
 			{
 				boolean isStaticAccess = leftResolvedSymbol instanceof ClassSymbol;
-				if(!resolvedMethod.isStatic() && isStaticAccess)
+				if (!resolvedMethod.isStatic() && isStaticAccess)
 				{
 					error(dotCallee.getMemberName(), "Cannot call non-static method '" + methodName + "' from a static context (via class name).");
 					return ErrorType.INSTANCE;
@@ -1859,7 +2048,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return ErrorType.INSTANCE;
 		}
 
-		if(resolvedMethod == null)
+		if (resolvedMethod == null)
 		{
 			expression.setResolvedType(ErrorType.INSTANCE);
 			return ErrorType.INSTANCE; // Error already reported by helper.
@@ -1885,17 +2074,17 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		Type leftType = expression.getLeft().accept(this);
 		Symbol leftResolvedSymbol = expression.getLeft().getResolvedSymbol(); // Crucial: get the resolved symbol here
 
-		if(leftType instanceof ErrorType)
+		if (leftType instanceof ErrorType)
 		{
 			expression.setResolvedType(ErrorType.INSTANCE);
 			return ErrorType.INSTANCE;
 		}
 
 		//Handle array.length
-		if(leftType instanceof ArrayType)
+		if (leftType instanceof ArrayType)
 		{
 			String memberName = expression.getMemberName().getLexeme();
-			if(memberName.equals("length"))
+			if (memberName.equals("size"))
 			{
 				// Create a synthetic symbol for 'length' for consistency
 				VariableSymbol lengthSymbol = new VariableSymbol("size", PrimitiveType.INT, expression.getMemberName(), true, true, true, true);
@@ -1914,12 +2103,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		ClassSymbol containerClassSymbol = null;
 		Symbol resolvedMemberSymbol = null; // The symbol representing the member (field, method, nested class)
 
-		if(leftType instanceof ClassType)
+		if (leftType instanceof ClassType)
 		{
 			// Left side is a class instance or a class type itself (e.g., `myObject.field` or `MyClass.staticField`)
 			containerClassSymbol = ((ClassType) leftType).getClassSymbol();
 		}
-		else if(leftType == null && leftResolvedSymbol instanceof ClassSymbol)
+		else if (leftType == null && leftResolvedSymbol instanceof ClassSymbol)
 		{
 			// This path is for cases like `Namespace.Class.member` where `Namespace.Class`
 			// was resolved as a ClassSymbol in `visitIdentifierExpression` or a previous `visitDotExpression`.
@@ -1928,10 +2117,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// Removed `leftResolvedSymbol instanceof NamespaceSymbol` path as we're not using NamespaceSymbol.
 		// If leftType is null and leftResolvedSymbol is also null (and not a ClassSymbol), it implies
 		// the left side is an unresolvable part of an FQN or an invalid expression.
-		else if(leftType instanceof ArrayType)
+		else if (leftType instanceof ArrayType)
 		{
 			String memberName = expression.getMemberName().getLexeme();
-			if(memberName.equals("length"))
+			if (memberName.equals("length"))
 			{
 				VariableSymbol lengthSymbol = new VariableSymbol("length", PrimitiveType.INT, expression.getMemberName(), true, true, true, true);
 				expression.setResolvedSymbol(lengthSymbol); // Set resolved symbol for 'length'
@@ -1952,7 +2141,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return ErrorType.INSTANCE;
 		}
 
-		if(containerClassSymbol == null)
+		if (containerClassSymbol == null)
 		{
 			// This path is reached if `leftType` was ClassType but `getClassSymbol()` was null, or other unhandled cases.
 			error(expression.getLeft().getFirstToken(), "Internal error: Could not determine containing class for member access on '" + expression.getLeft().toString() + "'.");
@@ -1964,7 +2153,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		String memberName = expression.getMemberName().getLexeme();
 		resolvedMemberSymbol = containerClassSymbol.resolveMember(memberName);
 
-		if(resolvedMemberSymbol == null)
+		if (resolvedMemberSymbol == null)
 		{
 			error(expression.getMemberName(), "Member '" + memberName + "' not found in class '" + containerClassSymbol.getName() + "'.");
 			expression.setResolvedSymbol(null); // Explicitly set null if not found
@@ -1976,7 +2165,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// If the left part resolved to a ClassSymbol itself, it's a static access.
 		boolean isStaticAccess = leftResolvedSymbol instanceof ClassSymbol;
 
-		if(!resolvedMemberSymbol.isStatic() && isStaticAccess)
+		if (!resolvedMemberSymbol.isStatic() && isStaticAccess)
 		{
 			error(expression.getMemberName(), "Cannot access non-static member '" + memberName + "' from a static context (via class name).");
 			expression.setResolvedType(ErrorType.INSTANCE);
@@ -1984,7 +2173,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 		// Special check: accessing static member via instance (e.g., `myObject.staticField`) is often allowed but warned.
 		// For now, we'll allow it if the member is indeed static.
-		if(resolvedMemberSymbol.isStatic() && !(leftResolvedSymbol instanceof ClassSymbol))
+		if (resolvedMemberSymbol.isStatic() && !(leftResolvedSymbol instanceof ClassSymbol))
 		{
 			// This means a static member is being accessed via an instance.
 			// You might want to add a warning here: error(expression.getMemberName(), "Warning: Static member '" + memberName + "' accessed via an instance.");
@@ -2000,7 +2189,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	@Override
 	public Type visitThisExpression(ThisExpression expression)
 	{
-		if(currentClass == null || inStaticContext)
+		if (currentClass == null || inStaticContext)
 		{
 			error(expression.getKeyword(), "The 'this' keyword cannot be used in a static context or outside a class.");
 			expression.setResolvedType(ErrorType.INSTANCE);
@@ -2024,7 +2213,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	public Type visitNewExpression(NewExpression expression)
 	{
 		String classNameString = getQualifiedNameFromExpression(expression.getClassName());
-		if(classNameString == null)
+		if (classNameString == null)
 		{
 			error(expression.getNewKeyword(), "Invalid class name in 'new' expression.");
 			expression.setResolvedType(ErrorType.INSTANCE);
@@ -2033,12 +2222,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		ClassSymbol classSymbol = null;
 		String fqn = getFullyQualifiedClassName(classNameString);
-		if(declaredClasses.containsKey(fqn))
+		if (declaredClasses.containsKey(fqn))
 		{
 			classSymbol = declaredClasses.get(fqn);
 		}
 
-		if(classSymbol == null)
+		if (classSymbol == null)
 		{
 			error(expression.getNewKeyword(), "Undefined class: '" + classNameString + "'. Ensure the namespace is imported or the type is fully qualified.");
 			expression.setResolvedType(ErrorType.INSTANCE);
@@ -2046,10 +2235,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		List<Type> actualArgumentTypes = new ArrayList<>();
-		for(Expression arg : expression.getArguments())
+		for (Expression arg : expression.getArguments())
 		{
 			Type argType = arg.accept(this);
-			if(argType instanceof ErrorType)
+			if (argType instanceof ErrorType)
 			{
 				expression.setResolvedType(ErrorType.INSTANCE);
 				return ErrorType.INSTANCE;
@@ -2061,18 +2250,18 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		Symbol resolvedSymbol = classSymbol.resolveMember(classSymbol.getName(), actualArgumentTypes);
 		MethodSymbol matchingConstructor = null;
 
-		if(resolvedSymbol instanceof MethodSymbol && ((MethodSymbol) resolvedSymbol).isConstructor())
+		if (resolvedSymbol instanceof MethodSymbol && ((MethodSymbol) resolvedSymbol).isConstructor())
 		{
 			matchingConstructor = (MethodSymbol) resolvedSymbol;
 		}
 
-		if(matchingConstructor == null)
+		if (matchingConstructor == null)
 		{
 			StringBuilder argTypesBuilder = new StringBuilder();
-			for(int i = 0; i < actualArgumentTypes.size(); i++)
+			for (int i = 0; i < actualArgumentTypes.size(); i++)
 			{
 				argTypesBuilder.append(actualArgumentTypes.get(i).getName());
-				if(i < actualArgumentTypes.size() - 1)
+				if (i < actualArgumentTypes.size() - 1)
 				{
 					argTypesBuilder.append(", ");
 				}
@@ -2097,10 +2286,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		expression.setResolvedType(resultType);
 
-		if((operandType instanceof ErrorType))
+		if ((operandType instanceof ErrorType))
+		{
 			return ErrorType.INSTANCE;
+		}
 
-		if(!(expression.getOperand() instanceof IdentifierExpression || expression.getOperand() instanceof DotExpression || expression.getOperand() instanceof ArrayAccessExpression))
+		if (!(expression.getOperand() instanceof IdentifierExpression || expression.getOperand() instanceof DotExpression || expression.getOperand() instanceof ArrayAccessExpression))
 		{
 			error(expression.getOperator(), "Postfix increment/decrement operators '++' and '--' must be applied to a variable, property, or array element.");
 			return ErrorType.INSTANCE;
@@ -2108,23 +2299,23 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		// Check for const and mark as initialized
 		Symbol operandSymbol = null;
-		if(expression.getOperand() instanceof IdentifierExpression)
+		if (expression.getOperand() instanceof IdentifierExpression)
 		{
 			operandSymbol = ((IdentifierExpression) expression.getOperand()).getResolvedSymbol();
 		}
-		else if(expression.getOperand() instanceof DotExpression)
+		else if (expression.getOperand() instanceof DotExpression)
 		{
 			operandSymbol = ((DotExpression) expression.getOperand()).getResolvedSymbol();
 		}
-		else if(expression.getOperand() instanceof ArrayAccessExpression)
+		else if (expression.getOperand() instanceof ArrayAccessExpression)
 		{
 			// If array element, check if the base array/string is const.
 			Expression baseArray = ((ArrayAccessExpression) expression.getOperand()).getArray();
-			if(baseArray instanceof IdentifierExpression)
+			if (baseArray instanceof IdentifierExpression)
 			{
 				operandSymbol = ((IdentifierExpression) baseArray).getResolvedSymbol();
 			}
-			else if(baseArray instanceof DotExpression)
+			else if (baseArray instanceof DotExpression)
 			{
 				operandSymbol = ((DotExpression) baseArray).getResolvedSymbol();
 			}
@@ -2132,10 +2323,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 
-		if(operandSymbol instanceof VariableSymbol)
+		if (operandSymbol instanceof VariableSymbol)
 		{
 			VariableSymbol varSym = (VariableSymbol) operandSymbol;
-			if(varSym.isConst())
+			if (varSym.isConst())
 			{
 				error(expression.getOperator(), "Cannot increment/decrement constant variable/field '" + varSym.getName() + "'.");
 				return ErrorType.INSTANCE;
@@ -2153,10 +2344,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	public Type visitSwitchStatement(SwitchStatement statement)
 	{
 		Type switchExprType = statement.getSwitchExpression().accept(this);
-		if(switchExprType instanceof ErrorType)
+		if (switchExprType instanceof ErrorType)
+		{
 			return ErrorType.INSTANCE;
+		}
 
-		if(switchExprType != null &&
+		if (switchExprType != null &&
 				!(switchExprType.equals(PrimitiveType.INT) ||
 						switchExprType.equals(PrimitiveType.CHAR) ||
 						switchExprType.equals(PrimitiveType.BYTE) ||
@@ -2167,12 +2360,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return PrimitiveType.VOID;
 		}
 
-		for(SwitchCase switchCase : statement.getCases())
+		for (SwitchCase switchCase : statement.getCases())
 		{
 			switchCase.accept(this);
 		}
 
-		if(statement.getDefaultBlock() != null)
+		if (statement.getDefaultBlock() != null)
 		{
 			statement.getDefaultBlock().accept(this);
 		}
@@ -2183,16 +2376,18 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	public Type visitSwitchCase(SwitchCase switchCase)
 	{
 		Type caseValueType = switchCase.getValue().accept(this);
-		if(caseValueType instanceof ErrorType)
+		if (caseValueType instanceof ErrorType)
+		{
 			return ErrorType.INSTANCE;
+		}
 
-		if(!(switchCase.getValue() instanceof LiteralExpression)) // Or a const variable/expression
+		if (!(switchCase.getValue() instanceof LiteralExpression)) // Or a const variable/expression
 		{
 			error(switchCase.getCaseKeyword(), "Switch case value must be a constant expression.");
 		}
 		// Further checks for type compatibility with the switch expression happen in visitSwitchStatement
 
-		for(com.juanpa.nebula.transpiler.ast.statements.Statement stmt : switchCase.getBody())
+		for (com.juanpa.nebula.transpiler.ast.statements.Statement stmt : switchCase.getBody())
 		{
 			stmt.accept(this);
 		}
@@ -2210,14 +2405,14 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		Type arrayType = expression.getArray().accept(this);
 		Type indexType = expression.getIndex().accept(this);
 
-		if(arrayType instanceof ErrorType || indexType instanceof ErrorType)
+		if (arrayType instanceof ErrorType || indexType instanceof ErrorType)
 		{
 			expression.setResolvedType(ErrorType.INSTANCE);
 			return ErrorType.INSTANCE;
 		}
 
 		Type elementType;
-		if(arrayType instanceof ArrayType)
+		if (arrayType instanceof ArrayType)
 		{
 			elementType = ((ArrayType) arrayType).getElementType();
 		}
@@ -2225,7 +2420,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		{
 			// Special case: Allow character access on the 'nebula.core.String' class
 			ClassSymbol stringClassSymbol = declaredClasses.get("nebula.core.String");
-			if(stringClassSymbol != null && arrayType.equals(stringClassSymbol.getType()))
+			if (stringClassSymbol != null && arrayType.equals(stringClassSymbol.getType()))
 			{
 				elementType = PrimitiveType.CHAR;
 			}
@@ -2238,7 +2433,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		// Check if the index type is compatible with 'int'
-		if(!indexType.isCompatibleWith(PrimitiveType.INT))
+		if (!indexType.isCompatibleWith(PrimitiveType.INT))
 		{
 			error(expression.getIndex().getFirstToken(), "Array index must be an integer-compatible type. Found '" + indexType.getName() + "'.");
 			expression.setResolvedType(ErrorType.INSTANCE);
@@ -2262,28 +2457,28 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	public Type visitIsExpression(IsExpression expression)
 	{
 		Type leftType = expression.getLeft().accept(this);
-		if(leftType instanceof ErrorType)
+		if (leftType instanceof ErrorType)
 		{
 			expression.setResolvedType(ErrorType.INSTANCE);
 			return ErrorType.INSTANCE;
 		}
 
 		Type targetType = getTypeFromToken(expression.getTypeToken());
-		if(targetType instanceof ErrorType)
+		if (targetType instanceof ErrorType)
 		{
 			error(expression.getTypeToken(), "Expected a valid type name on the right side of 'is' operator. Found '" + expression.getTypeToken().getLexeme() + "'.");
 			expression.setResolvedType(ErrorType.INSTANCE);
 			return ErrorType.INSTANCE;
 		}
 
-		if(!(leftType instanceof ClassType || leftType instanceof ArrayType))
+		if (!(leftType instanceof ClassType || leftType instanceof ArrayType))
 		{
 			error(expression.getLeft().getFirstToken(), "Left side of 'is' operator must be an object or array type (found '" + leftType.getName() + "'). Primitive types cannot be checked with 'is'.");
 			expression.setResolvedType(ErrorType.INSTANCE);
 			return ErrorType.INSTANCE;
 		}
 
-		if(!(targetType instanceof ClassType || targetType instanceof ArrayType))
+		if (!(targetType instanceof ClassType || targetType instanceof ArrayType))
 		{
 			error(expression.getTypeToken(), "Right side of 'is' operator must be a class or array type (found '" + targetType.getName() + "').");
 			expression.setResolvedType(ErrorType.INSTANCE);
@@ -2304,7 +2499,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	{
 		// Resolve the base type (e.g., 'int' in 'new int[10]')
 		Type baseType = getTypeFromToken(expression.getTypeToken());
-		if(baseType instanceof ErrorType)
+		if (baseType instanceof ErrorType)
 		{
 			expression.setResolvedType(ErrorType.INSTANCE);
 			return ErrorType.INSTANCE;
@@ -2312,12 +2507,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		// Recursively visit the size expression to ensure it's an integer type
 		Type sizeType = expression.getSizeExpression().accept(this);
-		if(sizeType instanceof ErrorType)
+		if (sizeType instanceof ErrorType)
 		{
 			expression.setResolvedType(ErrorType.INSTANCE);
 			return ErrorType.INSTANCE;
 		}
-		if(!sizeType.equals(PrimitiveType.INT))
+		if (!sizeType.equals(PrimitiveType.INT))
 		{
 			error(expression.getSizeExpression().getFirstToken(), "Array size expression must be an integer.");
 			expression.setResolvedType(ErrorType.INSTANCE);
@@ -2326,7 +2521,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		// Construct the ArrayType based on the base type and rank
 		Type arrayType = baseType;
-		for(int i = 0; i < expression.getRank(); i++)
+		for (int i = 0; i < expression.getRank(); i++)
 		{
 			arrayType = new ArrayType(arrayType);
 		}
@@ -2342,7 +2537,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	@Override
 	public Type visitArrayInitializerExpression(ArrayInitializerExpression expression)
 	{
-		if(expression.getElements().isEmpty())
+		if (expression.getElements().isEmpty())
 		{
 			// An empty initializer can imply an array of any type.
 			// For now, treat as an error or return a generic "empty array" type if supported.
@@ -2359,16 +2554,16 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		Type commonElementType = null;
 
-		for(Expression element : expression.getElements())
+		for (Expression element : expression.getElements())
 		{
 			Type elementType = element.accept(this);
-			if(elementType instanceof ErrorType)
+			if (elementType instanceof ErrorType)
 			{
 				expression.setResolvedType(ErrorType.INSTANCE);
 				return ErrorType.INSTANCE;
 			}
 
-			if(commonElementType == null)
+			if (commonElementType == null)
 			{
 				commonElementType = elementType;
 			}
@@ -2377,7 +2572,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				// Ensure all elements are compatible with the common type
 				// This logic might need to be more sophisticated to find a "least common supertype"
 				// For simplicity, checking assignability of subsequent elements to the first one's type.
-				if(!elementType.isAssignableTo(commonElementType) && !commonElementType.isAssignableTo(elementType))
+				if (!elementType.isAssignableTo(commonElementType) && !commonElementType.isAssignableTo(elementType))
 				{
 					error(element.getFirstToken(), "Array initializer elements have incompatible types: expected '"
 							+ commonElementType.getName() + "', but found '" + elementType.getName() + "'.");
@@ -2385,11 +2580,11 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 					return ErrorType.INSTANCE;
 				}
 				// If one type is assignable to the other, use the wider type as the common type.
-				if(elementType.isAssignableTo(commonElementType))
+				if (elementType.isAssignableTo(commonElementType))
 				{
 					// commonElementType remains the wider type.
 				}
-				else if(commonElementType.isAssignableTo(elementType))
+				else if (commonElementType.isAssignableTo(elementType))
 				{
 					commonElementType = elementType; // elementType is wider or same.
 				}
@@ -2408,16 +2603,16 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	private String resolveAgainstImportedNamespaces(String simpleOrPartialName)
 	{
 		// 1. Check if the simple name directly resolves to an imported class
-		if(importedClasses.containsKey(simpleOrPartialName))
+		if (importedClasses.containsKey(simpleOrPartialName))
 		{
 			return importedClasses.get(simpleOrPartialName).getType().getName();
 		}
 
 		// 2. Iterate through imported namespaces and try to resolve
-		for(String ns : importedNamespaces)
+		for (String ns : importedNamespaces)
 		{
 			String potentialFQN = ns + "." + simpleOrPartialName;
-			if(declaredClasses.containsKey(potentialFQN))
+			if (declaredClasses.containsKey(potentialFQN))
 			{
 				return potentialFQN;
 			}
@@ -2426,10 +2621,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// 3. Check against static imported classes (e.g., if simpleOrPartialName is a static method name)
 		// This part needs more specific logic depending on how you handle static imports.
 		// For now, if simpleOrPartialName is "Console", and "Nebula.System.Console" was imported statically:
-		for(ClassSymbol staticClass : importedStaticClasses)
+		for (ClassSymbol staticClass : importedStaticClasses)
 		{
 			String potentialFQN = staticClass.getType().getName();
-			if(potentialFQN.endsWith("." + simpleOrPartialName))
+			if (potentialFQN.endsWith("." + simpleOrPartialName))
 			{
 				return potentialFQN; // This implies importing the class itself via static import
 			}
@@ -2451,12 +2646,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	 */
 	private String getSimpleNameFromQualifiedName(String fqn)
 	{
-		if(fqn == null || fqn.isEmpty())
+		if (fqn == null || fqn.isEmpty())
 		{
 			return fqn;
 		}
 		int lastDotIndex = fqn.lastIndexOf('.');
-		if(lastDotIndex == -1)
+		if (lastDotIndex == -1)
 		{
 			return fqn; // No dot, it's already a simple name
 		}
@@ -2495,7 +2690,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	 */
 	private MethodSymbol resolveMethodCall(Token errorToken, ClassSymbol ownerClass, String methodName, List<Type> actualArgumentTypes)
 	{
-		if(ownerClass == null)
+		if (ownerClass == null)
 		{
 			error(errorToken, "Internal error: could not determine owner class for method '" + methodName + "'.");
 			return null;
@@ -2504,13 +2699,13 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// 1. Get all potential overloads from the class hierarchy
 		List<MethodSymbol> candidates = new ArrayList<>();
 		ClassSymbol current = ownerClass;
-		while(current != null)
+		while (current != null)
 		{
-			if(current.methodsByName.containsKey(methodName))
+			if (current.methodsByName.containsKey(methodName))
 			{
 				candidates.addAll(current.methodsByName.get(methodName));
 			}
-			if(current.getType().getSuperClassType() instanceof ClassType)
+			if (current.getType().getSuperClassType() instanceof ClassType)
 			{
 				current = ((ClassType) current.getType().getSuperClassType()).getClassSymbol();
 			}
@@ -2525,29 +2720,29 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 		// Step 2: Filter by checking if actual arguments are ASSIGNABLE TO formal parameters.
 		List<MethodSymbol> paramMatchingMethods = new ArrayList<>();
-		for(MethodSymbol candidate : candidates)
+		for (MethodSymbol candidate : candidates)
 		{
 			List<Type> formalParamTypes = candidate.getParameterTypes();
-			if(formalParamTypes.size() != actualArgumentTypes.size())
+			if (formalParamTypes.size() != actualArgumentTypes.size())
 			{
 				continue; // Skip if arity (number of arguments) is different.
 			}
 
 			boolean allParamsMatch = true;
-			for(int i = 0; i < formalParamTypes.size(); i++)
+			for (int i = 0; i < formalParamTypes.size(); i++)
 			{
 				Type formalType = formalParamTypes.get(i); // e.g., nebula.core.Object
 				Type actualType = actualArgumentTypes.get(i);   // e.g., Program.Vector2
 
 				// THE CRUCIAL FIX: Use isAssignableTo to check for valid subclassing.
-				if(!formalType.isAssignableFrom(actualType))
+				if (!formalType.isAssignableFrom(actualType))
 				{
 					allParamsMatch = false;
 					break;
 				}
 			}
 
-			if(allParamsMatch)
+			if (allParamsMatch)
 			{
 				paramMatchingMethods.add(candidate);
 			}
@@ -2557,14 +2752,14 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
-		if(paramMatchingMethods.isEmpty())
+		if (paramMatchingMethods.isEmpty())
 		{
 			String argTypesString = actualArgumentTypes.stream().map(Type::getName).collect(Collectors.joining(", "));
 			error(errorToken, "No matching method found for '" + methodName + "' with arguments: (" + argTypesString + ") in class '" + ownerClass.getName() + "'.");
 			return null;
 		}
 
-		if(paramMatchingMethods.size() == 1)
+		if (paramMatchingMethods.size() == 1)
 		{
 			return paramMatchingMethods.get(0); // Standard unambiguous call
 		}
@@ -2574,22 +2769,22 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// NEW STEP: Try to find a "best match" based on exact parameter types.
 		// This handles traditional overloading (e.g., println(int) vs println(double)).
 		List<MethodSymbol> exactParamMatches = new ArrayList<>();
-		for(MethodSymbol candidate : paramMatchingMethods)
+		for (MethodSymbol candidate : paramMatchingMethods)
 		{
-			if(candidate.getParameterTypes().equals(actualArgumentTypes))
+			if (candidate.getParameterTypes().equals(actualArgumentTypes))
 			{
 				exactParamMatches.add(candidate);
 			}
 		}
 
-		if(exactParamMatches.size() == 1)
+		if (exactParamMatches.size() == 1)
 		{
 			return exactParamMatches.get(0);
 		}
 
 		List<MethodSymbol> methodsToDisambiguate = !exactParamMatches.isEmpty() ? exactParamMatches : paramMatchingMethods;
 
-		if(this.expectedTypeForNextExpression == null || this.expectedTypeForNextExpression instanceof ErrorType)
+		if (this.expectedTypeForNextExpression == null || this.expectedTypeForNextExpression instanceof ErrorType)
 		{
 			error(errorToken, "Ambiguous method call for '" + methodName + "'. Multiple overloads match the arguments, and the return type cannot be inferred from the context.");
 			return methodsToDisambiguate.get(0); // Return first for error recovery
@@ -2599,23 +2794,23 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				.filter(m -> m.getType().isAssignableTo(this.expectedTypeForNextExpression))
 				.collect(Collectors.toList());
 
-		if(returnMatchingMethods.isEmpty())
+		if (returnMatchingMethods.isEmpty())
 		{
 			error(errorToken, "No overload for method '" + methodName + "' has a return type compatible with the expected type '" + this.expectedTypeForNextExpression.getName() + "'.");
 			return null;
 		}
 
-		if(returnMatchingMethods.size() == 1)
+		if (returnMatchingMethods.size() == 1)
 		{
 			return returnMatchingMethods.get(0); // Successfully disambiguated.
 		}
 
 		MethodSymbol exactMatch = null;
-		for(MethodSymbol m : returnMatchingMethods)
+		for (MethodSymbol m : returnMatchingMethods)
 		{
-			if(m.getType().equals(this.expectedTypeForNextExpression))
+			if (m.getType().equals(this.expectedTypeForNextExpression))
 			{
-				if(exactMatch != null)
+				if (exactMatch != null)
 				{
 					error(errorToken, "Ambiguous method call for '" + methodName + "'. Multiple overloads have a return type compatible with '" + this.expectedTypeForNextExpression.getName() + "'.");
 					return m;
@@ -2624,7 +2819,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 		}
 
-		if(exactMatch != null)
+		if (exactMatch != null)
 		{
 			return exactMatch;
 		}

@@ -1,4 +1,4 @@
-// File: src/main/java/com/juanpa.nebula.transpiler/lexer/TokenType.java
+// File: src/main/java/com/juanpa/nebula/transpiler/lexer/TokenType.java
 
 package com.juanpa.nebula.transpiler.lexer;
 
@@ -22,6 +22,7 @@ public enum TokenType
 	IS, //For type checking
 	SUPER, // NEW: Added for super constructor calls
 	ALIAS, // NEW: Added for alias declarations
+	NATIVE, WRAPPER, // NEW: Add NATIVE and WRAPPER
 
 	// --- Identifiers ---
 	IDENTIFIER,
@@ -40,6 +41,7 @@ public enum TokenType
 	EQUAL_EQUAL, BANG_EQUAL,
 	LESS, GREATER, LESS_EQUAL, GREATER_EQUAL,
 	NULL_COALESCING,
+	ARROW, // NEW: Add ARROW
 
 	ASSIGN,
 	PLUS_ASSIGN,

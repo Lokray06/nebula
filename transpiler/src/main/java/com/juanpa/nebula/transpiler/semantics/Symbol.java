@@ -11,7 +11,7 @@ import com.juanpa.nebula.transpiler.lexer.Token;
 public abstract class Symbol
 {
 	private final String name;
-	private final Type type;
+	private Type type;
 	private final Token declarationToken; // The token where this symbol was declared
 	protected boolean isPublic; // Add this field for visibility status
 
@@ -51,6 +51,11 @@ public abstract class Symbol
 	public Type getType()
 	{
 		return type;
+	}
+
+	public void setType(ClassType type)
+	{
+		this.type = type;
 	}
 
 	public Token getDeclarationToken()

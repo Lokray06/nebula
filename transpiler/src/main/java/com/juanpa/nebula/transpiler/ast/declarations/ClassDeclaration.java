@@ -31,22 +31,7 @@ public class ClassDeclaration implements ASTNode
 
 	// NEW: Field to store the fully qualified name of the containing namespace
 	private String containingNamespace;
-
-	// Original constructor (keep for compatibility if needed elsewhere, but typically won't be used by parser)
-	public ClassDeclaration(Token name)
-	{
-		this.name = name;
-		this.modifiers = new ArrayList<>();
-		this.classKeyword = null; // Default to null for this constructor
-		this.extendsKeyword = null;
-		this.superClassName = null;
-		this.leftBrace = null;
-		this.rightBrace = null;
-		this.fields = new ArrayList<>();
-		this.constructors = new ArrayList<>();
-		this.methods = new ArrayList<>();
-		this.containingNamespace = ""; // Initialize to empty string by default
-	}
+	private final boolean isNative; // ADD THIS
 
 	/**
 	 * Comprehensive constructor for ClassDeclaration used by the parser.
@@ -64,10 +49,10 @@ public class ClassDeclaration implements ASTNode
 	 * @param containingNamespace The fully qualified name of the namespace this class belongs to.
 	 */
 	public ClassDeclaration(List<Token> modifiers, Token classKeyword, Token name,
-							Token extendsKeyword, Token superClassName,
-							Token leftBrace, List<FieldDeclaration> fields,
-							List<MethodDeclaration> methods, List<ConstructorDeclaration> constructors,
-							Token rightBrace, String containingNamespace) // NEW: Added containingNamespace parameter
+	                        Token extendsKeyword, Token superClassName,
+	                        Token leftBrace, List<FieldDeclaration> fields,
+	                        List<MethodDeclaration> methods, List<ConstructorDeclaration> constructors,
+	                        Token rightBrace, String containingNamespace, boolean isNative) // NEW: Added containingNamespace parameter
 	{
 		this.modifiers = modifiers;
 		this.classKeyword = classKeyword;
@@ -79,7 +64,8 @@ public class ClassDeclaration implements ASTNode
 		this.fields = fields;
 		this.constructors = constructors;
 		this.methods = methods;
-		this.containingNamespace = containingNamespace; // NEW: Set the field
+		this.containingNamespace = containingNamespace;
+		this.isNative = isNative; // ADD THIS
 	}
 
 	public Token getName()
@@ -138,23 +124,23 @@ public class ClassDeclaration implements ASTNode
 		StringBuilder sb = new StringBuilder();
 		modifiers.forEach(mod -> sb.append(mod.getLexeme()).append(" "));
 		sb.append("class ").append(name.getLexeme());
-		if(superClassName != null)
+		if (superClassName != null)
 		{
 			sb.append(" extends ").append(superClassName.getLexeme());
 		}
 		sb.append(" {\n");
 		// Append fields
-		for(FieldDeclaration field : fields)
+		for (FieldDeclaration field : fields)
 		{
 			sb.append("    ").append(field.toString().replace("\n", "\n    ")).append("\n");
 		}
 		// Append constructors
-		for(ConstructorDeclaration constructor : constructors)
+		for (ConstructorDeclaration constructor : constructors)
 		{
 			sb.append("    ").append(constructor.toString().replace("\n", "\n    ")).append("\n");
 		}
 		// Append methods
-		for(MethodDeclaration method : methods)
+		for (MethodDeclaration method : methods)
 		{
 			sb.append("    ").append(method.toString().replace("\n", "\n    ")).append("\n");
 		}
@@ -183,5 +169,10 @@ public class ClassDeclaration implements ASTNode
 	public void setContainingNamespace(String containingNamespace)
 	{
 		this.containingNamespace = containingNamespace;
+	}
+
+	public boolean isNative()
+	{
+		return isNative;
 	}
 }

@@ -25,6 +25,9 @@ public class Lexer
 	private int line = 1; // Current line number
 	private int column = 1; // Current column number
 
+	private int startLine = 1;
+	private int startColumn = 1;
+
 	// Static map to store reserved keywords for quick lookup
 	private static final Map<String, TokenType> keywords;
 
@@ -72,6 +75,8 @@ public class Lexer
 		keywords.put("default", TokenType.DEFAULT);
 		keywords.put("is", TokenType.IS);
 		keywords.put("alias", TokenType.ALIAS); // NEW: Added alias keyword
+		keywords.put("native", TokenType.NATIVE);
+		keywords.put("wrapper", TokenType.WRAPPER);
 	}
 
 	/**
@@ -88,18 +93,23 @@ public class Lexer
 
 	/**
 	 * Scans the entire source code and returns a list of tokens.
-	 *
-	 * @return A list of tokens, including an EOF token at the end.
 	 */
 	public List<Token> scanTokens()
 	{
 		while (!isAtEnd())
 		{
 			start = current; // Mark the beginning of the current token
+
+			// --- THIS IS A NEW AND IMPORTANT STEP ---
+			// Save the starting position of the token before scanning it
+			startLine = line;
+			startColumn = column;
+
 			scanToken(); // Scan and add the next token
 		}
 
 		// Add the End Of File token
+		// The position for EOF can be the end of the last token
 		tokens.add(new Token(TokenType.EOF, "", null, line, column));
 		return tokens;
 	}
@@ -161,7 +171,11 @@ public class Lexer
 				}
 				break;
 			case '-':
-				if (match('-'))
+				if (match('>'))
+				{
+					addToken(TokenType.ARROW);
+				}
+				else if (match('-'))
 				{
 					addToken(TokenType.MINUS_MINUS);
 				}
@@ -281,7 +295,19 @@ public class Lexer
 
 			// --- Literals and Identifiers ---
 			case '"':
-				scanStringLiteral();
+				// Check if this is the start of a raw string (""")
+				if (peek() == '"' && peek(1) == '"')
+				{
+					// Consume the next two quotes to move past the """ delimiter
+					advance();
+					advance();
+					rawString(); // Call the existing rawString method
+				}
+				else
+				{
+					// Otherwise, it's a regular string literal
+					scanStringLiteral();
+				}
 				break;
 			case '\'':
 				scanCharacterLiteral();
@@ -337,8 +363,13 @@ public class Lexer
 	private void addToken(TokenType type, Object literal)
 	{
 		String text = source.substring(start, current);
-		tokens.add(new Token(type, text, literal, line, column - text.length())); // Adjust column to be start of token
+
+		// --- THIS IS THE MODIFIED LOGIC ---
+		// Use the saved startLine and startColumn instead of the current lexer position.
+		// This ensures multi-line tokens get the correct starting position.
+		tokens.add(new Token(type, text, literal, startLine, startColumn));
 	}
+
 
 	/**
 	 * Overloaded method to add a token without a literal value.
@@ -399,6 +430,21 @@ public class Lexer
 			return '\0';
 		}
 		return source.charAt(current + 1);
+	}
+
+	/**
+	 * Looks at the character at a given offset from the current position without consuming it.
+	 *
+	 * @param offset The number of characters to look ahead.
+	 * @return The character at the specified offset, or '\0' if at the end of the source.
+	 */
+	private char peek(int offset)
+	{
+		if (current + offset >= source.length())
+		{
+			return '\0';
+		}
+		return source.charAt(current + offset);
 	}
 
 	/**
@@ -501,6 +547,8 @@ public class Lexer
 	}
 
 
+	// In Lexer.java
+
 	/**
 	 * Scans a string literal enclosed in double quotes.
 	 */
@@ -535,7 +583,7 @@ public class Lexer
 					case 'f':
 						value.append('\f');
 						break;
-					case '"':
+					case '"': // This case correctly handles \"
 						value.append('"');
 						break;
 					case '\\':
@@ -546,17 +594,15 @@ public class Lexer
 						break;
 					default:
 						error("Invalid escape sequence '\\" + escapeChar + "' in string literal.");
-						value.append(c).append(escapeChar); // Append as-is if invalid escape
+						value.append('\\').append(escapeChar); // Append as-is if invalid escape
 						break;
 				}
 			}
 			else if (c == '\n')
-			{
-				error("Newline in string literal.");
-				// Do not break, consume newline, but report error. Parser needs to handle this.
-				value.append(c);
-				line++;
-				column = 0; // Reset column for new line
+			{ // This correctly handles newlines
+				value.append('\n'); // Append the newline character to the string value
+				line++;             // Increment line count
+				column = 0;         // Reset column for the new line
 			}
 			else
 			{
@@ -567,14 +613,13 @@ public class Lexer
 		if (isAtEnd())
 		{
 			error("Unterminated string literal.");
-			addToken(TokenType.ERROR, null); // Add error token and return
+			addToken(TokenType.ERROR, null);
 			return;
 		}
 
 		advance(); // Consume the closing '"'
 		addToken(TokenType.STRING_LITERAL, value.toString());
 	}
-
 
 	/**
 	 * Scans a character literal enclosed in single quotes.
@@ -699,5 +744,94 @@ public class Lexer
 				addToken(type); // This calls addToken(type, null) implicitly.
 			}
 		}
+	}
+
+	/**
+	 * Scans a raw string literal, which starts and ends with three double quotes (""").
+	 * It handles multi-line content and removes common leading indentation based on the
+	 * indentation of the closing delimiter.
+	 */
+	private void rawString()
+	{
+		int contentStartLine = line;
+		int contentStartCol = column;
+
+		// 1. Find the closing delimiter """
+		while (!(peek() == '"' && peek(1) == '"' && peek(2) == '"'))
+		{
+			if (isAtEnd())
+			{
+				errorReporter.report(contentStartLine, contentStartCol, "[Lexical Error] Unterminated raw string literal.");
+				return;
+			}
+
+			if (peek() == '\n')
+			{
+				line++;
+				column = 0; // Reset column for the new line
+			}
+			advance();
+		}
+
+		// 2. We found the end. Extract the raw content.
+		// The content is from the character after the opening """ to the one before the closing """.
+		String rawContent = source.substring(start + 3, current);
+
+		// Consume the closing delimiter
+		advance();
+		advance();
+		advance();
+
+		// 3. Calculate the indentation of the closing line.
+		int lastNewline = rawContent.lastIndexOf('\n');
+		if (lastNewline == -1)
+		{
+			// Single-line raw string: """some content"""
+			addToken(TokenType.STRING_LITERAL, rawContent);
+			return;
+		}
+
+		// The indentation is the whitespace after the last newline.
+		String closingIndent = rawContent.substring(lastNewline + 1);
+
+		// The C# spec requires the closing line to contain only whitespace.
+		if (!closingIndent.trim().isEmpty())
+		{
+			// We can be lenient and just assume no indentation in this malformed case.
+			closingIndent = "";
+		}
+
+		// The actual content to process is everything before this last newline.
+		String contentToProcess = rawContent.substring(0, lastNewline);
+
+		// 4. Split into lines and strip the common indentation.
+		String[] lines = contentToProcess.split("\n");
+		StringBuilder finalValue = new StringBuilder();
+
+		// Handle the first line separately to ignore whitespace after opening quotes.
+		if (lines.length > 0)
+		{
+			finalValue.append(lines[0].stripLeading());
+		}
+
+		// Process the rest of the lines
+		for (int i = 1; i < lines.length; i++)
+		{
+			finalValue.append('\n');
+			String currentLine = lines[i];
+
+			// Only strip indentation if the line isn't blank and has the prefix
+			if (!currentLine.isBlank() && currentLine.startsWith(closingIndent))
+			{
+				finalValue.append(currentLine.substring(closingIndent.length()));
+			}
+			else
+			{
+				finalValue.append(currentLine);
+			}
+		}
+
+		// 5. Add the final processed string token.
+		addToken(TokenType.STRING_LITERAL, finalValue.toString());
 	}
 }

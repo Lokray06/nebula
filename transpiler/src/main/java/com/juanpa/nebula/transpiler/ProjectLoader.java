@@ -7,6 +7,7 @@ import com.juanpa.nebula.transpiler.ast.declarations.NamespaceDeclaration;
 import com.juanpa.nebula.transpiler.lexer.Lexer;
 import com.juanpa.nebula.transpiler.lexer.Token;
 import com.juanpa.nebula.transpiler.parser.NebulaParser;
+import com.juanpa.nebula.transpiler.semantics.ClassSymbol;
 import com.juanpa.nebula.transpiler.util.ErrorReporter;
 
 import java.io.IOException;
@@ -14,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.stream.Stream;
 
 /**
  * Manages the loading of a Nebula project by discovering and parsing all
@@ -26,11 +28,28 @@ public class ProjectLoader
 	private final Queue<Path> filesToParse = new LinkedList<>();
 	private final Set<Path> parsedFiles = new HashSet<>();
 	private final Program combinedAst = new Program();
+	private final Map<String, ClassSymbol> preloadedSymbols;
 
-	public ProjectLoader(List<Path> sourceRoots, ErrorReporter errorReporter)
+
+	public ProjectLoader(List<Path> sourceRoots, ErrorReporter errorReporter, Map<String, ClassSymbol> preloadedSymbols)
 	{
 		this.sourceRoots = sourceRoots;
 		this.errorReporter = errorReporter;
+		this.preloadedSymbols = (preloadedSymbols != null) ? preloadedSymbols : new HashMap<>();
+	}
+
+	// New method to load all files from a directory (for NDK compilation)
+	public Program loadAllFilesFromRoot(Path rootDir) throws IOException
+	{
+		try (Stream<Path> stream = Files.walk(rootDir))
+		{
+			stream.filter(path -> !Files.isDirectory(path) && path.toString().endsWith(".neb"))
+					.forEach(filesToParse::add);
+		}
+
+		// This reuses the existing parsing loop, so we just need to call a dummy load
+		// with a placeholder entry point to kick it off. The queue is already filled.
+		return loadProjectFromEntryPoint(filesToParse.peek());
 	}
 
 	/**
@@ -45,13 +64,13 @@ public class ProjectLoader
 		// Add the initial file to our work queue
 		filesToParse.add(entryPoint.toAbsolutePath());
 
-		while(!filesToParse.isEmpty())
+		while (!filesToParse.isEmpty())
 		{
 			Path currentFile = filesToParse.poll();
 
 			// Use a canonical path to avoid parsing the same file via different relative paths
 			Path canonicalPath = currentFile.toRealPath();
-			if(parsedFiles.contains(canonicalPath))
+			if (parsedFiles.contains(canonicalPath))
 			{
 				continue; // Already processed this file, handles circular dependencies
 			}
@@ -59,7 +78,7 @@ public class ProjectLoader
 			System.out.println("Discovering and parsing: " + canonicalPath.getFileName());
 
 			Program fileAst = parseFile(canonicalPath);
-			if(errorReporter.hasErrors())
+			if (errorReporter.hasErrors())
 			{
 				System.err.println("Stopping build due to parsing errors in " + canonicalPath.getFileName());
 				return null; // Stop if there's an error
@@ -88,8 +107,10 @@ public class ProjectLoader
 
 		Lexer lexer = new Lexer(sourceCode, errorReporter);
 		List<Token> tokens = lexer.scanTokens();
-		if(errorReporter.hasErrors())
+		if (errorReporter.hasErrors())
+		{
 			return null;
+		}
 
 		NebulaParser parser = new NebulaParser(tokens, errorReporter);
 		return parser.parse();
@@ -100,11 +121,13 @@ public class ProjectLoader
 	 */
 	private void discoverDependencies(Program ast)
 	{
-		for(ImportDirective directive : ast.getImportDirectives())
+		for (ImportDirective directive : ast.getImportDirectives())
 		{
 			String fqn = getQualifiedNameFromExpression(directive.getQualifiedName());
-			if(fqn == null)
+			if (fqn == null)
+			{
 				continue;
+			}
 
 			// Try to find the corresponding .neb file in our source roots
 			findAndQueueFileForFqn(fqn);
@@ -117,22 +140,28 @@ public class ProjectLoader
 	 */
 	private void findAndQueueFileForFqn(String fqn)
 	{
-		// Don't search for core library files, they are handled by the pre-built SDK metadata
-		if(fqn.startsWith("nebula.core") || fqn.startsWith("nebula.io"))
+		// NEW: Check if the symbol is already loaded from the cache
+		if (preloadedSymbols.containsKey(fqn))
+		{
+			return;
+		}
+
+		// Don't search for core library files... (this check is now redundant if cache is used, but good for fallback)
+		if (fqn.startsWith("nebula.core") || fqn.startsWith("nebula.io"))
 		{
 			return;
 		}
 
 		String relativePathString = fqn.replace('.', '/') + ".neb";
 
-		for(Path root : sourceRoots)
+		for (Path root : sourceRoots)
 		{
 			Path potentialFile = root.resolve(relativePathString);
-			if(Files.exists(potentialFile))
+			if (Files.exists(potentialFile))
 			{
-				// Found a potential match, add it to the queue to be parsed
 				filesToParse.add(potentialFile.toAbsolutePath());
-				return; // Found it, no need to check other roots
+				return;
+
 			}
 		}
 	}
@@ -140,11 +169,11 @@ public class ProjectLoader
 	// Helper to get the FQN string from an import directive's expression
 	private String getQualifiedNameFromExpression(com.juanpa.nebula.transpiler.ast.expressions.Expression expression)
 	{
-		if(expression instanceof com.juanpa.nebula.transpiler.ast.expressions.IdentifierExpression)
+		if (expression instanceof com.juanpa.nebula.transpiler.ast.expressions.IdentifierExpression)
 		{
 			return ((com.juanpa.nebula.transpiler.ast.expressions.IdentifierExpression) expression).getName().getLexeme();
 		}
-		else if(expression instanceof com.juanpa.nebula.transpiler.ast.expressions.DotExpression)
+		else if (expression instanceof com.juanpa.nebula.transpiler.ast.expressions.DotExpression)
 		{
 			com.juanpa.nebula.transpiler.ast.expressions.DotExpression dot = (com.juanpa.nebula.transpiler.ast.expressions.DotExpression) expression;
 			String leftPart = getQualifiedNameFromExpression(dot.getLeft());

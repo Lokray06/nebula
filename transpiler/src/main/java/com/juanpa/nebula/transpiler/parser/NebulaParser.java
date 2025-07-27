@@ -312,7 +312,7 @@ public class NebulaParser
 		while (!check(TokenType.RIGHT_BRACE) && !isAtEnd())
 		{
 			List<Token> classModifiers = new ArrayList<>();
-			while (check(TokenType.PUBLIC) || check(TokenType.PRIVATE) || check(TokenType.STATIC))
+			while (check(TokenType.PUBLIC) || check(TokenType.PRIVATE) || check(TokenType.STATIC) || check(TokenType.NATIVE))
 			{
 				classModifiers.add(advance());
 			}
@@ -389,6 +389,13 @@ public class NebulaParser
 	 */
 	private ClassDeclaration classDeclaration(List<Token> modifiers, String containingNamespace) throws SyntaxError
 	{
+		// In the caller (namespaceDeclaration), the modifier loop is now:
+		// while (check(TokenType.PUBLIC) || check(TokenType.PRIVATE) || check(TokenType.STATIC) || check(TokenType.NATIVE))
+		// We need to add NATIVE to that loop.
+		// Assuming NATIVE is parsed as a modifier:
+
+		boolean isNative = modifiers.stream().anyMatch(m -> m.getType() == TokenType.NATIVE);
+
 		Token classKeyword = consume(TokenType.CLASS, "Expected 'class' keyword.");
 		Token className = consume(TokenType.IDENTIFIER, "Expected class name.");
 
@@ -410,7 +417,7 @@ public class NebulaParser
 		{
 			List<Token> memberModifiers = new ArrayList<>();
 			while (check(TokenType.PUBLIC) || check(TokenType.PRIVATE) ||
-					check(TokenType.STATIC) || check(TokenType.CONST))
+					check(TokenType.STATIC) || check(TokenType.CONST) || check(TokenType.WRAPPER))
 			{
 				memberModifiers.add(advance());
 			}
@@ -450,8 +457,7 @@ public class NebulaParser
 
 		Token rightBrace = consume(TokenType.RIGHT_BRACE, "Expected '}' after class body.");
 
-		return new ClassDeclaration(modifiers, classKeyword, className, extendsKeyword, superClassName,
-				leftBrace, fields, methods, constructors, rightBrace, containingNamespace);
+		return new ClassDeclaration(modifiers, classKeyword, className, extendsKeyword, superClassName, leftBrace, fields, methods, constructors, rightBrace, containingNamespace, isNative);
 	}
 
 	/**
@@ -473,8 +479,9 @@ public class NebulaParser
 				case CONST:
 				case CLASS:
 				case RIGHT_BRACE:
-				case OPERATOR:
+				case OPERATOR, WRAPPER:
 					return;
+
 				default:
 					if (isTypeToken(type) || type == TokenType.VAR)
 					{
@@ -542,6 +549,9 @@ public class NebulaParser
 	 */
 	private MethodDeclaration methodDeclaration(List<Token> modifiers, boolean isOperatorOverload) throws SyntaxError
 	{
+		boolean isWrapper = modifiers.stream().anyMatch(m -> m.getType() == TokenType.WRAPPER);
+		Token cppTarget = null;
+
 		Token returnType = advance();
 		Token methodName;
 		Token operatorKeyword = null;
@@ -584,7 +594,14 @@ public class NebulaParser
 
 		BlockStatement body = null;
 		Token semicolon = null;
-		if (check(TokenType.LEFT_BRACE))
+
+		if (isWrapper)
+		{
+			consume(TokenType.ARROW, "Expected '->' for wrapper method.");
+			cppTarget = consume(TokenType.STRING_LITERAL, "Expected C++ target string for wrapper method.");
+			semicolon = consume(TokenType.SEMICOLON, "Wrapper method declaration must end with a ';'.");
+		}
+		else if (check(TokenType.LEFT_BRACE))
 		{
 			body = blockStatement();
 		}
@@ -593,7 +610,8 @@ public class NebulaParser
 			semicolon = consume(TokenType.SEMICOLON, "Expected method body or ';' after method declaration.");
 		}
 
-		return new MethodDeclaration(modifiers, returnType, methodName, parameters, body, semicolon, operatorKeyword);
+		// MODIFY the return statement
+		return new MethodDeclaration(modifiers, returnType, methodName, parameters, body, semicolon, operatorKeyword, isWrapper, cppTarget);
 	}
 
 	/**
@@ -631,17 +649,32 @@ public class NebulaParser
 	 */
 	private FieldDeclaration fieldDeclaration(List<Token> modifiers) throws SyntaxError
 	{
+		boolean isWrapper = modifiers.stream().anyMatch(m -> m.getType() == TokenType.WRAPPER);
+		Token cppTarget = null;
+
 		Token type = advance();
 		Token name = consume(TokenType.IDENTIFIER, "Expected field name.");
 
 		Expression initializer = null;
-		if (match(TokenType.ASSIGN))
+
+		if (isWrapper)
+		{
+			consume(TokenType.ARROW, "Expected '->' for wrapper field.");
+			cppTarget = consume(TokenType.STRING_LITERAL, "Expected C++ target string for wrapper field.");
+		}
+		else if (match(TokenType.ASSIGN))
 		{
 			initializer = expression();
 		}
 
+		if (isWrapper && initializer != null)
+		{
+			error(previous(), "A wrapper field cannot have an initializer ('=').");
+		}
+
 		consume(TokenType.SEMICOLON, "Expected ';' after field declaration.");
-		return new FieldDeclaration(modifiers, type, name, initializer);
+		// MODIFY the return statement
+		return new FieldDeclaration(modifiers, type, name, initializer, isWrapper, cppTarget);
 	}
 
 

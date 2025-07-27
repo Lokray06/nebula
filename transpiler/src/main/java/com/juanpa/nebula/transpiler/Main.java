@@ -1,189 +1,155 @@
-// File: src/main/java/com/juanpa.nebula.transpiler/Main.java
+// File: src/main/java/com/juanpa/nebula/transpiler/Main.java
 
 package com.juanpa.nebula.transpiler;
 
 import com.juanpa.nebula.transpiler.ast.Program;
-import com.juanpa.nebula.transpiler.ast.declarations.ImportDirective;
-import com.juanpa.nebula.transpiler.ast.declarations.NamespaceDeclaration;
 import com.juanpa.nebula.transpiler.codegen.CppGenerator;
-import com.juanpa.nebula.transpiler.lexer.Lexer;
-import com.juanpa.nebula.transpiler.lexer.Token;
-import com.juanpa.nebula.transpiler.parser.NebulaParser;
+import com.juanpa.nebula.transpiler.semantics.ClassSymbol;
 import com.juanpa.nebula.transpiler.semantics.SemanticAnalyzer;
+import com.juanpa.nebula.transpiler.serialization.SymbolSerializer;
+import com.juanpa.nebula.transpiler.util.CompilerConfig;
 import com.juanpa.nebula.transpiler.util.ErrorReporter;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Stream;
 
 /**
  * Entry point for the Nebula Transpiler.
- * This Main class orchestrates the lexical, syntactic, and semantic analysis phases,
- * and now handles C++ code generation and saving, as well as compilation and execution.
+ * This Main class orchestrates the entire compilation process.
  */
 public class Main
 {
+
 	public static void main(String[] args)
 	{
-		Path projectPath;
-		if(args.length > 0)
-		{
-			projectPath = Paths.get(args[0]);
-		}
-		else
-		{
-			projectPath = Paths.get("."); // Default to current working directory
-			System.out.println("No project path provided. Using default: current working directory ('.').");
-		}
+		// 1. Load Compiler Configuration
+		CompilerConfig config = loadConfiguration();
 
-		ErrorReporter errorReporter = new ErrorReporter();
-
-		// Determine the base path for Nebula SDK files
-		Path nebulaSdkBasePath = projectPath.resolve("sdk");
-
-		List<Path> nebulaFiles = new ArrayList<>();
-		try(Stream<Path> stream = Files.walk(nebulaSdkBasePath))
+		// --- Argument parsing for different compiler modes ---
+		if (args.length > 0)
 		{
-			stream.filter(Files::isRegularFile)
-					.filter(p -> p.toString().endsWith(".neb"))
-					.forEach(nebulaFiles::add);
-		}
-		catch(IOException e)
-		{
-			System.err.println("Error reading Nebula SDK files: " + e.getMessage());
-			return;
-		}
-
-		if(nebulaFiles.isEmpty())
-		{
-			System.out.println("Found 0 Nebula files in the SDK path: " + nebulaSdkBasePath);
-			return;
-		}
-		System.out.println("--- Loading Nebula Project from: " + nebulaSdkBasePath + " ---");
-		System.out.println("Found " + nebulaFiles.size() + " Nebula files. Processing...");
-
-		// Create a single aggregated Program AST node
-		Program fullProgramAST = new Program();
-
-		// First Pass: Lex and Parse all Nebula files to build the ASTs
-		// And aggregate them into a single fullProgramAST
-		for(Path filePath : nebulaFiles)
-		{
-			System.out.println("\n--- Processing file: " + filePath.getFileName() + " ---");
-			try(InputStream inputStream = Files.newInputStream(filePath))
+			if (args[0].equals("--compile-ndk"))
 			{
-				String sourceCode = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-
-				// Lexical Analysis
-				Lexer lexer = new Lexer(sourceCode, errorReporter);
-				List<Token> tokens = lexer.scanTokens();
-				if(errorReporter.hasErrors())
+				if (args.length < 5 || !args[1].equals("--output-symbols") || !args[3].equals("--output-cpp"))
 				{
-					System.out.println("Lexing failed for " + filePath.getFileName() + ".");
+					System.err.println("Usage: nbcc --compile-ndk --output-symbols <file.nsf> --output-cpp <dir>");
 					return;
 				}
-				System.out.println("Lexing completed successfully for " + filePath.getFileName() + ".");
-
-				// Syntactic Analysis
-				NebulaParser parser = new NebulaParser(tokens, errorReporter);
-				Program currentFileProgram = parser.parse(); // Parse the current file
-				if(errorReporter.hasErrors())
-				{
-					System.out.println("Parsing failed for " + filePath.getFileName() + ".");
-					return;
-				}
-				System.out.println("Parsing completed successfully for " + filePath.getFileName() + ".");
-
-				// Aggregate namespaces and import directives from current file into the full program AST
-				for(ImportDirective directive : currentFileProgram.getImportDirectives())
-				{
-					fullProgramAST.addImportDirective(directive);
-				}
-				for(NamespaceDeclaration namespaceDecl : currentFileProgram.getNamespaceDeclarations())
-				{
-					fullProgramAST.addNamespace(namespaceDecl);
-				}
-
-			}
-			catch(IOException e)
-			{
-				System.err.println("Error reading file " + filePath + ": " + e.getMessage());
+				Path nsfFile = Paths.get(args[2]);
+				Path cppDir = Paths.get(args[4]);
+				compileNdk(nsfFile, cppDir, config); // Pass config
 				return;
 			}
 		}
 
-		// Semantic Analysis Phase
-		System.out.println("\n--- Semantic Analysis Phase (Entire Project) ---");
+		if (args.length == 0)
+		{
+			System.err.println("Usage: nbcc <entrypoint.neb>");
+			System.err.println("   or: nbcc --compile-ndk --output-symbols <file.nsf> --output-cpp <dir>");
+			return;
+		}
+
+		// --- Standard Compilation Flow ---
+		Path entryPointFile = Paths.get(args[0]);
+		if (!Files.exists(entryPointFile))
+		{
+			System.err.println("Error: Entry point file not found: " + entryPointFile);
+			return;
+		}
+
+		ErrorReporter errorReporter = new ErrorReporter();
 		SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(errorReporter);
 
-		// Analyze the aggregated program AST once
+		Map<String, ClassSymbol> preloadedSymbols = new HashMap<>();
+		Path symbolCacheFile = Paths.get("ndk.nsf");
+		if (Files.exists(symbolCacheFile))
+		{
+			System.out.println("--- Found NDK symbol cache (ndk.nsf). Loading... ---");
+			try (InputStream is = new BufferedInputStream(new FileInputStream(symbolCacheFile.toFile())))
+			{
+				SymbolSerializer serializer = new SymbolSerializer();
+				preloadedSymbols = serializer.readSymbols(is);
+				semanticAnalyzer.preloadSymbols(preloadedSymbols);
+				System.out.println("--- NDK symbols loaded successfully. ---");
+			}
+			catch (IOException e)
+			{
+				System.err.println("Warning: Could not read symbol cache file 'ndk.nsf'. Error: " + e.getMessage());
+			}
+		}
+
+		List<Path> sourceRoots = new ArrayList<>();
+		sourceRoots.add(entryPointFile.getParent());
+		sourceRoots.add(Paths.get("./sdk"));
+
+		Program fullProgramAST;
+		try
+		{
+			System.out.println("--- Loading project from entry point: " + entryPointFile.getFileName() + " ---");
+			ProjectLoader loader = new ProjectLoader(sourceRoots, errorReporter, preloadedSymbols);
+			fullProgramAST = loader.loadProjectFromEntryPoint(entryPointFile);
+
+			if (fullProgramAST == null || errorReporter.hasErrors())
+			{
+				System.err.println("Build failed due to parsing errors.");
+				return;
+			}
+
+		}
+		catch (IOException e)
+		{
+			System.err.println("An I/O error occurred during project loading: " + e.getMessage());
+			return;
+		}
+
+		System.out.println("\n--- Semantic Analysis Phase (Entire Project) ---");
 		semanticAnalyzer.analyze(fullProgramAST);
 
-		if(errorReporter.hasErrors())
+		if (errorReporter.hasErrors())
 		{
-			System.out.println("Semantic analysis finished with errors for the project. Cannot proceed to code generation.");
-			return; // Exit if semantic analysis failed
+			System.out.println("Semantic analysis finished with errors.");
+			return;
 		}
-		System.out.println("Semantic analysis completed successfully for the project.");
+		System.out.println("Semantic analysis completed successfully.");
 
-
-		// Code Generation Phase
 		System.out.println("\n--- Code Generation Phase ---");
+		Path projectRoot = entryPointFile.getParent();
 		CppGenerator cppGenerator = new CppGenerator(semanticAnalyzer.getDeclaredClasses(), semanticAnalyzer);
 		Map<String, String> generatedCode = cppGenerator.generate(fullProgramAST);
 
-		if(errorReporter.hasErrors())
+		if (errorReporter.hasErrors())
 		{
-			System.out.println("Code generation finished with errors. Generated code might be incomplete or incorrect.");
-			// Do not return here, allow saving partial code for debugging
+			System.out.println("Code generation finished with errors.");
 		}
 		else
 		{
 			System.out.println("Code generation completed successfully.");
 		}
 
-
-		// Save Generated C++ Files
-		Path outputDirPath = projectPath.resolve("out");
+		Path outputDirPath = projectRoot.resolve("out");
 		try
 		{
-			Files.createDirectories(outputDirPath); // Ensure the output directory exists
+			Files.createDirectories(outputDirPath);
 			System.out.println("\n--- Saving Generated C++ Files to: " + outputDirPath.toAbsolutePath() + " ---");
 
-			for(Map.Entry<String, String> entry : generatedCode.entrySet())
+			for (Map.Entry<String, String> entry : generatedCode.entrySet())
 			{
-				String fileName = entry.getKey();
-				String code = entry.getValue();
-				saveToFile(outputDirPath.resolve(fileName), code);
+				saveToFile(outputDirPath.resolve(entry.getKey()), entry.getValue());
 			}
 
-			// Automatically compile and run the generated C++ code
-			if(!generatedCode.isEmpty() && !errorReporter.hasErrors())
+			if (!generatedCode.isEmpty() && !errorReporter.hasErrors())
 			{
 				System.out.println("\n--- Compiling and Running Generated C++ Code ---");
-				compileAndRunCpp(outputDirPath, generatedCode);
+				compileAndRunCpp(outputDirPath, generatedCode, config);
 			}
-			else if(errorReporter.hasErrors())
-			{
-				System.out.println("\nSkipping C++ compilation and run due to previous errors.");
-			}
-			else
-			{
-				System.out.println("\nNo C++ code generated. Skipping compilation and run.");
-			}
-
 		}
-		catch(IOException e)
+		catch (IOException e)
 		{
 			System.err.println("Error creating output directory or saving files: " + e.getMessage());
 		}
@@ -191,90 +157,256 @@ public class Main
 		System.out.println("\nTranspilation process finished.");
 	}
 
+	/**
+	 * +++ NEW METHOD +++
+	 * Loads compiler configuration from a properties file.
+	 *
+	 * @return A CompilerConfig object with loaded settings or defaults.
+	 */
+	private static CompilerConfig loadConfiguration()
+	{
+		Properties props = new Properties();
+		Path configPath = Paths.get(System.getProperty("user.home"), ".config", "nebula", "nebula.conf");
+
+		if (Files.exists(configPath))
+		{
+			try (InputStream input = new FileInputStream(configPath.toFile()))
+			{
+				props.load(input);
+				System.out.println("--- Loaded configuration from: " + configPath + " ---");
+			}
+			catch (IOException e)
+			{
+				System.err.println("Warning: Could not read config file at " + configPath + ". Using default settings.");
+			}
+		}
+		else
+		{
+			System.out.println("--- No config file found at ~/.config/nebula/nebula.conf. Using default settings. ---");
+			System.out.println("--- You can create this file to customize compiler paths. Example: ---");
+			System.out.println("# ~/.config/nebula/nebula.conf");
+			System.out.println("compiler.cpp_path = /usr/bin/g++");
+			System.out.println("ndk.header_path = /path/to/your/nebula/ndk_cpp");
+			System.out.println("ndk.library_path = /path/to/your/nebula/libs/libndk.so");
+			System.out.println("--------------------------------------------------------------------");
+		}
+		return new CompilerConfig(props);
+	}
+
+	private static void compileNdk(Path nsfOutputFile, Path cppOutputDir, CompilerConfig config)
+	{
+		System.out.println("--- Compiling NDK symbols to: " + nsfOutputFile.toAbsolutePath() + " ---");
+		System.out.println("--- Generating NDK C++ code to: " + cppOutputDir.toAbsolutePath() + " ---");
+		ErrorReporter errorReporter = new ErrorReporter();
+
+		List<Path> sourceRoots = List.of(Paths.get("./sdk"));
+		ProjectLoader loader = new ProjectLoader(sourceRoots, errorReporter, null);
+		Program ndkAst;
+		try
+		{
+			ndkAst = loader.loadAllFilesFromRoot(Paths.get("./sdk"));
+			if (ndkAst == null || errorReporter.hasErrors())
+			{
+				System.err.println("Failed to parse NDK source files.");
+				return;
+			}
+		}
+		catch (IOException e)
+		{
+			System.err.println("An I/O error occurred: " + e.getMessage());
+			return;
+		}
+
+		SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(errorReporter);
+		semanticAnalyzer.analyze(ndkAst);
+		if (errorReporter.hasErrors())
+		{
+			System.err.println("Semantic errors found in NDK.");
+			return;
+		}
+
+		try (FileOutputStream fos = new FileOutputStream(nsfOutputFile.toFile()))
+		{
+			new SymbolSerializer().writeSymbols(semanticAnalyzer.getDeclaredClasses(), fos);
+			System.out.println("--- NDK symbols successfully saved. ---");
+		}
+		catch (IOException e)
+		{
+			System.err.println("Error writing symbol cache file: " + e.getMessage());
+		}
+
+		System.out.println("\n--- Generating NDK C++ Code ---");
+		Map<String, String> generatedCode = new CppGenerator(semanticAnalyzer.getDeclaredClasses(), semanticAnalyzer).generate(ndkAst);
+		try
+		{
+			Files.createDirectories(cppOutputDir);
+			for (Map.Entry<String, String> entry : generatedCode.entrySet())
+			{
+				saveToFile(cppOutputDir.resolve(entry.getKey()), entry.getValue());
+			}
+			System.out.println("--- NDK C++ code generated successfully. ---");
+		}
+		catch (IOException e)
+		{
+			System.err.println("Error saving generated NDK C++ files: " + e.getMessage());
+			return;
+		}
+
+		System.out.println("\n--- Building NDK Shared Library ---");
+		try
+		{
+			List<String> objectFiles = new ArrayList<>();
+			for (String fileName : generatedCode.keySet())
+			{
+				if (fileName.endsWith(".cpp"))
+				{
+					Path sourceFile = cppOutputDir.resolve(fileName);
+					String objectFile = fileName.replace(".cpp", ".o");
+					objectFiles.add(objectFile);
+
+					List<String> cmd = List.of(
+							config.getCppCompilerPath(),
+							"-c", "-fPIC",
+							"-I" + cppOutputDir.toAbsolutePath(),
+							sourceFile.toAbsolutePath().toString(),
+							"-o", cppOutputDir.resolve(objectFile).toAbsolutePath().toString()
+					);
+
+					Process p = new ProcessBuilder(cmd).inheritIO().start();
+					if (p.waitFor() != 0)
+					{
+						System.err.println("Failed to compile " + fileName);
+						return;
+					}
+				}
+			}
+
+			String libraryName = "libndk.so";
+			Path libraryPath = cppOutputDir.resolve(libraryName);
+
+			List<String> linkCmd = new ArrayList<>();
+			linkCmd.add(config.getCppCompilerPath());
+			linkCmd.add("-shared");
+			linkCmd.add("-o");
+			linkCmd.add(libraryPath.toAbsolutePath().toString());
+			objectFiles.stream()
+					.map(obj -> cppOutputDir.resolve(obj).toAbsolutePath().toString())
+					.forEach(linkCmd::add);
+
+			Process p = new ProcessBuilder(linkCmd).inheritIO().start();
+			if (p.waitFor() == 0)
+			{
+				System.out.println("--- NDK Shared Library '" + libraryName + "' built successfully. ---");
+			}
+			else
+			{
+				System.err.println("Failed to link NDK shared library.");
+			}
+
+		}
+		catch (IOException | InterruptedException e)
+		{
+			System.err.println("An error occurred while building the NDK library: " + e.getMessage());
+			Thread.currentThread().interrupt();
+		}
+	}
+
+
+	// --- HELPER METHODS ---
+
 	private static void saveToFile(Path filePath, String content)
 	{
 		try
 		{
-			Files.createDirectories(filePath.getParent()); // Ensure parent directories exist
+			Files.createDirectories(filePath.getParent());
 			Files.write(filePath, content.getBytes(StandardCharsets.UTF_8));
 			System.out.println("Saved: " + filePath.getFileName());
 		}
-		catch(IOException e)
+		catch (IOException e)
 		{
 			System.err.println("Error saving generated code to file '" + filePath + "': " + e.getMessage());
-			System.err.println(e);
 		}
 	}
 
-	/**
-	 * Compiles the generated C++ files and runs the executable.
-	 *
-	 * @param outputDirPath The directory where the generated C++ files are located.
-	 * @param generatedCode A map of generated C++ filenames to their content.
-	 */
-	private static void compileAndRunCpp(Path outputDirPath, Map<String, String> generatedCode)
+	private static void compileAndRunCpp(Path outputDirPath, Map<String, String> generatedCode, CompilerConfig config)
 	{
-		List<String> compileCommand = new ArrayList<>();
-		compileCommand.add("c++"); // Use c++ (for Arch Linux, as requested)
+		// --- 1. Parse Library Path Information ---
+		Path fullLibraryPath = Paths.get(config.getNdkLibraryPath());
+		Path libraryDir = fullLibraryPath.getParent();
+		String libraryName = fullLibraryPath.getFileName().toString();
+		if (libraryName.startsWith("lib"))
+		{
+			libraryName = libraryName.substring(3);
+		}
+		if (libraryName.endsWith(".so") || libraryName.endsWith(".dylib"))
+		{
+			libraryName = libraryName.substring(0, libraryName.lastIndexOf('.'));
+		}
 
-		// Add all .cpp files to the compile command
+		// --- 2. Build the Compile Command ---
+		List<String> compileCommand = new ArrayList<>();
+		compileCommand.add(config.getCppCompilerPath());
+
+		// Include paths for user code and NDK headers
+		compileCommand.add("-I" + outputDirPath.toAbsolutePath());
+		compileCommand.add("-I" + config.getNdkHeaderPath());
+
+		// Add user project .cpp files
 		generatedCode.keySet().stream()
 				.filter(fileName -> fileName.endsWith(".cpp"))
 				.map(fileName -> outputDirPath.resolve(fileName).toAbsolutePath().toString())
 				.forEach(compileCommand::add);
 
+		// Link against the NDK library
+		compileCommand.add("-L" + libraryDir.toAbsolutePath());
+		compileCommand.add("-l" + libraryName);
+
+		// Embed the runtime path to the library directory in the executable
+		compileCommand.add("-Wl,-rpath," + libraryDir.toAbsolutePath());
+
+		// Output executable
 		compileCommand.add("-o");
-		compileCommand.add(outputDirPath.resolve("main").toAbsolutePath().toString()); // Output executable name
+		compileCommand.add(outputDirPath.resolve("main").toAbsolutePath().toString());
 
 		System.out.println("Compiling with command: " + String.join(" ", compileCommand));
 
+		// --- 3. Execute the Command ---
 		try
 		{
 			ProcessBuilder compileProcessBuilder = new ProcessBuilder(compileCommand);
-			compileProcessBuilder.directory(outputDirPath.toFile()); // Set working directory for compilation
+			compileProcessBuilder.directory(outputDirPath.toFile());
 			Process compileProcess = compileProcessBuilder.start();
 
-			// Read compile process output concurrently
-			StreamGobbler compileStdoutGobbler = new StreamGobbler(compileProcess.getInputStream(), "[C++ stdout]: ");
-			StreamGobbler compileStderrGobbler = new StreamGobbler(compileProcess.getErrorStream(), "[C++ stderr]: ");
-			new Thread(compileStdoutGobbler).start();
-			new Thread(compileStderrGobbler).start();
+			new Thread(new StreamGobbler(compileProcess.getInputStream(), "[C++ stdout]: ")).start();
+			new Thread(new StreamGobbler(compileProcess.getErrorStream(), "[C++ stderr]: ")).start();
 
 			int compileExitCode = compileProcess.waitFor();
 
-			if(compileExitCode == 0)
+			if (compileExitCode == 0)
 			{
 				System.out.println("C++ compilation successful.");
-				// Run the compiled executable
-				System.out.println("Running executable: " + outputDirPath.resolve("main").toAbsolutePath().toString());
+				System.out.println("Running executable...");
 				ProcessBuilder runProcessBuilder = new ProcessBuilder(outputDirPath.resolve("main").toAbsolutePath().toString());
-				runProcessBuilder.directory(outputDirPath.toFile()); // Set working directory for execution
+				runProcessBuilder.directory(outputDirPath.toFile());
 				Process runProcess = runProcessBuilder.start();
 
-				// Read run process output concurrently
-				StreamGobbler runStdoutGobbler = new StreamGobbler(runProcess.getInputStream(), "[App stdout]: ");
-				StreamGobbler runStderrGobbler = new StreamGobbler(runProcess.getErrorStream(), "[App stderr]: ");
-				new Thread(runStdoutGobbler).start();
-				new Thread(runStderrGobbler).start();
+				new Thread(new StreamGobbler(runProcess.getInputStream(), "[App stdout]: ")).start();
+				new Thread(new StreamGobbler(runProcess.getErrorStream(), "[App stderr]: ")).start();
 
-				runProcess.waitFor(); // Wait for the application to finish
+				runProcess.waitFor();
 			}
 			else
 			{
 				System.err.println("C++ compilation failed with exit code: " + compileExitCode);
 			}
 		}
-		catch(IOException |
-			  InterruptedException e)
+		catch (IOException | InterruptedException e)
 		{
 			System.err.println("Error during C++ compilation or execution: " + e.getMessage());
-			Thread.currentThread().interrupt(); // Restore interrupt status
+			Thread.currentThread().interrupt();
 		}
 	}
 
-	/**
-	 * Helper class to consume a process's input stream (stdout or stderr) in a separate thread.
-	 */
 	private static class StreamGobbler implements Runnable
 	{
 		private final InputStream inputStream;
@@ -289,31 +421,25 @@ public class Main
 		@Override
 		public void run()
 		{
-			try(BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream)))
+			try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream)))
 			{
 				String line;
-				while((line = reader.readLine()) != null)
+				while ((line = reader.readLine()) != null)
 				{
 					System.out.println(prefix + line);
 				}
 			}
-			catch(IOException e)
+			catch (IOException e)
 			{
 				System.err.println("Error reading process stream: " + e.getMessage());
 			}
 		}
 	}
 
-	/**
-	 * Copies all C++ SDK files from the source directory to the destination directory.
-	 *
-	 * @param sourceDir The path to the C++ SDK source directory (e.g., "./sdk/cpp").
-	 * @param destDir   The path to the destination directory (e.g., "./out").
-	 */
 	private static void copyCppSdkFiles(Path sourceDir, Path destDir)
 	{
 		System.out.println("\n--- Copying C++ SDK files from: " + sourceDir.toAbsolutePath() + " to " + destDir.toAbsolutePath() + " ---");
-		try(Stream<Path> stream = Files.walk(sourceDir))
+		try (Stream<Path> stream = Files.walk(sourceDir))
 		{
 			stream.forEach(sourcePath ->
 			{
@@ -322,24 +448,23 @@ public class Main
 					Path relativePath = sourceDir.relativize(sourcePath);
 					Path destinationPath = destDir.resolve(relativePath);
 
-					if(Files.isDirectory(sourcePath))
+					if (Files.isDirectory(sourcePath))
 					{
-						Files.createDirectories(destinationPath); // Ensure subdirectories are created
+						Files.createDirectories(destinationPath);
 					}
 					else
 					{
-						// Copy file, replacing existing one if it exists
 						Files.copy(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING);
 						System.out.println("Copied: " + sourcePath.getFileName());
 					}
 				}
-				catch(IOException e)
+				catch (IOException e)
 				{
 					System.err.println("Error copying file '" + sourcePath + "': " + e.getMessage());
 				}
 			});
 		}
-		catch(IOException e)
+		catch (IOException e)
 		{
 			System.err.println("Error walking C++ SDK directory '" + sourceDir + "': " + e.getMessage());
 		}

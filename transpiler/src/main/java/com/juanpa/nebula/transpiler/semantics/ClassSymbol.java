@@ -13,19 +13,20 @@ public class ClassSymbol extends Symbol
 {
 	private ClassType type;
 	private final Token declarationToken;
-	private final SymbolTable classScope; // For fields and nested classes/types
+	private final SymbolTable classScope;
+	private final boolean isNative; // ADD THIS
 
-	// NEW: Dedicated map to store methods by name, where each name maps to a list of MethodSymbols (for overloading)
 	public final Map<String, List<MethodSymbol>> methodsByName;
 
-
-	public ClassSymbol(String name, ClassType type, Token declarationToken, SymbolTable classScope)
+	// MODIFY constructor
+	public ClassSymbol(String name, ClassType type, Token declarationToken, SymbolTable classScope, boolean isNative)
 	{
 		super(name, type, declarationToken, true);
 		this.type = type;
 		this.declarationToken = declarationToken;
 		this.classScope = classScope;
-		this.methodsByName = new HashMap<>(); // Initialize
+		this.methodsByName = new HashMap<>();
+		this.isNative = isNative; // ADD THIS
 	}
 
 	public ClassType getType()
@@ -80,12 +81,12 @@ public class ClassSymbol extends Symbol
 		// Attempt to resolve as a field first (fields are stored in classScope's direct map)
 		// A field is identified by name, NOT by argument types.
 		Symbol field = classScope.resolveCurrentScope(memberName);
-		if(field instanceof VariableSymbol)
+		if (field instanceof VariableSymbol)
 		{
 			// If this call is specifically looking for a field (argumentTypes == null)
 			// OR if it's a method call but no matching method is found later, it might default to the field.
 			// However, for strictness, if arguments are provided, it's *expected* to be a method.
-			if(argumentTypes == null)
+			if (argumentTypes == null)
 			{ // This is how `visitDotExpression` should call it for fields
 				return field;
 			}
@@ -93,19 +94,19 @@ public class ClassSymbol extends Symbol
 
 		// Try to resolve as a method/constructor (from the dedicated methodsByName map)
 		List<MethodSymbol> candidates = methodsByName.get(memberName);
-		if(candidates != null && argumentTypes != null) // Only attempt method resolution if argumentTypes are provided
+		if (candidates != null && argumentTypes != null) // Only attempt method resolution if argumentTypes are provided
 		{
 			MethodSymbol bestMatch = null;
-			for(MethodSymbol candidate : candidates)
+			for (MethodSymbol candidate : candidates)
 			{
-				if(candidate.matchesArguments(argumentTypes)) // Use the matchesArguments helper
+				if (candidate.matchesArguments(argumentTypes)) // Use the matchesArguments helper
 				{
 					bestMatch = candidate;
 					// For simplicity, we take the first match. For full specificity, need to rank overloads.
 					break;
 				}
 			}
-			if(bestMatch != null)
+			if (bestMatch != null)
 			{
 				return bestMatch;
 			}
@@ -113,10 +114,10 @@ public class ClassSymbol extends Symbol
 
 		// 3. (Optional) Check inherited members if inheritance is implemented.
 		// If currentClass has a superClassType, resolve member in superclass.
-		if(type.getSuperClassType() instanceof ClassType)
+		if (type.getSuperClassType() instanceof ClassType)
 		{
 			ClassSymbol superClassSymbol = ((ClassType) type.getSuperClassType()).getClassSymbol();
-			if(superClassSymbol != null)
+			if (superClassSymbol != null)
 			{
 				return superClassSymbol.resolveMember(memberName, argumentTypes); // Recursive call
 			}
@@ -157,5 +158,10 @@ public class ClassSymbol extends Symbol
 	public String getFqn()
 	{
 		return type.getFqn();
+	}
+
+	public boolean isNative()
+	{
+		return isNative;
 	}
 }

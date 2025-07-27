@@ -24,6 +24,9 @@ public class FieldDeclaration implements ASTNode
 	// NEW: Field to store the resolved Type object after semantic analysis
 	private Type resolvedType;
 
+	private final boolean isWrapper;   // ADD THIS
+	private final Token cppTarget;     // ADD THIS
+
 	/**
 	 * Constructs a new FieldDeclaration.
 	 *
@@ -31,13 +34,17 @@ public class FieldDeclaration implements ASTNode
 	 * @param type        The token representing the field's type.
 	 * @param name        The token representing the field's name.
 	 * @param initializer The optional expression for the field's initial value, can be null.
+	 * @param isWrapper   Used for native classes
+	 * @param cppTarget   The token representing the cpp code it wraps
 	 */
-	public FieldDeclaration(List<Token> modifiers, Token type, Token name, Expression initializer)
+	public FieldDeclaration(List<Token> modifiers, Token type, Token name, Expression initializer, boolean isWrapper, Token cppTarget)
 	{
-		this.modifiers = new ArrayList<>(modifiers); // Make a copy
+		this.modifiers = new ArrayList<>(modifiers);
 		this.type = type;
 		this.name = name;
 		this.initializer = initializer;
+		this.isWrapper = isWrapper;     // ADD THIS
+		this.cppTarget = cppTarget;     // ADD THIS
 	}
 
 	public List<Token> getModifiers()
@@ -80,7 +87,7 @@ public class FieldDeclaration implements ASTNode
 				.map(Token::getLexeme)
 				.collect(Collectors.joining(" ")) + " ";
 		sb.append(mods).append("Field ").append(type.getLexeme()).append(" ").append(name.getLexeme());
-		if(initializer != null)
+		if (initializer != null)
 		{
 			sb.append(" = ").append(initializer.toString()); // Recursively print initializer
 		}
@@ -98,10 +105,20 @@ public class FieldDeclaration implements ASTNode
 	{
 		StringBuilder indentedText = new StringBuilder();
 		String prefix = "  ".repeat(level);
-		for(String line : text.split("\n"))
+		for (String line : text.split("\n"))
 		{
 			indentedText.append(prefix).append(line).append("\n");
 		}
 		return indentedText.toString();
+	}
+
+	public boolean isWrapper()
+	{
+		return isWrapper;
+	}
+
+	public Token getCppTarget()
+	{
+		return cppTarget;
 	}
 }

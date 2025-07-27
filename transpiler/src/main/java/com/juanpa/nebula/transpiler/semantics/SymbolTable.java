@@ -85,6 +85,11 @@ public class SymbolTable
 		return scopeName;
 	}
 
+	public Map<String, Symbol> getSymbols()
+	{
+		return symbols;
+	}
+
 	// Getter and Setter for currentScopeType
 	public Type getCurrentScopeType()
 	{
