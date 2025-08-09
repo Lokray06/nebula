@@ -87,5 +87,9 @@ public interface ASTVisitor<R>
 
 	R visitGroupingExpression(GroupingExpression expression);
 
+	R visitCastExpression(CastExpression expression);
+
+	R visitTernaryExpression(TernaryExpression expression);
+
 	R visitIsExpression(IsExpression expression);
 }

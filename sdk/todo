@@ -29,3 +29,523 @@ far far future:
 
     const add = (a, b) => a + b;
     const add(a,b);
+
+    ////////////////////////////WRAPPING:
+    how can i implement cpp wrapping in my transpiler? for example, this is my string class:
+
+namespace nebula.core
+
+{
+
+// Represents an immutable sequence of characters.
+
+// Maps to std::shared_ptr<String> in C++.
+
+class String
+
+{
+
+// Default constructor
+
+public String()
+
+{
+
+// Initializes an empty string.
+
+// The C++ transpilation should map this to String::String()
+
+}
+
+
+
+// Constructor from a character array (conceptual)
+
+// This might not be directly exposed in Nebula, but handled internally.
+
+// public String(char[] chars) { }
+
+
+
+// Constructor from another String (copy constructor equivalent)
+
+public String(String other)
+
+{
+
+// In C++, this would be a copy construction or assignment.
+
+}
+
+
+
+// Returns the length of the string.
+
+public int length()
+
+{
+
+// This will map to std::string::length() or size() in C++.
+
+return 0; // Placeholder
+
+}
+
+
+
+// Concatenates this string with another string.
+
+public String operator+(String other)
+
+{
+
+// This will map to std::string::operator+ or a custom append in C++.
+
+return new String(); // Placeholder
+
+}
+
+
+
+// Provides character access by index.
+
+/*
+
+public char operator[](int index)
+
+{
+
+// This will map to std::string::operator[] in C++.
+
+return '\0'; // Placeholder for null character
+
+}
+
+*/
+
+
+
+// Overrides Object's equals method for value comparison.
+
+public bool operator==(string other)
+
+{
+
+if(other is string)
+
+{
+
+return this == other;
+
+}
+
+}
+
+
+
+// Overrides Object's toString method.
+
+public string toString()
+
+{
+
+// Returns the string itself.
+
+return this;
+
+}
+
+
+
+// Overrides Object's hashCode method for string content.
+
+public string hashCode()
+
+{
+
+// In C++, this would compute a hash based on the string's content.
+
+return " "; // Placeholder
+
+}
+
+}
+
+}
+
+but this doesnt really do anything, its all for the semantic analysis to not throw errors, the implementation is hardcoded in the cpp generator to output a certain cpp String class, but, how can i improve wrappng, for example, i want a wrapper class that wraps math, but i dont want it to be hardcoded too, how can i do so?
+
+
+
+
+Analysis
+You're right to point out that hardcoding the implementation of core classes like String, Object, and Console directly within the CppGenerator is not ideal for extensibility and maintainability. It breaks the "separation of concerns" principle. To improve C++ wrapping, especially for classes like Math where you want to expose existing C++ functionality without rewriting it in Nebula, you can implement a strategy for external class binding or native method integration.
+
+Here's a breakdown of how you can achieve this, focusing on a more generalized approach rather than specific Math class examples (though Math is a perfect use case for this):
+
+Core Idea: Differentiate "Nebula Native" from "C++ Wrapper" Classes
+
+Currently, your transpiler treats all Nebula classes as if their implementation will be fully transpiled. For C++ wrapper classes, you want to tell the transpiler: "This Nebula class represents an existing C++ class, and its methods should map directly to C++ functions or methods, rather than generating new C++ code from Nebula method bodies."
+
+Steps to Implement Improved C++ Wrapping:
+
+Introduce a Mechanism to Mark Wrapper Classes:
+You need a way to tell your semantic analyzer and code generator that a particular Nebula class is a "wrapper" for an existing C++ library or functionality.
+
+Annotation/Modifier (Recommended): Add a custom annotation or a new modifier keyword in Nebula. This is the cleanest way.
+
+Code snippet
+
+// In your Nebula source for Math
+@NativeWrapper("cmath") // Or similar, indicating a C++ header/library
+namespace nebula.core
+{
+    public class Math
+    {
+        public static double abs(double value);
+        public static int abs(int value);
+        public static double sin(double value);
+        // ... other math functions
+    }
+}
+Or a modifier:
+
+Code snippet
+
+native class Math { /* ... */ }
+You'd then parse this annotation/modifier in your Lexer and Parser and store this information in the ClassDeclaration AST node, and subsequently in the ClassSymbol.
+
+Configuration File: Maintain a list of fully qualified names (FQNs) of classes that are considered C++ wrappers in a configuration file (e.g., native_classes.json). Your SemanticAnalyzer and CppGenerator would read this file. This is less ideal as it separates the metadata from the code.
+
+Implicit Naming Convention: If all your wrapper classes are in a specific namespace (e.g., nebula.native.*), you could hardcode this prefix. This is rigid.
+
+Semantic Analyzer Awareness:
+Your SemanticAnalyzer needs to understand that for wrapper classes:
+
+Method Resolution: When resolving calls to methods of a wrapper class, it should treat them as "external" or "native" methods. It primarily needs to verify the signature (name, return type, parameter types) against a known set of bindings (see step 3).
+No Body Enforcement: It shouldn't enforce that methods have bodies if they are marked as native. This is crucial for an interface-like declaration in Nebula.
+Define C++ Bindings/Mapping (External Interface Definition):
+For each native wrapper class, you need to define how its Nebula methods map to actual C++ functions or types.
+
+Metadata in Semantic Symbols: Enhance your ClassSymbol and MethodSymbol to store this binding information. For example, a MethodSymbol for a native method might have a cppFunctionName field or a cppSignature field.
+Dedicated Binding Class/Configuration: Create a separate structure or class that holds this mapping.
+Java
+
+// Example: In your semantic package
+public class NativeBinding
+{
+    public String nebulaFqn;
+    public String cppIncludePath; // e.g., <cmath>, "MyWrapper.h"
+    // Map Nebula method signature to C++ function/method name, and potentially argument transformation
+    public Map<String, String> methodMappings;
+    // You might even store a custom code snippet or a template for generation
+}
+
+// In SemanticAnalyzer, load these bindings
+private Map<String, NativeBinding> nativeBindings;
+This nativeBindings map would be populated at startup, possibly from an XML/JSON file or directly coded.
+CppGenerator Modifications:
+
+Skip Body Generation for Native Methods: When visitMethodDeclaration or visitClassDeclaration is called for a class marked as a native wrapper, you should not generate the method body (the { ... } part) in the .cpp file. Instead, you'll generate just the declaration in the header.
+
+Generate Appropriate Includes: In the header (.h) and source (.cpp) files of classes that use your native wrapper class (e.g., a user-defined class that calls Math.abs()), you need to include the correct C++ header (e.g., <cmath>). Your collectClassDependencies logic should be enhanced to understand these external includes.
+
+Generate Mapped Calls: When transpiling a CallExpression that targets a native method:
+
+Retrieve the C++ mapping from your MethodSymbol (or NativeBinding).
+Generate the C++ call using the mapped C++ function name.
+Handle potential type conversions for arguments and return values (e.g., if a Nebula int maps to long in C++).
+Example for Math.abs:
+If you have Math.abs(x) in Nebula:
+
+The SemanticAnalyzer identifies Math as a native wrapper and abs as a native method.
+It resolves that Math.abs maps to std::abs (or ::abs for global functions).
+In visitCallExpression:
+When expr.getCallee() is DotExpression targeting Math.abs.
+Check if Math is a native wrapper.
+Look up the C++ equivalent for abs (e.g., std::abs).
+Generate std::abs(x_transpiled).
+Refactor Hardcoded String, Object, Console Implementations:
+
+Instead of generateObjectCpp, generateStringCpp, generateConsoleCpp methods in CppGenerator, you should treat these as your first native wrapper classes.
+
+Create Nebula declarations for Object, String, Console similar to your String example, but without placeholder bodies (just method signatures).
+Mark them with your new @NativeWrapper annotation (or whatever mechanism you choose).
+Create corresponding NativeBinding entries for them, specifying their C++ implementations (e.g., String maps to your custom nebula::core::String C++ class, Console.println maps to std::cout << ...).
+Your CppGenerator will then use these generic native binding rules to generate their calls and includes, rather than having specific if (fqn.equals("nebula.core.String")) blocks for generation.
+Revised CppGenerator Flow (Conceptual):
+
+Java
+
+public class CppGenerator implements ASTVisitor<String> {
+    // ... existing fields ...
+    private Map<String, NativeBinding> nativeBindings; // New field
+
+    public CppGenerator(/* ... */, Map<String, NativeBinding> nativeBindings) {
+        // ...
+        this.nativeBindings = nativeBindings;
+    }
+
+    @Override
+    public String visitClassDeclaration(ClassDeclaration declaration) {
+        // ... (existing header/source setup) ...
+
+        String fqn = currentClassSymbol.getFqn();
+        boolean isNativeWrapper = nativeBindings.containsKey(fqn); // Check if it's a native wrapper
+
+        // Handle includes based on native bindings
+        if (isNativeWrapper) {
+            // Get specific includes from nativeBindings.get(fqn).cppIncludePath
+            // e.g., appendHeaderLine("#include " + nativeBindings.get(fqn).getCppIncludePath());
+        } else {
+            // Existing logic for user-defined classes and their dependencies
+            // This is where collectClassDependencies would be used
+            // Ensure collectClassDependencies also considers native class dependencies
+        }
+
+        // ... generate class boilerplate (namespace, class name, fields, destructor) ...
+
+        for (MethodDeclaration method : declaration.getMethods()) {
+            MethodSymbol resolvedMethodSymbol = method.getResolvedSymbol();
+            if (resolvedMethodSymbol == null) continue;
+
+            String returnType = toCppType(resolvedMethodSymbol.getType());
+            String methodName = resolvedMethodSymbol.getMangledName() != null ? resolvedMethodSymbol.getMangledName() : resolvedMethodSymbol.getName();
+            String params = formatCppParameters(method.getParameters());
+            boolean isStatic = resolvedMethodSymbol.isStatic();
+
+            // Header declaration is always needed
+            String modifiers = isStatic ? "static " : "";
+            // ... (virtual, const, override logic) ...
+            appendHeaderLine(modifiers + returnType + " " + methodName + "(" + params + ")" + constQualifier + overrideKeyword + ";");
+        }
+
+        // ... (footer for header) ...
+        generatedClassCodeMap.put(fqn.replace('.', '/') + ".h", currentHeaderCodeBuilder.toString());
+
+
+        // --- Generate Source (.cpp) ---
+        // ... (boilerplate includes) ...
+
+        if (!isNativeWrapper) {
+            // Generate constructors for non-native classes
+            // Generate fields initializers for non-native classes
+            // Generate methods for non-native classes (with bodies)
+            generateGenericClassCpp(declaration); // Or inline this logic
+        } else {
+            // NO custom C++ generation for native wrappers here. Their implementation
+            // is assumed to exist in pre-compiled C++ libraries or headers.
+            // You might generate very minimal boilerplate if absolutely needed,
+            // but generally, the .cpp for a native wrapper is empty or not generated by transpiler.
+            System.out.println("Skipping .cpp generation for native wrapper class: " + fqn);
+        }
+
+        // ... (footer for source) ...
+        generatedClassCodeMap.put(fqn.replace('.', '/') + ".cpp", currentClassCodeBuilder.toString());
+
+        this.currentClassSymbol = null;
+        return null;
+    }
+
+    @Override
+    public String visitCallExpression(CallExpression expr) {
+        // ... existing arg generation ...
+
+        Symbol resolvedSymbol = expr.getCallee().getResolvedSymbol();
+        if (!(resolvedSymbol instanceof MethodSymbol)) {
+            // ... error or fallback ...
+        }
+
+        MethodSymbol resolvedMethod = (MethodSymbol) resolvedSymbol;
+        ClassSymbol ownerClass = resolvedMethod.getOwnerClass(); // Get the class that owns this method
+
+        String calleeString;
+        String methodName = resolvedMethod.getMangledName() != null
+                ? resolvedMethod.getMangledName()
+                : resolvedMethod.getName();
+
+        // Check if the owner class is a native wrapper
+        if (ownerClass != null && nativeBindings.containsKey(ownerClass.getFqn())) {
+            // Retrieve the specific C++ function name from the binding
+            // This assumes a simple 1:1 mapping for demonstration.
+            // You might need more complex logic for overloaded methods or special cases.
+            NativeBinding binding = nativeBindings.get(ownerClass.getFqn());
+            String cppFunctionName = binding.methodMappings.get(resolvedMethod.getSignature()); // Or just by methodName
+
+            if (cppFunctionName == null) {
+                error(expr.getFirstToken(), "No C++ binding found for native method: " + resolvedMethod.getFqn());
+                return "/* ERROR: No native binding */ " + methodName + "(" + args + ")";
+            }
+
+            // For static methods in native wrappers, it's typically a direct call to the C++ function.
+            // For instance methods, it depends on whether the C++ implementation is a member function
+            // or a freestanding function taking an instance as its first argument.
+            if (resolvedMethod.isStatic()) {
+                calleeString = cppFunctionName;
+            } else {
+                // This is where it gets tricky for instance methods of native wrappers.
+                // If it's a member of a C++ class, you'd need:
+                // `expr.getCallee().accept(this)` would generate `this->` or `obj->`
+                // and then append the cppFunctionName.
+                // For `String.length()`, `calleeString` should become `stringInstance->raw().length()`
+                // You'd need more specific logic within the NativeBinding to define how the call is transformed.
+                // For example, the binding for String.length() might specify a "template" like "{instance}.raw().length()".
+                // This is a more advanced topic for a full binding system.
+                // For a simpler approach, assume all native wrapper methods are static free functions, or
+                // handle few specific cases like String.raw() directly.
+
+                // For your current String example, you know `length` is `_data.length()`.
+                // This means String is NOT a true "native wrapper" in the sense of pure external binding;
+                // it's a hybrid, where Nebula defines the interface, but the *transpiler* knows the C++ implementation details.
+                // If you want pure external binding, your String class would effectively be:
+                // namespace nebula.core { class String { public int length(); } }
+                // and its length() would map to `string_length(cpp_string_instance)`.
+                //
+                // For now, let's stick to the simplest where your custom String/Object/Console
+                // are still "special-cased" for generation, while a new "Math" class
+                // could be the *true* native wrapper.
+
+                // If it's an instance method of a true native wrapper,
+                // assume the native method takes the instance as its first arg, or it's a member call.
+                if (expr.getCallee() instanceof DotExpression) {
+                    DotExpression dot = (DotExpression) expr.getCallee();
+                    String leftCode = dot.getLeft().accept(this); // This is `this` or `obj`
+                    calleeString = leftCode + "->" + cppFunctionName; // e.g., `myStr->length()`
+                } else {
+                    calleeString = methodName; // Should not happen for instance methods
+                }
+            }
+        } else {
+            // Original logic for non-native methods
+            if (expr.getCallee() instanceof IdentifierExpression) {
+                if (resolvedMethod.isStatic()) {
+                    calleeString = this.currentClassSymbol.getFqn().replace(".", "::") + "::" + methodName;
+                } else {
+                    calleeString = "this->" + methodName;
+                }
+            } else if (expr.getCallee() instanceof DotExpression) {
+                DotExpression dot = (DotExpression) expr.getCallee();
+                String left = dot.getLeft().accept(this);
+                String separator = resolvedMethod.isStatic() ? "::" : "->";
+                calleeString = left + separator + methodName;
+            } else {
+                calleeString = expr.getCallee().accept(this); // Fallback
+            }
+        }
+        return calleeString + "(" + args + ")";
+    }
+
+    // You would remove or significantly simplify generateObjectCpp, generateStringCpp, generateConsoleCpp
+    // if you make them true native wrappers.
+    // generateGenericClassCpp would remain for all "normal" Nebula classes.
+}
+What about nebula.core.String?
+
+Your current String class is a hybrid. You declare it in Nebula, but its implementation is hardcoded in the CppGenerator. If you want to move String to a true native wrapper, you would:
+
+Keep the Nebula declaration for String with method signatures.
+Mark it as @NativeWrapper (or equivalent).
+Have a NativeBinding for nebula.core.String that defines how its methods map to internal std::string operations or your custom nebula::core::String C++ class (which you'd implement separately and compile into your runtime library).
+length() -> _data.length()
+operator+ -> _data + other->_data
+operator== -> _data == other->_data
+toString() -> std::make_shared<String>(this) (if String returns this in Nebula)
+hashCode() -> std::make_shared<String>(std::to_string(std::hash<std::string>{}(this->_data)))
+This means your CppGenerator would no longer have generateStringCpp. Instead, visitCallExpression (and visitBinaryExpression for operators) would consult the NativeBinding for nebula.core.String and generate the appropriate C++ code snippet.
+
+Example for Math Class (True Native Wrapper):
+
+Nebula Math.neb:
+
+Code snippet
+
+@NativeWrapper("cmath") // Or a custom path to your C++ Math header
+namespace nebula.core
+{
+    public class Math
+    {
+        // Absolute value
+        public static int abs(int value);
+        public static float abs(float value);
+        public static double abs(double value);
+
+        // Trigonometric functions
+        public static double sin(double radians);
+        public static double cos(double radians);
+        public static double tan(double radians);
+
+        // Power function
+        public static double pow(double base, double exponent);
+    }
+}
+C++ nebula/core/Math.h (manual implementation, part of your runtime):
+
+C++
+
+#ifndef NEBULA_CORE_MATH_H
+#define NEBULA_CORE_MATH_H
+
+#include <cmath> // For std::abs, std::sin, std::cos, etc.
+
+namespace nebula {
+namespace core {
+
+// This class acts as a wrapper for C++ standard math functions.
+// All methods are static as they operate on input values, not object state.
+class Math {
+public:
+    static int abs(int value);
+    static float abs(float value);
+    static double abs(double value);
+
+    static double sin(double radians);
+    static double cos(double radians);
+    static double tan(double radians);
+
+    static double pow(double base, double exponent);
+};
+
+} // namespace core
+} // namespace nebula
+
+#endif // NEBULA_CORE_MATH_H
+C++ nebula/core/Math.cpp (manual implementation, part of your runtime):
+
+C++
+
+#include "Math.h"
+
+namespace nebula {
+namespace core {
+
+int Math::abs(int value) {
+    return std::abs(value);
+}
+
+float Math::abs(float value) {
+    return std::abs(value);
+}
+
+double Math::abs(double value) {
+    return std::abs(value);
+}
+
+double Math::sin(double radians) {
+    return std::sin(radians);
+}
+
+double Math::cos(double radians) {
+    return std::cos(radians);
+}
+
+double Math::tan(double radians) {
+    return std::tan(radians);
+}
+
+double Math::pow(double base, double exponent) {
+    return std::pow(base, exponent);
+}
+
+} // namespace core
+} // namespace nebula
+///////////////////////////////////////////////////////////////////

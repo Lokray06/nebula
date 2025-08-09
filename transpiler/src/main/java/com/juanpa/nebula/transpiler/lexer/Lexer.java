@@ -77,6 +77,23 @@ public class Lexer
 		keywords.put("alias", TokenType.ALIAS); // NEW: Added alias keyword
 		keywords.put("native", TokenType.NATIVE);
 		keywords.put("wrapper", TokenType.WRAPPER);
+		keywords.put("char16", TokenType.CHAR16);
+		keywords.put("char32", TokenType.CHAR32);
+		keywords.put("int8", TokenType.INT8);
+		keywords.put("int16", TokenType.INT16);
+		keywords.put("int32", TokenType.INT32);
+		keywords.put("int64", TokenType.INT64);
+		keywords.put("uint8", TokenType.UINT8);
+		keywords.put("uint16", TokenType.UINT16);
+		keywords.put("uint32", TokenType.UINT32);
+		keywords.put("uint64", TokenType.UINT64);
+		keywords.put("ubyte", TokenType.UINT8); // Alias
+		keywords.put("ushort", TokenType.UINT16); // Alias
+		keywords.put("uint", TokenType.UINT32); // Alias
+		keywords.put("ulong", TokenType.UINT64); // Alias
+		keywords.put("short", TokenType.INT16); // Alias
+		keywords.put("long", TokenType.INT64); // Alias
+		keywords.put("null", TokenType.NULL); // Alias
 	}
 
 	/**
@@ -501,7 +518,8 @@ public class Lexer
 				try
 				{
 					addToken(TokenType.FLOAT_LITERAL, Float.parseFloat(numberStr));
-				} catch (NumberFormatException e)
+				}
+				catch (NumberFormatException e)
 				{
 					error("Invalid float literal: " + numberStr);
 					addToken(TokenType.ERROR, null);
@@ -513,7 +531,8 @@ public class Lexer
 				try
 				{
 					addToken(TokenType.DOUBLE_LITERAL, Double.parseDouble(numberStr));
-				} catch (NumberFormatException e)
+				}
+				catch (NumberFormatException e)
 				{
 					error("Invalid double literal: " + numberStr);
 					addToken(TokenType.ERROR, null);
@@ -525,7 +544,8 @@ public class Lexer
 				try
 				{
 					addToken(TokenType.DOUBLE_LITERAL, Double.parseDouble(numberStr));
-				} catch (NumberFormatException e)
+				}
+				catch (NumberFormatException e)
 				{
 					error("Invalid double literal: " + numberStr);
 					addToken(TokenType.ERROR, null);
@@ -538,7 +558,8 @@ public class Lexer
 			try
 			{
 				addToken(TokenType.INTEGER_LITERAL, Integer.parseInt(numberStr));
-			} catch (NumberFormatException e)
+			}
+			catch (NumberFormatException e)
 			{
 				error("Invalid integer literal: " + numberStr);
 				addToken(TokenType.ERROR, null);

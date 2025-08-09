@@ -9,20 +9,21 @@ package com.juanpa.nebula.transpiler.lexer;
 public enum TokenType
 {
 	// --- Keywords ---
-	CLASS, PUBLIC, PRIVATE, STATIC, VOID, STRING_KEYWORD, INT, BOOL, FLOAT, DOUBLE, BYTE, VAR,
-	NEW, THIS, IF, ELSE, FOR, WHILE, DO, EXTENDS, RETURN,
-	NAMESPACE, GET, SET, THROW, TRY, CATCH, FINALLY,
-	RESULT, OPERATOR, CHAR,
-	CONST,
-	IMPORT,
-	GLOBAL,
-	SWITCH, // Added for switch statement
-	CASE,   // Added for switch statement
-	DEFAULT, // Added for switch statement
-	IS, //For type checking
-	SUPER, // NEW: Added for super constructor calls
-	ALIAS, // NEW: Added for alias declarations
-	NATIVE, WRAPPER, // NEW: Add NATIVE and WRAPPER
+	// Access Modifiers & Class-related
+	CLASS, PUBLIC, PRIVATE, STATIC, EXTENDS, NAMESPACE, NATIVE, WRAPPER, SUPER, ALIAS, IMPORT,
+
+	// Control Flow
+	IF, ELSE, FOR, WHILE, DO, SWITCH, CASE, DEFAULT, RETURN, THROW, TRY, CATCH, FINALLY,
+
+	// Primitives & Types
+	VOID, BOOL, CHAR, CHAR16, CHAR32, BYTE, SHORT, INT, LONG, FLOAT, DOUBLE,
+	INT8, INT16, INT32, INT64,
+	UINT8, UINT16, UINT32, UINT64,
+	UBYTE, USHORT, UINT, ULONG,
+	STRING_KEYWORD, VAR, CONST, IS,
+
+	// Other
+	NEW, THIS, GLOBAL, OPERATOR, GET, SET, RESULT,
 
 	// --- Identifiers ---
 	IDENTIFIER,
@@ -37,39 +38,29 @@ public enum TokenType
 	NULL,
 
 	// --- Operators ---
+	// Arithmetic
 	PLUS, MINUS, STAR, SLASH, MODULO,
+	PLUS_PLUS, MINUS_MINUS,
+
+	// Assignment
+	ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, STAR_ASSIGN, SLASH_ASSIGN, MODULO_ASSIGN,
+
+	// Comparison & Logical
 	EQUAL_EQUAL, BANG_EQUAL,
 	LESS, GREATER, LESS_EQUAL, GREATER_EQUAL,
-	NULL_COALESCING,
-	ARROW, // NEW: Add ARROW
+	AMPERSAND, AMPERSAND_AMPERSAND, PIPE, PIPE_PIPE, BANG,
 
-	ASSIGN,
-	PLUS_ASSIGN,
-	MINUS_ASSIGN,
-	STAR_ASSIGN,
-	SLASH_ASSIGN,
-	MODULO_ASSIGN,
-
-	PLUS_PLUS,
-	MINUS_MINUS,
-
-	DOT,
-	COMMA,
-	SEMICOLON,
-	QUESTION,
-	AMPERSAND,
-	AMPERSAND_AMPERSAND,
-	PIPE,
-	PIPE_PIPE,
-	BANG,
-
-	COLON, // Added for switch statement case labels
-
+	// Other Operators
+	NULL_COALESCING, ARROW,
 
 	// --- Punctuation & Delimiters ---
+	// Grouping
 	LEFT_PAREN, RIGHT_PAREN,
 	LEFT_BRACE, RIGHT_BRACE,
 	LEFT_BRACKET, RIGHT_BRACKET,
+
+	// Separators
+	DOT, COMMA, SEMICOLON, COLON, QUESTION,
 
 	// --- Special Tokens ---
 	EOF, // End Of File

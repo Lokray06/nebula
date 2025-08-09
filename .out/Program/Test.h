@@ -5,17 +5,20 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "../nebula/core/Object.h"
-#include "../nebula/core/String.h"
-#include "../nebula/io/Console.h"
+#include <cmath>
+#include <iostream>
+
+#include "nebula/core/Object.h"
+
+namespace nebula { namespace core { class Object; class String; } }
 
 namespace Program {
 	class Test : public nebula::core::Object {
 	public:
-		virtual ~Test() = default;
-		Test();
-		static void main();
-		static int someFunc(int a);
+		
+		Test(); // Default constructor
+		
+		static void main() const;
 	}; // class Test
 } // namespace Program
 

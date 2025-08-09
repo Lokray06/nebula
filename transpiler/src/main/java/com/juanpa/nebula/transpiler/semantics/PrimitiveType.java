@@ -9,17 +9,33 @@ package com.juanpa.nebula.transpiler.semantics;
 public class PrimitiveType extends Type
 {
 	// Pre-defined singletons for common primitive types
-	public static final PrimitiveType INT = new PrimitiveType("int");
+	public static final PrimitiveType VOID = new PrimitiveType("void");
 	public static final PrimitiveType BOOL = new PrimitiveType("bool");
-	// Note: String is treated as a class type for C# like behavior, not a primitive here.
-	// This PrimitiveType.STRING instance might be a remnant or used for conceptual compatibility.
-	// For "string" keyword, it will map to Nebula.Lang.String ClassSymbol.
-	public static final PrimitiveType STRING = new PrimitiveType("string"); // This will be phased out for ClassType "nebula.core.String"
-	public static final PrimitiveType DOUBLE = new PrimitiveType("double");
-	public static final PrimitiveType FLOAT = new PrimitiveType("float");
-	public static final PrimitiveType BYTE = new PrimitiveType("byte");
 	public static final PrimitiveType CHAR = new PrimitiveType("char");
-	public static final PrimitiveType VOID = new PrimitiveType("void"); // For method return types
+	public static final PrimitiveType CHAR16 = new PrimitiveType("char16");
+	public static final PrimitiveType CHAR32 = new PrimitiveType("char32");
+	public static final PrimitiveType INT8 = new PrimitiveType("int8");
+	public static final PrimitiveType INT16 = new PrimitiveType("int16");
+	public static final PrimitiveType INT32 = new PrimitiveType("int32");
+	public static final PrimitiveType INT64 = new PrimitiveType("int64");
+	public static final PrimitiveType UINT8 = new PrimitiveType("uint8");
+	public static final PrimitiveType UINT16 = new PrimitiveType("uint16");
+	public static final PrimitiveType UINT32 = new PrimitiveType("uint32");
+	public static final PrimitiveType UINT64 = new PrimitiveType("uint64");
+	public static final PrimitiveType FLOAT = new PrimitiveType("float");
+	public static final PrimitiveType DOUBLE = new PrimitiveType("double");
+
+	// Aliases
+	public static final PrimitiveType BYTE = INT8;
+	public static final PrimitiveType SHORT = INT16;
+	public static final PrimitiveType INT = INT32;
+	public static final PrimitiveType LONG = INT64;
+	public static final PrimitiveType UBYTE = UINT8;
+	public static final PrimitiveType USHORT = UINT16;
+	public static final PrimitiveType UINT = UINT32;
+	public static final PrimitiveType ULONG = UINT64;
+
+	public static final PrimitiveType STRING = new PrimitiveType("string");
 
 	public PrimitiveType(String name)
 	{
@@ -27,117 +43,146 @@ public class PrimitiveType extends Type
 	}
 
 	@Override
+	public boolean isReferenceType()
+	{
+		// The 'null' literal is also considered a reference type for assignment compatibility
+		return this.equals(STRING);
+	}
+
+	@Override
 	public boolean isAssignableFrom(Type other)
 	{
-		if(this.equals(other))
+		// Use the base class logic to handle the null literal and self-assignment.
+		if (super.isAssignableFrom(other))
 		{
-			return true; // Same type is always assignable
-		}
-
-		// Allow implicit numeric conversions (widening conversions)
-		if(this.equals(DOUBLE) && (other.equals(INT) || other.equals(FLOAT) || other.equals(BYTE) || other.equals(CHAR)))
-		{
-			return true;
-		}
-		if(this.equals(FLOAT) && (other.equals(INT) || other.equals(BYTE) || other.equals(CHAR)))
-		{
-			return true;
-		}
-		if(this.equals(INT) && (other.equals(BYTE) || other.equals(CHAR)))
-		{
-			return true;
-		}
-		// Explicit char to byte or vice versa is not typically implicit, but for simplicity:
-		// If char is 16-bit unsigned and byte is 8-bit signed, this is a narrowing conversion.
-		// Assuming char and byte are both 8-bit for simplicity, or char is compatible with int.
-		if(this.equals(CHAR) && other.equals(BYTE))
-		{ // Byte -> Char (potential data loss if char is unsigned and byte is signed)
-			return true;
-		}
-		if(this.equals(BYTE) && other.equals(CHAR))
-		{ // Char -> Byte (definite data loss potential)
 			return true;
 		}
 
-		// Null can be assigned to any ClassType or ArrayType, not PrimitiveType.
-		if(other instanceof NullType)
+		if (!(other instanceof PrimitiveType))
 		{
 			return false;
 		}
 
-		// String is generally not implicitly convertible from other primitives directly here.
-		// 'bool' is not convertible from other primitives.
-		// 'void' is only for return types, not assignable.
-		return false;
-	}
+		// --- The rest of your existing widening conversion rules ---
 
-	/**
-	 * Checks if this primitive type is assignable to the target type.
-	 * Implements widening conversions for primitive types (e.g., int -> double).
-	 *
-	 * @param targetType The type to which this type is being assigned.
-	 * @return True if this primitive type can be assigned to targetType, false otherwise.
-	 */
-	@Override
-	public boolean isAssignableTo(Type targetType)
-	{
-		if(super.isAssignableTo(targetType))
-			return true; // Handles self-assignment and ErrorType
-
-		if(!(targetType instanceof PrimitiveType))
-			return false; // Can only assign primitives to primitives (or special cases like String from char[])
-
-		PrimitiveType target = (PrimitiveType) targetType;
-
-		// Widening conversions (example rules, adjust as per Nebula spec)
-		if(this == INT)
+		// A DOUBLE can be assigned from any other numeric type
+		if (this.equals(DOUBLE))
 		{
-			return target == FLOAT || target == DOUBLE || target == BYTE; // int can widen to float, double, byte
+			return other.isNumeric() || other.equals(FLOAT);
 		}
-		if(this == BYTE)
+
+		// A FLOAT can be assigned from any integer or char type
+		if (this.equals(FLOAT))
 		{
-			return target == INT || target == FLOAT || target == DOUBLE; // byte can widen to int, float, double
+			return other.isNumeric() && !(other.equals(DOUBLE)); // All numerics except double
 		}
-		if(this == FLOAT)
+
+		// An INT64 can be assigned from any smaller integer or char type
+		if (this.equals(INT64) || this.equals(LONG))
 		{
-			return target == DOUBLE; // float can widen to double
+			return other.equals(INT32) || other.equals(INT) ||
+					other.equals(INT16) || other.equals(SHORT) ||
+					other.equals(INT8) || other.equals(BYTE) ||
+					other.equals(UINT32) || other.equals(UINT) ||
+					other.equals(UINT16) || other.equals(USHORT) ||
+					other.equals(UINT8) || other.equals(UBYTE) ||
+					other.equals(CHAR32) || other.equals(CHAR16) || other.equals(CHAR);
 		}
-		// bool, char, void usually have no implicit widening conversions to other primitives
-		return false;
+
+		// An INT32 can be assigned from smaller signed/unsigned integers and chars
+		if (this.equals(INT32) || this.equals(INT))
+		{
+			return other.equals(INT16) || other.equals(SHORT) ||
+					other.equals(INT8) || other.equals(BYTE) ||
+					other.equals(UINT16) || other.equals(USHORT) ||
+					other.equals(UINT8) || other.equals(UBYTE) ||
+					other.equals(CHAR16) || other.equals(CHAR);
+		}
+
+		if (this.equals(INT16) || this.equals(SHORT))
+		{
+			return other.equals(INT8) || other.equals(BYTE) ||
+					other.equals(UINT8) || other.equals(UBYTE) ||
+					other.equals(CHAR);
+		}
+
+		// Unsigned integer widening
+		if (this.equals(UINT64) || this.equals(ULONG))
+		{
+			return other.equals(UINT32) || other.equals(UINT) ||
+					other.equals(UINT16) || other.equals(USHORT) ||
+					other.equals(UINT8) || other.equals(UBYTE) ||
+					other.equals(CHAR32) || other.equals(CHAR16) || other.equals(CHAR);
+		}
+
+		if (this.equals(UINT32) || this.equals(UINT))
+		{
+			return other.equals(UINT16) || other.equals(USHORT) ||
+					other.equals(UINT8) || other.equals(UBYTE) ||
+					other.equals(CHAR16) || other.equals(CHAR);
+		}
+
+		if (this.equals(UINT16) || this.equals(USHORT))
+		{
+			return other.equals(UINT8) || other.equals(UBYTE) ||
+					other.equals(CHAR);
+		}
+
+		// Char widening
+		if (this.equals(CHAR32))
+		{
+			return other.equals(CHAR16) || other.equals(CHAR);
+		}
+		if (this.equals(CHAR16))
+		{
+			return other.equals(CHAR);
+		}
+
+		return false; // No other implicit conversions are allowed
 	}
 
 	@Override
 	public boolean isCompatibleWith(Type other)
 	{
-		if(this.equals(other))
+		// A type is always compatible with itself
+		if (this.equals(other))
 		{
 			return true;
 		}
 
-		// Numeric types are generally compatible for arithmetic operations
-		if(this.isNumeric() && other.isNumeric())
+		// Only allow compatibility with other primitive types
+		if (!(other instanceof PrimitiveType))
+		{
+			return false;
+		}
+
+		// Check if this type can be implicitly converted to the other type
+		return this.isAssignableTo(other);
+	}
+
+	@Override
+	public boolean isAssignableTo(Type targetType)
+	{
+		if (super.isAssignableTo(targetType))
 		{
 			return true;
 		}
 
-		// Boolean types are compatible only with other booleans for logical ops
-		if(this.equals(BOOL) && other.equals(BOOL))
+		// Handle widening conversions
+		if (targetType instanceof PrimitiveType)
 		{
-			return true;
+			return targetType.isAssignableFrom(this);
 		}
 
-		// Void is never compatible for operations
 		return false;
 	}
 
 	@Override
 	public boolean isNumeric()
 	{
-		return this.equals(INT) || this.equals(FLOAT) || this.equals(DOUBLE) || this.equals(BYTE) || this.equals(CHAR);
+		return this.equals(INT8) || this.equals(INT16) || this.equals(INT32) || this.equals(INT64)
+				|| this.equals(UINT8) || this.equals(UINT16) || this.equals(UINT32) || this.equals(UINT64)
+				|| this.equals(FLOAT) || this.equals(DOUBLE)
+				|| this.equals(CHAR) || this.equals(CHAR16) || this.equals(CHAR32);
 	}
-
-	// This is a singleton pattern, but without preventing instantiation
-	// to allow for potential future extensions where PrimitiveType might need
-	// slight variations or custom creation (though not recommended for basic primitives).
-	// A more strict singleton would have private constructor and public static final instances only.
 }

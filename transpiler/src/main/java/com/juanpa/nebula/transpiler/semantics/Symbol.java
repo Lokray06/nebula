@@ -53,7 +53,7 @@ public abstract class Symbol
 		return type;
 	}
 
-	public void setType(ClassType type)
+	public void setType(Type type)
 	{
 		this.type = type;
 	}

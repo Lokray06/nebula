@@ -21,16 +21,6 @@ public abstract class Type
 	}
 
 	/**
-	 * Checks if this type is assignable from another type.
-	 * This method should be overridden by concrete type implementations to define
-	 * type compatibility rules.
-	 *
-	 * @param other The other type to check for assignability.
-	 * @return True if 'other' can be assigned to this type, false otherwise.
-	 */
-	public abstract boolean isAssignableFrom(Type other);
-
-	/**
 	 * Checks if this type is compatible with another type for binary operations.
 	 * This method should be overridden by concrete type implementations.
 	 *
@@ -62,7 +52,7 @@ public abstract class Type
 	 */
 	public static Type getWiderNumericType(Type type1, Type type2)
 	{
-		if(!type1.isNumeric() || !type2.isNumeric())
+		if (!type1.isNumeric() || !type2.isNumeric())
 		{
 			return ErrorType.INSTANCE; // Not numeric, or one is not numeric
 		}
@@ -70,16 +60,26 @@ public abstract class Type
 		// Simple hierarchy: byte -> char -> int -> float -> double
 		// For more complex hierarchy, you might use an enum for type ranks.
 
-		if(type1.equals(PrimitiveType.DOUBLE) || type2.equals(PrimitiveType.DOUBLE))
+		if (type1.equals(PrimitiveType.DOUBLE) || type2.equals(PrimitiveType.DOUBLE))
+		{
 			return PrimitiveType.DOUBLE;
-		if(type1.equals(PrimitiveType.FLOAT) || type2.equals(PrimitiveType.FLOAT))
+		}
+		if (type1.equals(PrimitiveType.FLOAT) || type2.equals(PrimitiveType.FLOAT))
+		{
 			return PrimitiveType.FLOAT;
-		if(type1.equals(PrimitiveType.INT) || type2.equals(PrimitiveType.INT))
+		}
+		if (type1.equals(PrimitiveType.INT) || type2.equals(PrimitiveType.INT))
+		{
 			return PrimitiveType.INT;
-		if(type1.equals(PrimitiveType.CHAR) || type2.equals(PrimitiveType.CHAR))
+		}
+		if (type1.equals(PrimitiveType.CHAR) || type2.equals(PrimitiveType.CHAR))
+		{
 			return PrimitiveType.CHAR;
-		if(type1.equals(PrimitiveType.BYTE) || type2.equals(PrimitiveType.BYTE))
+		}
+		if (type1.equals(PrimitiveType.BYTE) || type2.equals(PrimitiveType.BYTE))
+		{
 			return PrimitiveType.BYTE;
+		}
 
 		// Should not be reached if both are numeric and handled above
 		return ErrorType.INSTANCE;
@@ -95,26 +95,36 @@ public abstract class Type
 	 */
 	public static boolean isComparable(Type type1, Type type2)
 	{
-		if(type1.equals(type2))
+		if (type1.equals(type2))
+		{
 			return true; // Same type is always comparable
+		}
 
 		// Null is comparable with any reference type
-		if(type1 instanceof NullType && (type2 instanceof ClassType || type2 instanceof ArrayType))
+		if (type1 instanceof NullType && (type2 instanceof ClassType || type2 instanceof ArrayType))
+		{
 			return true;
-		if(type2 instanceof NullType && (type1 instanceof ClassType || type1 instanceof ArrayType))
+		}
+		if (type2 instanceof NullType && (type1 instanceof ClassType || type1 instanceof ArrayType))
+		{
 			return true;
+		}
 
 		// Numeric types are comparable with other numeric types
-		if(type1.isNumeric() && type2.isNumeric())
+		if (type1.isNumeric() && type2.isNumeric())
+		{
 			return true;
+		}
 
 		// Boolean types are comparable only with other boolean types
-		if(type1.equals(PrimitiveType.BOOL) && type2.equals(PrimitiveType.BOOL))
+		if (type1.equals(PrimitiveType.BOOL) && type2.equals(PrimitiveType.BOOL))
+		{
 			return true;
+		}
 
 		// Class types can be compared if they are in the same inheritance hierarchy (simplified here)
 		// For a full implementation, you'd check if one is assignable from the other.
-		if(type1 instanceof ClassType && type2 instanceof ClassType)
+		if (type1 instanceof ClassType && type2 instanceof ClassType)
 		{
 			return type1.isAssignableFrom(type2) || type2.isAssignableFrom(type1);
 		}
@@ -132,15 +142,51 @@ public abstract class Type
 	public boolean isAssignableTo(Type targetType)
 	{
 		// A type is always assignable to itself.
-		if(this.equals(targetType))
+		if (this.equals(targetType))
 		{
 			return true;
 		}
 		// Error types can be assigned to anything (or nothing) to prevent cascades.
-		if(this instanceof ErrorType || targetType instanceof ErrorType)
+		if (this instanceof ErrorType || targetType instanceof ErrorType)
 		{
 			return true; // Allows semantic analysis to continue
 		}
+		return false;
+	}
+
+	/**
+	 * Checks if this type is a reference type (i.e., can hold a null value).
+	 * Non-primitive types are reference types by default.
+	 *
+	 * @return true if this type is a reference type, false otherwise.
+	 */
+	public boolean isReferenceType()
+	{
+		// Any type that is not an instance of PrimitiveType is a reference type.
+		return !(this instanceof PrimitiveType);
+	}
+
+	/**
+	 * Checks if this type is assignable from another type.
+	 * This is the primary method for type compatibility checks.
+	 *
+	 * @param other The type to check for assignability.
+	 * @return True if 'other' can be assigned to this type, false otherwise.
+	 */
+	public boolean isAssignableFrom(Type other)
+	{
+		// A type is always assignable from itself.
+		if (this.equals(other))
+		{
+			return true;
+		}
+
+		// The null literal can be assigned to any reference type.
+		if (other instanceof NullType)
+		{
+			return this.isReferenceType();
+		}
+
 		return false;
 	}
 
@@ -153,10 +199,14 @@ public abstract class Type
 	@Override
 	public boolean equals(Object o)
 	{
-		if(this == o)
+		if (this == o)
+		{
 			return true;
-		if(o == null || getClass() != o.getClass())
+		}
+		if (o == null || getClass() != o.getClass())
+		{
 			return false;
+		}
 		Type type = (Type) o;
 		return name.equals(type.name);
 	}

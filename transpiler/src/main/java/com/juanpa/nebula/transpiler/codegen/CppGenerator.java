@@ -35,8 +35,6 @@ public class CppGenerator implements ASTVisitor<String>
 	private int indentLevel = 0;
 
 	private ClassSymbol currentClassSymbol;
-	private MethodSymbol currentMethodSymbol; // Keep track of current method for return type lookup
-	private boolean inStaticContext; // Not explicitly used but kept from original structure
 
 	// Changed to use the FQN directly, which is built up during namespace traversal.
 	private String currentNamespacePrefix;
@@ -55,8 +53,6 @@ public class CppGenerator implements ASTVisitor<String>
 		this.currentClassCodeBuilder = null;
 		this.currentHeaderCodeBuilder = null;
 		this.currentClassSymbol = null;
-		this.currentMethodSymbol = null;
-		this.inStaticContext = false;
 		this.currentNamespacePrefix = "";
 		this.generatedClassCodeMap = new HashMap<>();
 
@@ -249,13 +245,54 @@ public class CppGenerator implements ASTVisitor<String>
 	{
 		if (type instanceof PrimitiveType)
 		{
-			if (type.equals(PrimitiveType.INT))
-			{
-				return "int";
-			}
+			// Handle explicit-width primitives first for clarity and precision
 			if (type.equals(PrimitiveType.BOOL))
 			{
 				return "bool";
+			}
+			if (type.equals(PrimitiveType.CHAR))
+			{
+				return "char";
+			}
+			if (type.equals(PrimitiveType.CHAR16))
+			{
+				return "char16_t";
+			}
+			if (type.equals(PrimitiveType.CHAR32))
+			{
+				return "char32_t";
+			}
+			if (type.equals(PrimitiveType.INT8))
+			{
+				return "int8_t";
+			}
+			if (type.equals(PrimitiveType.INT16))
+			{
+				return "int16_t";
+			}
+			if (type.equals(PrimitiveType.INT32))
+			{
+				return "int32_t";
+			}
+			if (type.equals(PrimitiveType.INT64))
+			{
+				return "int64_t";
+			}
+			if (type.equals(PrimitiveType.UINT8))
+			{
+				return "uint8_t";
+			}
+			if (type.equals(PrimitiveType.UINT16))
+			{
+				return "uint16_t";
+			}
+			if (type.equals(PrimitiveType.UINT32))
+			{
+				return "uint32_t";
+			}
+			if (type.equals(PrimitiveType.UINT64))
+			{
+				return "uint64_t";
 			}
 			if (type.equals(PrimitiveType.FLOAT))
 			{
@@ -265,17 +302,42 @@ public class CppGenerator implements ASTVisitor<String>
 			{
 				return "double";
 			}
-			if (type.equals(PrimitiveType.BYTE))
-			{
-				return "char"; // Assuming byte maps to char in C++
-			}
-			if (type.equals(PrimitiveType.CHAR))
-			{
-				return "char";
-			}
 			if (type.equals(PrimitiveType.VOID))
 			{
 				return "void";
+			}
+			// Handle aliases by mapping them to their explicit-width types
+			if (type.equals(PrimitiveType.BYTE))
+			{
+				return "int8_t";
+			}
+			if (type.equals(PrimitiveType.SHORT))
+			{
+				return "int16_t";
+			}
+			if (type.equals(PrimitiveType.INT))
+			{
+				return "int32_t";
+			}
+			if (type.equals(PrimitiveType.LONG))
+			{
+				return "int64_t";
+			}
+			if (type.equals(PrimitiveType.UBYTE))
+			{
+				return "uint8_t";
+			}
+			if (type.equals(PrimitiveType.USHORT))
+			{
+				return "uint16_t";
+			}
+			if (type.equals(PrimitiveType.UINT))
+			{
+				return "uint32_t";
+			}
+			if (type.equals(PrimitiveType.ULONG))
+			{
+				return "uint64_t";
 			}
 		}
 		else if (type instanceof ClassType)
@@ -287,9 +349,9 @@ public class CppGenerator implements ASTVisitor<String>
 		}
 		else if (type instanceof ArrayType)
 		{
-			// *** MODIFIED ***: Correctly handle nested arrays.
+			// All arrays are treated as nullable shared_ptrs to a vector.
 			ArrayType arrayType = (ArrayType) type;
-			return "std::vector<" + toCppType(arrayType.getElementType()) + ">";
+			return "std::shared_ptr<std::vector<" + toCppType(arrayType.getElementType()) + ">>";
 		}
 		else if (type instanceof NullType)
 		{
@@ -599,6 +661,62 @@ public class CppGenerator implements ASTVisitor<String>
 	}
 
 	@Override
+	public String visitCastExpression(CastExpression expression)
+	{
+		Type castType = expression.getResolvedType();
+		Type exprType = expression.getExpression().getResolvedType();
+		String expr = expression.getExpression().accept(this);
+
+		ClassSymbol stringClass = declaredClasses.get("nebula.core.String");
+
+		// Check for any primitive type cast to a String.
+		if (stringClass != null && castType.equals(stringClass.getType()) && (exprType instanceof PrimitiveType))
+		{
+			PrimitiveType primitiveExprType = (PrimitiveType) exprType;
+
+			// Special case for casting a character primitive to a String.
+			// This must be handled separately from other numeric types.
+			if (primitiveExprType.equals(PrimitiveType.CHAR) ||
+					primitiveExprType.equals(PrimitiveType.CHAR16) ||
+					primitiveExprType.equals(PrimitiveType.CHAR32))
+			{
+				return "std::make_shared<nebula::core::String>(std::string(1, " + expr + "))";
+			}
+			// Special case for casting a boolean primitive to a String.
+			else if (primitiveExprType.equals(PrimitiveType.BOOL))
+			{
+				return "std::make_shared<nebula::core::String>(" + expr + " ? \"true\" : \"false\")";
+			}
+			// General case for casting any other numeric primitive to a String.
+			else if (primitiveExprType.isNumeric())
+			{
+				return "std::make_shared<nebula::core::String>(std::to_string(" + expr + "))";
+			}
+			// Fallback for any other primitive cast to a string (e.g., void)
+			else
+			{
+				// We can't handle other cases and must generate a compilation error here.
+				// Or, return a default empty string for now.
+				return "std::make_shared<nebula::core::String>(\"UNKNOWN\")";
+			}
+		}
+
+		// Default behavior for all other casts (class to class, numeric to numeric, etc.),
+		// which is a direct static_cast.
+		String cppType = toCppType(castType);
+		return "static_cast<" + cppType + ">(" + expr + ")";
+	}
+
+	@Override
+	public String visitTernaryExpression(TernaryExpression expression)
+	{
+		String condition = expression.getCondition().accept(this);
+		String thenBranch = expression.getThenBranch().accept(this);
+		String elseBranch = expression.getElseBranch().accept(this);
+		return "(" + condition + " ? " + thenBranch + " : " + elseBranch + ")";
+	}
+
+	@Override
 	public String visitBlockStatement(BlockStatement statement)
 	{
 		for (Statement stmt : statement.getStatements())
@@ -687,19 +805,38 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitVariableDeclarationStatement(VariableDeclarationStatement statement)
 	{
-		// *** MODIFIED ***: Use the new helper to resolve the full type, including arrays.
+		// Use the new helper to resolve the full type, including arrays.
 		Type varType = resolveTypeFromToken(statement.getTypeToken(), statement.getArrayRank());
 		String cppType = statement.getTypeToken().getType() == TokenType.VAR ? "auto" : toCppType(varType);
 
 		String declaration = cppType + " " + statement.getName().getLexeme();
 		if (statement.getInitializer() != null)
 		{
-			declaration += " = " + statement.getInitializer().accept(this);
+			// New logic: Check for empty array initializer.
+			if (statement.getInitializer() instanceof ArrayInitializerExpression)
+			{
+				ArrayInitializerExpression arrayExpr = (ArrayInitializerExpression) statement.getInitializer();
+				if (arrayExpr.getElements().isEmpty())
+				{
+					// Special case: An empty array initializer should be nullptr.
+					declaration += " = nullptr";
+				}
+				else
+				{
+					// Non-empty array initializer, visit normally.
+					declaration += " = " + statement.getInitializer().accept(this);
+				}
+			}
+			else
+			{
+				// Other initializers (e.g., new expression, null literal, etc.)
+				declaration += " = " + statement.getInitializer().accept(this);
+			}
 		}
 		else if (varType instanceof ClassType || varType instanceof ArrayType)
 		{
-			// Default-initialize shared_ptrs to nullptr and vectors to empty
-			declaration += "{}";
+			// Default-initialize shared_ptrs to nullptr.
+			declaration += " = nullptr";
 		}
 		return declaration + ";";
 	}
@@ -733,18 +870,9 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitArrayCreationExpression(ArrayCreationExpression expression)
 	{
-		Type resolvedType = expression.getResolvedType();
-		if (resolvedType == null || !(resolvedType instanceof ArrayType))
-		{
-			error(expression.getFirstToken(), "Internal codegen error: Array creation expression has no resolved type.");
-			return "{}"; // Return empty C++ initializer list as an error fallback
-		}
-
-		ArrayType arrayType = (ArrayType) resolvedType;
-		String elementCppType = toCppType(arrayType.getElementType());
+		String elementType = toCppType(expression.getResolvedType());
 		String sizeExpr = expression.getSizeExpression().accept(this);
-
-		return "std::vector<" + elementCppType + ">(" + sizeExpr + ")";
+		return "std::make_shared<std::vector<" + elementType + ">>(" + sizeExpr + ")";
 	}
 
 	/**
@@ -754,11 +882,27 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitArrayInitializerExpression(ArrayInitializerExpression expression)
 	{
-		List<String> elementCodes = expression.getElements().stream()
-				.map(element -> element.accept(this))
-				.collect(Collectors.toList());
+		Type resolvedType = expression.getResolvedType();
+		if (!(resolvedType instanceof ArrayType))
+		{
+			error(expression.getFirstToken(), "Array initializer expression does not resolve to an array type.");
+			return "nullptr /* ERROR: Invalid array initializer */";
+		}
 
-		return "{" + String.join(", ", elementCodes) + "}";
+		ArrayType arrayType = (ArrayType) resolvedType;
+		String elementType = toCppType(arrayType.getElementType());
+
+		// Handle the case of an empty array initializer specifically.
+		if (expression.getElements().isEmpty())
+		{
+			return "std::make_shared<std::vector<" + elementType + ">>()";
+		}
+
+		String elements = expression.getElements().stream()
+				.map(expr -> expr.accept(this))
+				.collect(Collectors.joining(", "));
+
+		return "std::make_shared<std::vector<" + elementType + ">>(std::vector<" + elementType + ">{" + elements + "})";
 	}
 
 	private void generateObjectCpp(ClassDeclaration declaration)
@@ -1097,16 +1241,27 @@ public class CppGenerator implements ASTVisitor<String>
 		Type leftType = expression.getLeft().getResolvedType();
 		Type rightType = expression.getRight().getResolvedType();
 
-		// If the left side is a class type, it's a shared_ptr.
+		// Handle null comparisons for reference types without dereferencing.
+		if ((op.equals("==") || op.equals("!=")) && (leftType.isReferenceType() || rightType.isReferenceType()))
+		{
+			String cxxRight = right;
+			if (rightType instanceof NullType)
+			{
+				cxxRight = "nullptr";
+			}
+			return "(" + left + " " + op + " " + cxxRight + ")";
+		}
+
+		// If the left side is a class or array type, it's a shared_ptr.
 		// Member operators require the object to be dereferenced.
-		if (leftType instanceof ClassType)
+		if (leftType instanceof ClassType || leftType instanceof ArrayType)
 		{
 			// For any class type, dereference the left operand to access member operators.
 			String leftOperand = "*" + left;
 
 			// String concatenation requires special handling for the right operand,
 			// which may need to be converted to a string.
-			if (op.equals("+") && ((ClassType) leftType).getFqn().equals("nebula.core.String"))
+			if (op.equals("+") && leftType instanceof ClassType && ((ClassType) leftType).getFqn().equals("nebula.core.String"))
 			{
 				String rightOperandForConcat = right;
 
@@ -1126,7 +1281,7 @@ public class CppGenerator implements ASTVisitor<String>
 					}
 					else if (rightType.equals(PrimitiveType.CHAR) ||
 							rightType.equals(PrimitiveType.BYTE))
-					{ // Assuming BYTE maps to char
+					{
 						// For char/byte, convert to string containing single character
 						rightOperandForConcat = "std::make_shared<nebula::core::String>(std::string(1, " + right + "))";
 					}
@@ -1139,12 +1294,11 @@ public class CppGenerator implements ASTVisitor<String>
 						rightOperandForConcat = right + "->toString()";
 					}
 				}
-				// If rightType is NullType, 'right' will be "nullptr", which operator+ will handle.
 
-				return "(" + leftOperand + " + " + rightOperandForConcat + ")";
+				return "(*" + left + " + " + rightOperandForConcat + ")";
 			}
 
-			// For all other class types (like Vector2) and operators, use the dereferenced
+			// For all other class types and operators, use the dereferenced
 			// left operand. The right operand is assumed to be of a compatible type.
 			return "(" + leftOperand + " " + op + " " + right + ")";
 		}
@@ -1182,7 +1336,7 @@ public class CppGenerator implements ASTVisitor<String>
 			// Output 'true' or 'false' directly
 			return value.toString().toLowerCase();
 		}
-		if ("null".equals(expression.getLiteralToken().getLexeme()))
+		if (expression.getLiteralToken().getType() == TokenType.NULL)
 		{
 			return "nullptr";
 		}
@@ -1367,11 +1521,10 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitArrayAccessExpression(ArrayAccessExpression expression)
 	{
-		String arrayCode = expression.getArray().accept(this);
-		String indexCode = expression.getIndex().accept(this);
-
-		// For std::vector, C++ uses the standard [] operator for access.
-		return arrayCode + "[" + indexCode + "]";
+		String arrayExpr = expression.getArray().accept(this);
+		String indexExpr = expression.getIndex().accept(this);
+		// Handle access to the raw vector through the shared_ptr.
+		return "(*" + arrayExpr + ")[" + indexExpr + "]";
 	}
 
 	@Override

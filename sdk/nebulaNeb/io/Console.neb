@@ -1,25 +1,28 @@
 import nebula.core.Object;
+import nebula.core.String;
 
 namespace nebula.io
 {
-    class Console
+    /// Provides static methods for standard console input and output.
+    /// This is a native class that wraps C++ iostream functionality.
+    native class Console
     {
-        //All these should be compiled as a wrapper of sdt::cout 
-        public static void print(Object anything) { /* ... */ }
-        public static void print(string anyString) { /* ... */ }
-        public static void print(char character) { /* ... */ }
-        public static void print(int number) { /* ... */ }
-        public static void print(bool booleanValue) { /* ... */ }
-        public static void print(float floatValue) { /* ... */ }
-        public static void print(double doubleValue) { /* ... */ }
+        // --- Print Methods ---
+        public static wrapper void print(Object anything) -> "std::cout << (${anything} ? ${anything}->toString()->_data : \"null\")";
+        public static wrapper void print(string anyString) -> "std::cout << (${anyString} ? ${anyString}->_data : \"null\")";
+        public static wrapper void print(char character) -> "std::cout << ${character}";
+        public static wrapper void print(int number) -> "std::cout << ${number}";
+        public static wrapper void print(bool booleanValue) -> "std::cout << std::boolalpha << ${booleanValue}";
+        public static wrapper void print(float floatValue) -> "std::cout << ${floatValue}";
+        public static wrapper void print(double doubleValue) -> "std::cout << ${doubleValue}";
 
-        //All these should be compiled as a wrapper of sdt::cout std::endl
-        public static void println(Object anything) { /* ... */ }
-        public static void println(string anyString) { /* ... */ }
-        public static void println(char character) { /* ... */ }
-        public static void println(int number) { /* ... */ }
-        public static void println(bool booleanValue) { /* ... */ }
-        public static void println(float floatValue) { /* ... */ }
-        public static void println(double doubleValue) { /* ... */ }
+        // --- Println Methods ---
+        public static wrapper void println(Object anything) -> "std::cout << (${anything} ? ${anything}->toString()->_data : \"null\") << std::endl";
+        public static wrapper void println(string anyString) -> "std::cout << (${anyString} ? ${anyString}->_data : \"null\") << std::endl";
+        public static wrapper void println(char character) -> "std::cout << ${character} << std::endl";
+        public static wrapper void println(int number) -> "std::cout << ${number} << std::endl";
+        public static wrapper void println(bool booleanValue) -> "std::cout << std::boolalpha << ${booleanValue} << std::endl";
+        public static wrapper void println(float floatValue) -> "std::cout << ${floatValue} << std::endl";
+        public static wrapper void println(double doubleValue) -> "std::cout << ${doubleValue} << std::endl";
     }
 }

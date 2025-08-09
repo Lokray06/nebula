@@ -36,14 +36,18 @@ public class Main
 		{
 			if (args[0].equals("--compile-ndk"))
 			{
-				if (args.length < 5 || !args[1].equals("--output-symbols") || !args[3].equals("--output-cpp"))
+				// Update the usage message to include the new argument
+				if (args.length < 7 || !args[1].equals("--ndk-source") || !args[3].equals("--output-symbols") || !args[5].equals("--output-cpp"))
 				{
-					System.err.println("Usage: nbcc --compile-ndk --output-symbols <file.nsf> --output-cpp <dir>");
+					System.err.println("Usage: nbcc --compile-ndk --ndk-source <ndk_src_dir> --output-symbols <file.nsf> --output-cpp <dir>");
 					return;
 				}
-				Path nsfFile = Paths.get(args[2]);
-				Path cppDir = Paths.get(args[4]);
-				compileNdk(nsfFile, cppDir, config); // Pass config
+				Path ndkSourceDir = Paths.get(args[2]);
+				Path nsfFile = Paths.get(args[4]);
+				Path cppDir = Paths.get(args[6]);
+
+				// Pass the new NDK source path to the compilation method
+				compileNdk(ndkSourceDir, nsfFile, cppDir, config);
 				return;
 			}
 		}
@@ -51,7 +55,7 @@ public class Main
 		if (args.length == 0)
 		{
 			System.err.println("Usage: nbcc <entrypoint.neb>");
-			System.err.println("   or: nbcc --compile-ndk --output-symbols <file.nsf> --output-cpp <dir>");
+			System.err.println("   or: nbcc --compile-ndk --ndk-source <ndk_src_dir> --output-symbols <file.nsf> --output-cpp <dir>");
 			return;
 		}
 
@@ -157,12 +161,6 @@ public class Main
 		System.out.println("\nTranspilation process finished.");
 	}
 
-	/**
-	 * +++ NEW METHOD +++
-	 * Loads compiler configuration from a properties file.
-	 *
-	 * @return A CompilerConfig object with loaded settings or defaults.
-	 */
 	private static CompilerConfig loadConfiguration()
 	{
 		Properties props = new Properties();
@@ -193,18 +191,19 @@ public class Main
 		return new CompilerConfig(props);
 	}
 
-	private static void compileNdk(Path nsfOutputFile, Path cppOutputDir, CompilerConfig config)
+	private static void compileNdk(Path ndkSourceDir, Path nsfOutputFile, Path cppOutputDir, CompilerConfig config)
 	{
 		System.out.println("--- Compiling NDK symbols to: " + nsfOutputFile.toAbsolutePath() + " ---");
 		System.out.println("--- Generating NDK C++ code to: " + cppOutputDir.toAbsolutePath() + " ---");
 		ErrorReporter errorReporter = new ErrorReporter();
 
-		List<Path> sourceRoots = List.of(Paths.get("./sdk"));
+		// Use the provided ndkSourceDir to load files
+		List<Path> sourceRoots = List.of(ndkSourceDir);
 		ProjectLoader loader = new ProjectLoader(sourceRoots, errorReporter, null);
 		Program ndkAst;
 		try
 		{
-			ndkAst = loader.loadAllFilesFromRoot(Paths.get("./sdk"));
+			ndkAst = loader.loadAllFilesFromRoot(ndkSourceDir);
 			if (ndkAst == null || errorReporter.hasErrors())
 			{
 				System.err.println("Failed to parse NDK source files.");

@@ -5,15 +5,19 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "../core/Object.h"
-#include "../core/String.h"
+#include <cmath>
+#include <iostream>
+
+#include "nebula/core/Object.h"
+
+namespace nebula { namespace core { class Object; class String; } }
 
 namespace nebula {
 	namespace io {
 		class Console : public nebula::core::Object {
 		public:
-			virtual ~Console() = default;
-			Console();
+			
+			
 			static void print(const std::shared_ptr<nebula::core::Object>& anything);
 			static void print(const std::shared_ptr<nebula::core::String>& anyString);
 			static void print(char character);

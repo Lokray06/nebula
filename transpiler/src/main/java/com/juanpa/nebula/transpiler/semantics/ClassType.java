@@ -69,18 +69,20 @@ public class ClassType extends Type
 	@Override
 	public boolean isAssignableTo(Type targetType)
 	{
-		if(super.isAssignableTo(targetType))
+		if (super.isAssignableTo(targetType))
+		{
 			return true; // Handles self-assignment and ErrorType
+		}
 
 		// A ClassType instance (non-null object) cannot be assigned TO NullType.
 		// Only NullType.INSTANCE can be assigned to NullType.
-		if(targetType instanceof NullType)
+		if (targetType instanceof NullType)
 		{
 			return false;
 		}
 
 		// A ClassType can only be assigned to another ClassType or Object.
-		if(!(targetType instanceof ClassType))
+		if (!(targetType instanceof ClassType))
 		{
 			return false;
 		}
@@ -90,14 +92,14 @@ public class ClassType extends Type
 		// Check if 'this' is the same class as targetType, or a subclass of targetType.
 		// Traverse up the inheritance hierarchy of 'this' class.
 		ClassType currentTypeInHierarchy = this;
-		while(currentTypeInHierarchy != null)
+		while (currentTypeInHierarchy != null)
 		{
-			if(currentTypeInHierarchy.equals(targetClassType))
+			if (currentTypeInHierarchy.equals(targetClassType))
 			{
 				return true; // Found a match in the inheritance chain
 			}
 			// Move to the superclass. Assuming superClassType is properly set during analysis.
-			if(currentTypeInHierarchy.getSuperClassType() instanceof ClassType)
+			if (currentTypeInHierarchy.getSuperClassType() instanceof ClassType)
 			{
 				currentTypeInHierarchy = (ClassType) currentTypeInHierarchy.getSuperClassType();
 			}
@@ -115,19 +117,19 @@ public class ClassType extends Type
 	@Override
 	public boolean isAssignableFrom(Type other)
 	{
-		if(this.equals(other))
+		if (this.equals(other))
 		{
 			return true; // Same class type is always assignable
 		}
 
 		// Allow assigning null to any class type (reference type)
-		if(other instanceof NullType)
-		{ // Assuming a NullType exists for `null` literal
+		if (other instanceof NullType)
+		{
 			return true;
 		}
 
 		// For class types, check inheritance hierarchy
-		if(other instanceof ClassType)
+		if (other instanceof ClassType)
 		{
 			ClassType otherClass = (ClassType) other;
 			// A full implementation would traverse the 'extends' chain of otherClass.classSymbol
@@ -135,7 +137,7 @@ public class ClassType extends Type
 			// E.g., `this` is `Object`, `other` is `MyClass`, then `MyClass` is assignable to `Object`.
 			// If `otherClass.classSymbol` exists, and it is a subclass of `this.classSymbol`.
 			// This would require a `isSubclassOf` method on ClassSymbol.
-			if(otherClass.classSymbol != null && this.classSymbol != null)
+			if (otherClass.classSymbol != null && this.classSymbol != null)
 			{
 				// Assuming `isSubclassOf` correctly traverses inheritance
 				// For now, simplify to check if they are the same ClassSymbol
@@ -145,13 +147,13 @@ public class ClassType extends Type
 				// unless `other` is `NullType`.
 				// More robust: 'otherClass' must be 'this' or a subclass of 'this'.
 				ClassType currentOtherInHierarchy = otherClass;
-				while(currentOtherInHierarchy != null)
+				while (currentOtherInHierarchy != null)
 				{
-					if(currentOtherInHierarchy.equals(this))
+					if (currentOtherInHierarchy.equals(this))
 					{
 						return true;
 					}
-					if(currentOtherInHierarchy.getSuperClassType() instanceof ClassType)
+					if (currentOtherInHierarchy.getSuperClassType() instanceof ClassType)
 					{
 						currentOtherInHierarchy = (ClassType) currentOtherInHierarchy.getSuperClassType();
 					}
@@ -169,7 +171,7 @@ public class ClassType extends Type
 	@Override
 	public boolean isCompatibleWith(Type other)
 	{
-		if(this.equals(other))
+		if (this.equals(other))
 		{
 			return true; // Same class type is compatible
 		}
@@ -189,18 +191,18 @@ public class ClassType extends Type
 	 */
 	public MethodSymbol lookupMethod(String methodName, int numArgs)
 	{
-		if(this.classSymbol == null || this.classSymbol.getClassScope() == null)
+		if (this.classSymbol == null || this.classSymbol.getClassScope() == null)
 		{
 			return null;
 		}
 		// Iterate through all symbols in the class scope to find a matching method.
-		for(Symbol symbol : this.classSymbol.getClassScope().symbols.values())
+		for (Symbol symbol : this.classSymbol.getClassScope().symbols.values())
 		{
-			if(symbol instanceof MethodSymbol)
+			if (symbol instanceof MethodSymbol)
 			{
 				MethodSymbol method = (MethodSymbol) symbol;
 				// Check name and parameter count
-				if(method.getName().equals(methodName) && method.getParameterTypes().size() == numArgs)
+				if (method.getName().equals(methodName) && method.getParameterTypes().size() == numArgs)
 				{
 					// In a real compiler, you would also check parameter types for exact match (overloading)
 					return method;
@@ -219,7 +221,7 @@ public class ClassType extends Type
 	 */
 	public MethodSymbol lookupConstructor(List<Type> argTypes)
 	{
-		if(this.classSymbol == null || this.classSymbol.getClassScope() == null)
+		if (this.classSymbol == null || this.classSymbol.getClassScope() == null)
 		{
 			return null;
 		}
@@ -229,9 +231,9 @@ public class ClassType extends Type
 				.filter(s -> s.isConstructor() && s.getName().equals(this.getName())) // Ensure it's a constructor with matching name
 				.collect(Collectors.toList());
 
-		for(MethodSymbol constructor : constructors)
+		for (MethodSymbol constructor : constructors)
 		{
-			if(constructor.matchesArguments(argTypes)) // Use the matchesArguments helper on MethodSymbol
+			if (constructor.matchesArguments(argTypes)) // Use the matchesArguments helper on MethodSymbol
 			{
 				return constructor;
 			}
@@ -243,16 +245,20 @@ public class ClassType extends Type
 	@Override
 	public boolean equals(Object o)
 	{
-		if(this == o)
-			return true;
-		// Specifically allow ClassType to equal PrimitiveType.STRING if their FQNs match
-		// This handles cases where 'string' keyword maps to Nebula.Lang.String class.
-		if(o instanceof PrimitiveType && ((PrimitiveType) o).getName().equals("String") && this.getFqn().equals("nebula.core.String"))
+		if (this == o)
 		{
 			return true;
 		}
-		if(o == null || getClass() != o.getClass())
+		// Specifically allow ClassType to equal PrimitiveType.STRING if their FQNs match
+		// This handles cases where 'string' keyword maps to Nebula.Lang.String class.
+		if (o instanceof PrimitiveType && ((PrimitiveType) o).getName().equals("String") && this.getFqn().equals("nebula.core.String"))
+		{
+			return true;
+		}
+		if (o == null || getClass() != o.getClass())
+		{
 			return false;
+		}
 		ClassType classType = (ClassType) o;
 		return fqn.equals(classType.fqn); // Equality based on fully qualified name
 	}

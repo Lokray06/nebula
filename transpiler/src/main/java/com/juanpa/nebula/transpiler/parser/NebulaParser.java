@@ -14,6 +14,7 @@ import com.juanpa.nebula.transpiler.ast.expressions.*;
 import com.juanpa.nebula.transpiler.ast.statements.*;
 import com.juanpa.nebula.transpiler.lexer.Token;
 import com.juanpa.nebula.transpiler.lexer.TokenType;
+import com.juanpa.nebula.transpiler.semantics.PrimitiveType;
 import com.juanpa.nebula.transpiler.util.ErrorReporter;
 
 import java.util.ArrayList;
@@ -228,7 +229,8 @@ public class NebulaParser
 					error(peek(), "Expected an 'import' directive or a namespace declaration at the top level.");
 					synchronize();
 				}
-			} catch (SyntaxError e)
+			}
+			catch (SyntaxError e)
 			{
 				synchronize();
 			}
@@ -1062,14 +1064,30 @@ public class NebulaParser
 		return assignment();
 	}
 
-	private Expression assignment() throws SyntaxError
+	private Expression ternary() throws SyntaxError
 	{
 		Expression expr = or();
+
+		if (match(TokenType.QUESTION))
+		{
+			Expression thenBranch = expression(); // Use expression() here
+			consume(TokenType.COLON, "Expect ':' for ternary operator.");
+			Expression elseBranch = expression(); // And here as well
+			expr = new TernaryExpression(expr, thenBranch, elseBranch);
+		}
+
+		return expr;
+	}
+
+
+	private Expression assignment() throws SyntaxError
+	{
+		Expression expr = ternary(); // Call the new ternary() method
 
 		if (match(TokenType.ASSIGN, TokenType.PLUS_ASSIGN, TokenType.MINUS_ASSIGN, TokenType.STAR_ASSIGN, TokenType.SLASH_ASSIGN, TokenType.MODULO_ASSIGN))
 		{
 			Token operator = previous();
-			Expression value = assignment();
+			Expression value = assignment(); // Right-associative
 
 			if (expr instanceof IdentifierExpression || expr instanceof DotExpression || expr instanceof ArrayAccessExpression)
 			{
@@ -1271,13 +1289,24 @@ public class NebulaParser
 	{
 		if (match(TokenType.LEFT_BRACE))
 		{
-			Token leftBrace = previous();  // already consumed
+			Token leftBrace = previous();
 			return arrayInitializer(leftBrace);
 		}
-		if (match(TokenType.INTEGER_LITERAL, TokenType.STRING_LITERAL, TokenType.CHAR_LITERAL, TokenType.BOOLEAN_LITERAL, TokenType.FLOAT_LITERAL, TokenType.DOUBLE_LITERAL, TokenType.NULL))
+
+		// Check for literals that have a value
+		if (match(TokenType.INTEGER_LITERAL, TokenType.STRING_LITERAL, TokenType.FLOAT_LITERAL, TokenType.DOUBLE_LITERAL, TokenType.CHAR_LITERAL))
 		{
+			// Use the constructor for literals with a value
 			return new LiteralExpression(previous().getLiteral(), previous());
 		}
+
+		// Check for literals that are just tokens (null, true, false)
+		if (match(TokenType.NULL, TokenType.BOOLEAN_LITERAL))
+		{
+			// Use the new constructor that takes only a token
+			return new LiteralExpression(previous());
+		}
+
 		if (match(TokenType.IDENTIFIER))
 		{
 			return new IdentifierExpression(previous());
@@ -1289,11 +1318,6 @@ public class NebulaParser
 		if (match(TokenType.NEW))
 		{
 			Token newKeyword = previous();
-			// For 'new' expressions, we'll parse the base type first.
-			// Array creation (e.g., `new int[5]`) will be handled by looking for `[` directly after the type.
-			// Object creation (e.g., `new MyClass()`) will be handled by looking for `(` directly after the type.
-
-			// This *advances* the base type (e.g., 'float' in 'new float[1]')
 			Token baseTypeToken = advance();
 
 			if (baseTypeToken == null || !isTypeToken(baseTypeToken.getType()))
@@ -1301,39 +1325,29 @@ public class NebulaParser
 				throw error(peek(), "Expected a type name after 'new' keyword.");
 			}
 
-			int arrayRankForNew = 0; // This will store the explicit array dimension for 'new Type[size]'
+			int arrayRankForNew = 0;
 
-			// Check if it's an array creation like `new float[...]`
 			if (check(TokenType.LEFT_BRACKET))
 			{
 				Token leftBracket = consume(TokenType.LEFT_BRACKET, "Expected '[' for array size in 'new' expression.");
 				Expression sizeExpr = expression();
 				Token rightBracket = consume(TokenType.RIGHT_BRACKET, "Expected ']' after array size in 'new' expression.");
-				arrayRankForNew = 1; // Mark as a 1-dimensional array creation for now
-
-				// You'll need to extend this for multi-dimensional array creation like `new int[5][2]`
-				// while(check(TokenType.LEFT_BRACKET) && check(1, TokenType.RIGHT_BRACKET)) {
-				//     consume(TokenType.LEFT_BRACKET, "Expected '[' for additional array dimension.");
-				//     consume(TokenType.RIGHT_BRACKET, "Expected ']' for additional array dimension.");
-				//     arrayRankForNew++;
-				// }
-
+				arrayRankForNew = 1;
 				return new ArrayCreationExpression(newKeyword, baseTypeToken, arrayRankForNew, sizeExpr);
 			}
 			else if (match(TokenType.LEFT_PAREN))
 			{ // new MyClass(...)
-				Token paren = previous(); // This is the '(' token
+				Token paren = previous();
 				List<Expression> arguments = new ArrayList<>();
 				if (!check(TokenType.RIGHT_PAREN))
 				{
 					do
 					{
 						arguments.add(expression());
-					}
-					while (match(TokenType.COMMA));
+					} while (match(TokenType.COMMA));
 				}
 				Token rightParen = consume(TokenType.RIGHT_PAREN, "Expected ')' after constructor's arguments.");
-				Expression classNameExpr = new IdentifierExpression(baseTypeToken); // baseTypeToken is the class name
+				Expression classNameExpr = new IdentifierExpression(baseTypeToken);
 				return new NewExpression(newKeyword, classNameExpr, paren, arguments);
 			}
 			else
@@ -1341,15 +1355,69 @@ public class NebulaParser
 				throw error(peek(), "Expected '(' for constructor call or '[' for array creation after 'new' type.");
 			}
 		}
+
 		if (match(TokenType.LEFT_PAREN))
 		{
 			Token leftParen = previous();
+
+			// AMBIGUITY RESOLUTION for casts vs. grouped expressions
+			if (isTypeToken(peek().getType()))
+			{
+				int lookahead = current;
+				// Skip potential type name
+				lookahead++;
+				// Skip potential array brackets `[]`
+				while (lookahead + 1 < tokens.size() &&
+						tokens.get(lookahead).getType() == TokenType.LEFT_BRACKET &&
+						tokens.get(lookahead + 1).getType() == TokenType.RIGHT_BRACKET)
+				{
+					lookahead += 2;
+				}
+
+				if (lookahead < tokens.size() && tokens.get(lookahead).getType() == TokenType.RIGHT_PAREN)
+				{
+					// This is a cast. Parse the type and then the expression to be casted.
+					TypeSpecifier typeSpec = parseTypeSpecifier();
+					consume(TokenType.RIGHT_PAREN, "Expect ')' after type in cast expression.");
+					Expression right = unary();
+					return new CastExpression(typeSpec.baseType(), typeSpec.rank(), right);
+				}
+			}
+
+			// If it's not a cast, it's a grouped expression.
 			Expression expr = expression();
 			consume(TokenType.RIGHT_PAREN, "Expected ')' after expression.");
 			return new GroupingExpression(leftParen, expr);
 		}
 
 		throw error(peek(), "Expected expression.");
+	}
+
+	/**
+	 * Helper to check if a token type is a binary operator.
+	 * Used for cast vs. grouped expression disambiguation.
+	 */
+	private boolean isBinaryOperator(TokenType type)
+	{
+		switch (type)
+		{
+			case PLUS:
+			case MINUS:
+			case STAR:
+			case SLASH:
+			case MODULO:
+			case EQUAL_EQUAL:
+			case BANG_EQUAL:
+			case LESS:
+			case GREATER:
+			case LESS_EQUAL:
+			case GREATER_EQUAL:
+			case AMPERSAND_AMPERSAND:
+			case PIPE_PIPE:
+				return true;
+			default:
+				return false;
+		}
 	}
 
 	/**
@@ -1452,16 +1520,45 @@ public class NebulaParser
 
 
 	/**
-	 * Helper method to determine if a TokenType represents a valid type (e.g., int, String, custom class, or 'var').
+	 * Helper method to determine if a TokenType represents a valid type name.
 	 *
 	 * @param type The TokenType to check.
-	 * @return True if the type is a valid data type (including 'var'), false otherwise.
+	 * @return True if the token is a valid type keyword.
 	 */
 	private boolean isTypeToken(TokenType type)
 	{
-		return type == TokenType.VOID || type == TokenType.STRING_KEYWORD || type == TokenType.INT ||
-				type == TokenType.BOOL || type == TokenType.FLOAT || type == TokenType.DOUBLE ||
-				type == TokenType.BYTE || type == TokenType.CHAR || type == TokenType.IDENTIFIER || type == TokenType.VAR;
+		switch (type)
+		{
+			case VOID:
+			case BOOL:
+			case CHAR:
+			case CHAR16:
+			case CHAR32:
+			case BYTE:
+			case SHORT:
+			case INT:
+			case LONG:
+			case FLOAT:
+			case DOUBLE:
+			case INT8:
+			case INT16:
+			case INT32:
+			case INT64:
+			case UINT8:
+			case UINT16:
+			case UINT32:
+			case UINT64:
+			case UBYTE:
+			case USHORT:
+			case UINT:
+			case ULONG:
+			case STRING_KEYWORD:
+			case VAR:
+			case IDENTIFIER: // For class types
+				return true;
+			default:
+				return false;
+		}
 	}
 
 	/**

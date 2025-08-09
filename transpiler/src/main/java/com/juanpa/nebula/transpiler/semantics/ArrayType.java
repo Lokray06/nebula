@@ -65,8 +65,8 @@ public class ArrayType extends Type
 			return true; // Same array type is always assignable
 		}
 		// Allow assigning null to any array type
-		if(other instanceof NullType)
-		{ // Assuming a NullType exists for `null` literal
+		if (other instanceof NullType)
+		{
 			return true;
 		}
 		// Allow assigning an array of a more specific type to a more general type (covariance, if supported)

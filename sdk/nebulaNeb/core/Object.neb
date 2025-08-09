@@ -1,24 +1,20 @@
 namespace nebula.core
 {
-    // The root of all Nebula classes. All classes implicitly inherit from Object.
-    class Object
+    /// The root of all Nebula classes. All classes implicitly inherit from Object.
+    /// This is a native class, meaning its implementation is provided in C++.
+    native class Object
     {
-        public bool operator==(Object other)
-        {
-            if(other is Object)//is is a keyword that compares the types of both objects
-            {
-                return this == (other); // Default reference comparison
-            }
-        }
+        /// Compares this object to another. For the base Object class, this performs
+        /// a reference (pointer) comparison.
+        /// The C++ target '${this}' will be replaced by the 'this' pointer.
+        public wrapper bool operator==(Object other) -> "this == ${other}.get()";
 
-        public string hashCode()
-        {
-            return "0"; // Return the actual hashcode (maybe the instance's memory address)
-        }
+        /// Returns a string representation of the object's memory address.
+        /// This serves as the default hash code.
+        public wrapper string hashCode() -> "std::make_shared<nebula::core::String>([](const void* p) { std::stringstream ss; ss << p; return ss.str(); }(this))";
 
-        public string toString()
-        {
-            return hashCode(); //The default implementation is this, but can be overriden
-        }
+        /// Returns a string that represents the current object.
+        /// By default, this is the object's hash code.
+        public wrapper string toString() -> "this->hashCode()";
     }
 }
