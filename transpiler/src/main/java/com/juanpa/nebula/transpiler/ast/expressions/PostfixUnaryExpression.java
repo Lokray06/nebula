@@ -15,7 +15,6 @@ public class PostfixUnaryExpression implements Expression
 {
 	private final Expression operand; // The expression being operated on (must be assignable)
 	private final Token operator;    // The postfix operator token (e.g., PLUS_PLUS, MINUS_MINUS)
-	private Type resolvedType; // NEW: Field for resolved type
 
 	public PostfixUnaryExpression(Expression operand, Token operator)
 	{
@@ -74,6 +73,5 @@ public class PostfixUnaryExpression implements Expression
 	@Override
 	public void setResolvedType(Type resolvedType)
 	{
-		this.resolvedType = resolvedType;
 	}
 }

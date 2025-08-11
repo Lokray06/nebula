@@ -32,6 +32,7 @@ public class IsExpression implements Expression
 		return left;
 	}
 
+	@SuppressWarnings("unused")
 	public Token getIsKeyword()
 	{
 		return isKeyword;

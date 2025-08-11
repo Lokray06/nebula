@@ -8,7 +8,6 @@ import com.juanpa.nebula.transpiler.lexer.TokenType;
 import com.juanpa.nebula.transpiler.semantics.Symbol;
 import com.juanpa.nebula.transpiler.semantics.Type;
 import com.juanpa.nebula.transpiler.semantics.PrimitiveType;
-import com.juanpa.nebula.transpiler.semantics.ClassType;
 import com.juanpa.nebula.transpiler.semantics.NullType;
 
 public class LiteralExpression implements Expression
@@ -35,26 +34,17 @@ public class LiteralExpression implements Expression
 
 	private Type determineLiteralType(Token literalToken)
 	{
-		switch (literalToken.getType())
+		return switch (literalToken.getType())
 		{
-			case INTEGER_LITERAL:
-				return PrimitiveType.INT;
-			case STRING_LITERAL:
-				// Correctly resolve String type later in semantic analysis
-				return null;
-			case CHAR_LITERAL:
-				return PrimitiveType.CHAR;
-			case BOOLEAN_LITERAL:
-				return PrimitiveType.BOOL;
-			case FLOAT_LITERAL:
-				return PrimitiveType.FLOAT;
-			case DOUBLE_LITERAL:
-				return PrimitiveType.DOUBLE;
-			case NULL:
-				return NullType.INSTANCE;
-			default:
-				return null;
-		}
+			case INTEGER_LITERAL -> PrimitiveType.INT;
+			case STRING_LITERAL ->  null; // Correctly resolve String type later in semantic analysis
+			case CHAR_LITERAL -> PrimitiveType.CHAR;
+			case BOOLEAN_LITERAL -> PrimitiveType.BOOL;
+			case FLOAT_LITERAL -> PrimitiveType.FLOAT;
+			case DOUBLE_LITERAL -> PrimitiveType.DOUBLE;
+			case NULL -> NullType.INSTANCE;
+			default -> null;
+		};
 	}
 
 	public Object getValue()

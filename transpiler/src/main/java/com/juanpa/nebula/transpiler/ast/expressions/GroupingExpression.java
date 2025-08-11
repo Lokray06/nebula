@@ -16,7 +16,6 @@ public class GroupingExpression implements Expression
 {
 	private final Expression expression; // The inner expression being grouped
 	private final Token leftParen;      // The opening parenthesis token
-	private Type resolvedType; // NEW: Field for resolved type
 
 	/**
 	 * Constructs a new GroupingExpression.
@@ -39,6 +38,7 @@ public class GroupingExpression implements Expression
 		return expression;
 	}
 
+	@SuppressWarnings("unused")
 	public Token getLeftParen()
 	{
 		return leftParen;
@@ -71,7 +71,6 @@ public class GroupingExpression implements Expression
 	@Override
 	public void setResolvedType(Type resolvedType)
 	{
-		this.resolvedType = resolvedType;
 	}
 
 	@Override

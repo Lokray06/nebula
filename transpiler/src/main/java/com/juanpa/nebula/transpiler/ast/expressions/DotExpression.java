@@ -33,6 +33,7 @@ public class DotExpression implements Expression
 		return left;
 	}
 
+	@SuppressWarnings("unused")
 	public Token getDotToken()
 	{
 		return dotToken;

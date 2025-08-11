@@ -7,7 +7,6 @@ import com.juanpa.nebula.transpiler.ast.ASTVisitor;
 import com.juanpa.nebula.transpiler.ast.expressions.IdentifierExpression;
 import com.juanpa.nebula.transpiler.lexer.Token;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 

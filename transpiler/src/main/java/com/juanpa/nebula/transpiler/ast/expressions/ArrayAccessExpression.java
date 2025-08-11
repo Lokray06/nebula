@@ -33,6 +33,7 @@ public class ArrayAccessExpression implements Expression
 		return index;
 	}
 
+	@SuppressWarnings("unused")
 	public Token getRightBracket()
 	{
 		return rightBracket;
