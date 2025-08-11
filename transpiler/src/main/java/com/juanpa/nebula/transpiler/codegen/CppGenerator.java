@@ -1450,14 +1450,13 @@ public class CppGenerator implements ASTVisitor<String>
 		Symbol symbol = expr.getResolvedSymbol();
 		Type leftType = expr.getLeft().getResolvedType();
 
-		// +++ THIS IS THE FIX +++
-		// When accessing '.size' on an array, cast the result to an int.
+		// When accessing '.size' on an array, which is a shared_ptr to a vector.
 		if (leftType instanceof ArrayType)
 		{
 			if (memberName.equals("size"))
 			{
-				// Cast to int to resolve ambiguity with C++ function overloads.
-				return "static_cast<int>(" + left + ".size())";
+				// FIX: Use the arrow operator '->' to call size() on the underlying vector.
+				return "static_cast<int>(" + left + "->size())";
 			}
 		}
 
@@ -1470,7 +1469,7 @@ public class CppGenerator implements ASTVisitor<String>
 			return left + "::" + memberName;
 		}
 
-		// For regular member access, it's a shared_ptr, so use ->
+		// For regular member access on a shared_ptr, use ->
 		return left + "->" + memberName;
 	}
 
