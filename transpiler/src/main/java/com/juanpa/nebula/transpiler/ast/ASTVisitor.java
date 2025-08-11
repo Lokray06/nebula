@@ -48,6 +48,9 @@ public interface ASTVisitor<R>
 
 	R visitForStatement(ForStatement statement);
 
+	R visitForEachStatement(ForEachStatement statement); // ADD THIS LINE
+
+
 	R visitReturnStatement(ReturnStatement statement);
 
 	R visitVariableDeclarationStatement(VariableDeclarationStatement statement);

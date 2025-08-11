@@ -10,17 +10,7 @@ import com.juanpa.nebula.transpiler.ast.declarations.MethodDeclaration;
 import com.juanpa.nebula.transpiler.ast.declarations.NamespaceDeclaration;
 import com.juanpa.nebula.transpiler.ast.declarations.ImportDirective;
 import com.juanpa.nebula.transpiler.ast.expressions.*;
-import com.juanpa.nebula.transpiler.ast.statements.BlockStatement;
-import com.juanpa.nebula.transpiler.ast.statements.ConstructorChainingCallStatement;
-import com.juanpa.nebula.transpiler.ast.statements.ExpressionStatement;
-import com.juanpa.nebula.transpiler.ast.statements.ForStatement;
-import com.juanpa.nebula.transpiler.ast.statements.IfStatement;
-import com.juanpa.nebula.transpiler.ast.statements.ReturnStatement;
-import com.juanpa.nebula.transpiler.ast.statements.Statement;
-import com.juanpa.nebula.transpiler.ast.statements.SwitchCase;
-import com.juanpa.nebula.transpiler.ast.statements.SwitchStatement;
-import com.juanpa.nebula.transpiler.ast.statements.VariableDeclarationStatement;
-import com.juanpa.nebula.transpiler.ast.statements.WhileStatement;
+import com.juanpa.nebula.transpiler.ast.statements.*;
 import com.juanpa.nebula.transpiler.lexer.Token;
 import com.juanpa.nebula.transpiler.lexer.TokenType;
 import com.juanpa.nebula.transpiler.util.ErrorReporter;
@@ -1467,6 +1457,62 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			statement.getIncrement().accept(this);
 		}
 
+		statement.getBody().accept(this);
+
+		exitScope();
+		return PrimitiveType.VOID;
+	}
+
+	@Override
+	public Type visitForEachStatement(ForEachStatement statement)
+	{
+		Type collectionType = statement.getCollection().accept(this);
+		if (collectionType instanceof ErrorType)
+		{
+			return ErrorType.INSTANCE;
+		}
+
+		Type elementType;
+		ClassSymbol stringClass = declaredClasses.get("nebula.core.String");
+
+		// Check if the collection is an array or a string
+		if (collectionType instanceof ArrayType)
+		{
+			elementType = ((ArrayType) collectionType).getElementType();
+		}
+		else if (stringClass != null && collectionType.equals(stringClass.getType()))
+		{
+			elementType = PrimitiveType.CHAR; // Iterating over a string yields characters
+		}
+		else
+		{
+			error(statement.getCollection().getFirstToken(), "foreach loop can only iterate over an array or a string.");
+			return ErrorType.INSTANCE;
+		}
+
+		// Enter a new scope for the loop body
+		SymbolTable loopScope = new SymbolTable(currentScope, "ForEachLoop");
+		enterScope(loopScope);
+
+		// Resolve the declared type of the loop variable
+		Type declaredVarType = resolveType(statement.getTypeToken(), statement.getArrayRank());
+		if (declaredVarType instanceof ErrorType)
+		{
+			exitScope();
+			return ErrorType.INSTANCE;
+		}
+
+		// Check if the element type is assignable to the loop variable type
+		if (!elementType.isAssignableTo(declaredVarType))
+		{
+			error(statement.getVariableName(), "Cannot convert from element type '" + elementType.getName() + "' to loop variable type '" + declaredVarType.getName() + "'.");
+		}
+
+		// Define the loop variable in the new scope. It's considered initialized.
+		VariableSymbol loopVar = new VariableSymbol(statement.getVariableName().getLexeme(), declaredVarType, statement.getVariableName(), true, false, false, false);
+		currentScope.define(loopVar);
+
+		// Visit the loop body
 		statement.getBody().accept(this);
 
 		exitScope();

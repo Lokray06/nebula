@@ -750,6 +750,10 @@ public class NebulaParser
 		{
 			return forStatement();
 		}
+		if (match(TokenType.FOREACH)) // ADD THIS BLOCK
+		{
+			return forEachStatement();
+		}
 		if (match(TokenType.RETURN))
 		{
 			return returnStatement();
@@ -994,6 +998,36 @@ public class NebulaParser
 		return new ForStatement(initializer, condition, increment, body);
 	}
 
+	/**
+	 * Parses a foreach loop statement.
+	 * Grammar: `FOREACH '(' TYPE IDENTIFIER 'in' EXPRESSION ')' BLOCK_STATEMENT`
+	 *
+	 * @return A ForEachStatement AST node.
+	 * @throws SyntaxError if a syntax error occurs.
+	 */
+	private ForEachStatement forEachStatement() throws SyntaxError
+	{
+		Token foreachKeyword = previous();
+		consume(TokenType.LEFT_PAREN, "Expected '(' after 'foreach'.");
+
+		// Parse the type of the loop variable (e.g., "int" or "String[]")
+		TypeSpecifier typeSpec = parseTypeSpecifier();
+
+		// Parse the loop variable name
+		Token variableName = consume(TokenType.IDENTIFIER, "Expected loop variable name.");
+
+		// Consume the 'in' keyword
+		consume(TokenType.IN, "Expected 'in' keyword in foreach loop.");
+
+		// Parse the collection expression
+		Expression collection = expression();
+
+		consume(TokenType.RIGHT_PAREN, "Expected ')' after foreach loop condition.");
+
+		BlockStatement body = blockStatement();
+
+		return new ForEachStatement(foreachKeyword, typeSpec.baseType(), typeSpec.rank(), variableName, collection, body);
+	}
 
 	/**
 	 * Parses a return statement.

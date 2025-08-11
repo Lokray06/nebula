@@ -51,6 +51,8 @@ public class Lexer
 		keywords.put("if", TokenType.IF);
 		keywords.put("else", TokenType.ELSE);
 		keywords.put("for", TokenType.FOR);
+		keywords.put("foreach", TokenType.FOREACH);
+		keywords.put("in", TokenType.IN);
 		keywords.put("while", TokenType.WHILE);
 		keywords.put("do", TokenType.DO);
 		keywords.put("extends", TokenType.EXTENDS);

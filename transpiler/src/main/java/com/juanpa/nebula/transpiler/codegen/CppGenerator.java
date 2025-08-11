@@ -795,6 +795,45 @@ public class CppGenerator implements ASTVisitor<String>
 		return null;
 	}
 
+	// ADD THIS ENTIRE METHOD
+	@Override
+	public String visitForEachStatement(ForEachStatement statement)
+	{
+		// 1. Get C++ code for the collection expression
+		String collectionCode = statement.getCollection().accept(this);
+
+		// 2. Resolve the loop variable's type to its C++ equivalent
+		Type nebulaVarType = resolveTypeFromToken(statement.getTypeToken(), statement.getArrayRank());
+		String cppVarType = toCppType(nebulaVarType);
+
+		// 3. Get the loop variable's name
+		String varName = statement.getVariableName().getLexeme();
+
+		// 4. Determine the iterable expression in C++
+		Type collectionType = statement.getCollection().getResolvedType();
+		String iterableExpression;
+
+		if (collectionType instanceof ArrayType)
+		{
+			// Arrays are shared_ptr<vector>, so dereference it for the loop
+			iterableExpression = "(*" + collectionCode + ")";
+		}
+		else
+		{
+			// Strings are shared_ptr<nebula::core::String>, use raw() to get the std::string
+			iterableExpression = collectionCode + "->raw()";
+		}
+
+		// 5. Build and append the C++ range-based for loop
+		appendLine("for (" + cppVarType + " const& " + varName + " : " + iterableExpression + ") {");
+		indent();
+		statement.getBody().accept(this);
+		dedent();
+		appendLine("}");
+
+		return null; // The method appends code directly
+	}
+
 	@Override
 	public String visitReturnStatement(ReturnStatement statement)
 	{
