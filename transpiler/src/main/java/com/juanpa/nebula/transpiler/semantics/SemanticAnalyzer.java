@@ -64,6 +64,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 	public void analyze(Program program)
 	{
+		// NEW: Initialize static properties for all primitive types.
+		// This must be done before any semantic analysis begins.
+		PrimitiveType.initializeStaticProperties();
+
 		// Setup global scope
 		SymbolTable globalScope = new SymbolTable(null, "Global");
 		enterScope(globalScope);
@@ -352,8 +356,9 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	 */
 	private void defineGlobalType(Type type)
 	{
-		currentScope.define(new Symbol(type.getName(), type, null, true)
-		{ // Pass true for isPublic
+		// Use type.name which holds the alias.
+		currentScope.define(new Symbol(type.name, type, null, true)
+		{
 			// Anonymous class for simple type symbols
 			@Override
 			public String toString()
@@ -1682,15 +1687,6 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			error(statement.getName(), "Variable '" + statement.getName().getLexeme() + "' is already defined in this scope.");
 		}
 
-		if (declaredType.isReferenceType())
-		{
-			System.out.println(declaredType + " is a reference type");
-		}
-		else
-		{
-			System.out.println(declaredType + " isnt a reference type");
-		}
-
 		return PrimitiveType.VOID;
 	}
 
@@ -2160,6 +2156,22 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return ErrorType.INSTANCE;
 		}
 
+		// NEW: Handle static property access on primitive types (e.g., uint16.max)
+		// This happens when the left side is an identifier that resolves to a Type itself.
+		if (leftResolvedSymbol != null && leftResolvedSymbol.getType() instanceof PrimitiveType)
+		{
+			PrimitiveType primitiveLeftType = (PrimitiveType) leftResolvedSymbol.getType();
+			String memberName = expression.getMemberName().getLexeme();
+			Symbol propertySymbol = primitiveLeftType.resolveStaticProperty(memberName);
+
+			if (propertySymbol != null)
+			{
+				expression.setResolvedSymbol(propertySymbol);
+				expression.setResolvedType(propertySymbol.getType());
+				return propertySymbol.getType();
+			}
+		}
+
 		//Handle array.length
 		if (leftType instanceof ArrayType)
 		{
@@ -2180,6 +2192,22 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 		}
 
+		// NEW: Handle instance property 'size' for strings
+		ClassSymbol stringClass = declaredClasses.get("nebula.core.String");
+		if (stringClass != null && leftType.equals(stringClass.getType()))
+		{
+			String memberName = expression.getMemberName().getLexeme();
+			if (memberName.equals("length"))
+			{
+				// The native String class has a length() method. We can create a synthetic property
+				// 'size' that will be mapped to length() in the CppGenerator.
+				VariableSymbol sizeSymbol = new VariableSymbol("size", PrimitiveType.INT, expression.getMemberName(), true, false, true, true);
+				expression.setResolvedSymbol(sizeSymbol);
+				expression.setResolvedType(PrimitiveType.INT);
+				return PrimitiveType.INT;
+			}
+		}
+
 		ClassSymbol containerClassSymbol = null;
 		Symbol resolvedMemberSymbol = null; // The symbol representing the member (field, method, nested class)
 
@@ -2193,26 +2221,6 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			// This path is for cases like `Namespace.Class.member` where `Namespace.Class`
 			// was resolved as a ClassSymbol in `visitIdentifierExpression` or a previous `visitDotExpression`.
 			containerClassSymbol = (ClassSymbol) leftResolvedSymbol;
-		}
-		// Removed `leftResolvedSymbol instanceof NamespaceSymbol` path as we're not using NamespaceSymbol.
-		// If leftType is null and leftResolvedSymbol is also null (and not a ClassSymbol), it implies
-		// the left side is an unresolvable part of an FQN or an invalid expression.
-		else if (leftType instanceof ArrayType)
-		{
-			String memberName = expression.getMemberName().getLexeme();
-			if (memberName.equals("length"))
-			{
-				VariableSymbol lengthSymbol = new VariableSymbol("length", PrimitiveType.INT, expression.getMemberName(), true, true, true, true);
-				expression.setResolvedSymbol(lengthSymbol); // Set resolved symbol for 'length'
-				expression.setResolvedType(PrimitiveType.INT);
-				return PrimitiveType.INT;
-			}
-			else
-			{
-				error(expression.getMemberName(), "Member '" + memberName + "' not found for array type. Only 'length' is supported.");
-				expression.setResolvedType(ErrorType.INSTANCE);
-				return ErrorType.INSTANCE;
-			}
 		}
 		else
 		{
@@ -2785,29 +2793,9 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		return declaredClasses; // Or Collections.unmodifiableMap(declaredClasses) for immutability
 	}
 
-	// You might also need these, depending on CppGenerator's needs:
-	public Map<String, ClassSymbol> getImportedClasses()
-	{
-		return importedClasses;
-	}
-
-	public List<String> getImportedNamespaces()
-	{
-		return importedNamespaces;
-	}
-
-	public Map<String, Symbol> getImportedStaticMembers()
-	{
-		return importedStaticMembers;
-	}
-
-	public List<ClassSymbol> getImportedStaticClasses()
-	{
-		return importedStaticClasses;
-	}
-
 	/**
-	 * Helper method to resolve a method call, handling overloads based on return type context.
+	 * Helper method to resolve a method call, handling overloads by finding the
+	 * most specific match and then using return type context as a fallback.
 	 */
 	private MethodSymbol resolveMethodCall(Token errorToken, ClassSymbol ownerClass, String methodName, List<Type> actualArgumentTypes)
 	{
@@ -2836,79 +2824,76 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 		}
 
-		// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-		// +++ REPLACEMENT LOGIC STARTS HERE
-		// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-		// Step 2: Filter by checking if actual arguments are ASSIGNABLE TO formal parameters.
+		// 2. Filter for methods with matching arity and assignable parameters.
 		List<MethodSymbol> paramMatchingMethods = new ArrayList<>();
 		for (MethodSymbol candidate : candidates)
 		{
-			List<Type> formalParamTypes = candidate.getParameterTypes();
-			if (formalParamTypes.size() != actualArgumentTypes.size())
+			if (candidate.getParameterTypes().size() != actualArgumentTypes.size())
 			{
-				continue; // Skip if arity (number of arguments) is different.
+				continue;
 			}
-
 			boolean allParamsMatch = true;
-			for (int i = 0; i < formalParamTypes.size(); i++)
+			for (int i = 0; i < actualArgumentTypes.size(); i++)
 			{
-				Type formalType = formalParamTypes.get(i); // e.g., nebula.core.Object
-				Type actualType = actualArgumentTypes.get(i);   // e.g., Program.Vector2
-
-				// THE CRUCIAL FIX: Use isAssignableTo to check for valid subclassing.
-				if (!formalType.isAssignableFrom(actualType))
+				if (!actualArgumentTypes.get(i).isAssignableTo(candidate.getParameterTypes().get(i)))
 				{
 					allParamsMatch = false;
 					break;
 				}
 			}
-
 			if (allParamsMatch)
 			{
 				paramMatchingMethods.add(candidate);
 			}
 		}
-		// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-		// +++ REPLACEMENT LOGIC ENDS HERE
-		// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
 
 		if (paramMatchingMethods.isEmpty())
 		{
-			String argTypesString = actualArgumentTypes.stream().map(Type::getName).collect(Collectors.joining(", "));
-			error(errorToken, "No matching method found for '" + methodName + "' with arguments: (" + argTypesString + ") in class '" + ownerClass.getName() + "'.");
+			String args = actualArgumentTypes.stream().map(Type::getName).collect(Collectors.joining(", "));
+			error(errorToken, "No matching method found for '" + methodName + "' with arguments: (" + args + ") in class '" + ownerClass.getName() + "'.");
 			return null;
 		}
 
 		if (paramMatchingMethods.size() == 1)
 		{
-			return paramMatchingMethods.get(0); // Standard unambiguous call
+			return paramMatchingMethods.get(0);
 		}
 
-		// --- The rest of the method for handling return-type ambiguity remains the same ---
-
-		// NEW STEP: Try to find a "best match" based on exact parameter types.
-		// This handles traditional overloading (e.g., println(int) vs println(double)).
-		List<MethodSymbol> exactParamMatches = new ArrayList<>();
+		// 3. Find the single "most specific" method based on parameters.
+		List<MethodSymbol> mostSpecificMatches = new ArrayList<>();
 		for (MethodSymbol candidate : paramMatchingMethods)
 		{
-			if (candidate.getParameterTypes().equals(actualArgumentTypes))
+			boolean isMostSpecific = true;
+			for (MethodSymbol other : paramMatchingMethods)
 			{
-				exactParamMatches.add(candidate);
+				if (candidate != other && isMoreSpecific(other, candidate))
+				{
+					isMostSpecific = false;
+					break;
+				}
+			}
+			if (isMostSpecific)
+			{
+				mostSpecificMatches.add(candidate);
 			}
 		}
 
-		if (exactParamMatches.size() == 1)
+		List<MethodSymbol> methodsToDisambiguate;
+		if (mostSpecificMatches.size() == 1)
 		{
-			return exactParamMatches.get(0);
+			return mostSpecificMatches.get(0); // Solved by parameter specificity.
+		}
+		else
+		{
+			// If still ambiguous, use the narrowed list (or the original if narrowing failed).
+			methodsToDisambiguate = mostSpecificMatches.isEmpty() ? paramMatchingMethods : mostSpecificMatches;
 		}
 
-		List<MethodSymbol> methodsToDisambiguate = !exactParamMatches.isEmpty() ? exactParamMatches : paramMatchingMethods;
-
+		// 4. If ambiguity still exists, use the return type as a final tie-breaker.
 		if (this.expectedTypeForNextExpression == null || this.expectedTypeForNextExpression instanceof ErrorType)
 		{
 			error(errorToken, "Ambiguous method call for '" + methodName + "'. Multiple overloads match the arguments, and the return type cannot be inferred from the context.");
-			return methodsToDisambiguate.get(0); // Return first for error recovery
+			return methodsToDisambiguate.get(0);
 		}
 
 		List<MethodSymbol> returnMatchingMethods = methodsToDisambiguate.stream()
@@ -2918,35 +2903,32 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		if (returnMatchingMethods.isEmpty())
 		{
 			error(errorToken, "No overload for method '" + methodName + "' has a return type compatible with the expected type '" + this.expectedTypeForNextExpression.getName() + "'.");
-			return null;
+			return methodsToDisambiguate.get(0);
 		}
 
 		if (returnMatchingMethods.size() == 1)
 		{
-			return returnMatchingMethods.get(0); // Successfully disambiguated.
+			return returnMatchingMethods.get(0);
 		}
 
-		MethodSymbol exactMatch = null;
+		// 5. FINAL CHECK: Prioritize an EXACT return type match among the compatible candidates.
+		List<MethodSymbol> exactReturnMatches = new ArrayList<>();
 		for (MethodSymbol m : returnMatchingMethods)
 		{
 			if (m.getType().equals(this.expectedTypeForNextExpression))
 			{
-				if (exactMatch != null)
-				{
-					error(errorToken, "Ambiguous method call for '" + methodName + "'. Multiple overloads have a return type compatible with '" + this.expectedTypeForNextExpression.getName() + "'.");
-					return m;
-				}
-				exactMatch = m;
+				exactReturnMatches.add(m);
 			}
 		}
 
-		if (exactMatch != null)
+		if (exactReturnMatches.size() == 1)
 		{
-			return exactMatch;
+			return exactReturnMatches.get(0); // Success! The exact match is the best choice.
 		}
 
+		// If we are here, either 0 or >1 exact matches were found among the compatible ones. Both are ambiguities.
 		error(errorToken, "Ambiguous method call for '" + methodName + "'. Multiple overloads have a return type compatible with '" + this.expectedTypeForNextExpression.getName() + "'.");
-		return returnMatchingMethods.get(0);
+		return returnMatchingMethods.get(0); // Return first for error recovery.
 	}
 
 	/**
@@ -3089,5 +3071,52 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		return null; // Type not found
+	}
+
+	/**
+	 * Determines if MethodSymbol m1 is more specific than MethodSymbol m2.
+	 * A method is more specific if all of its parameter types can be assigned to
+	 * the other method's corresponding parameter types, with at least one being a
+	 * strict subtype (not equal).
+	 *
+	 * @param m1 The first method symbol.
+	 * @param m2 The second method symbol.
+	 * @return True if m1 is more specific than m2.
+	 */
+	private boolean isMoreSpecific(MethodSymbol m1, MethodSymbol m2)
+	{
+		List<Type> params1 = m1.getParameterTypes();
+		List<Type> params2 = m2.getParameterTypes();
+
+		// This check assumes arity (parameter count) has already been matched.
+		if (params1.size() != params2.size())
+		{
+			return false;
+		}
+
+		boolean hasStricterParameter = false;
+		for (int i = 0; i < params1.size(); i++)
+		{
+			Type p1 = params1.get(i);
+			Type p2 = params2.get(i);
+
+			if (!p1.isAssignableTo(p2))
+			{
+				// If any parameter in m1 is not assignable to its counterpart in m2,
+				// then m1 is not more specific than m2.
+				return false;
+			}
+
+			if (!p1.equals(p2))
+			{
+				// We found at least one parameter in m1 that is a subtype of its
+				// counterpart in m2.
+				hasStricterParameter = true;
+			}
+		}
+
+		// m1 is more specific only if it's assignable in all positions AND
+		// is strictly narrower in at least one position.
+		return hasStricterParameter;
 	}
 }

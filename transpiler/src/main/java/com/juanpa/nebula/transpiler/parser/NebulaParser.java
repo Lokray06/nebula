@@ -1307,10 +1307,15 @@ public class NebulaParser
 			return new LiteralExpression(previous());
 		}
 
-		if (match(TokenType.IDENTIFIER))
+		// FIX: Allow type keywords (like uint16) to be parsed as the start of an expression.
+		// This is necessary for static property access like `uint16.max`.
+		// We treat them as IdentifierExpressions, and the semantic analyzer will resolve them as types.
+		// We exclude VOID and VAR as they cannot be part of such expressions.
+		if (isTypeToken(peek().getType()) && peek().getType() != TokenType.VOID && peek().getType() != TokenType.VAR)
 		{
-			return new IdentifierExpression(previous());
+			return new IdentifierExpression(advance());
 		}
+
 		if (match(TokenType.THIS))
 		{
 			return new ThisExpression(previous());

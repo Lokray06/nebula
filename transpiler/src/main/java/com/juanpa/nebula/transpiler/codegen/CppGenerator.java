@@ -482,6 +482,8 @@ public class CppGenerator implements ASTVisitor<String>
 		appendHeaderLine("#include <vector>");
 		appendHeaderLine("#include <cmath>");
 		appendHeaderLine("#include <iostream>");
+		appendHeaderLine("#include <iomanip> // For std::setprecision");
+		appendHeaderLine("#include <limits>  // For std::numeric_limits");
 		appendHeaderLine("");
 
 		Set<String> headerDeps = collectClassDependencies(declaration, false);
@@ -609,6 +611,7 @@ public class CppGenerator implements ASTVisitor<String>
 
 		appendLine("#include <sstream>");
 		appendLine("#include <functional>");
+		appendLine("#include <cstdint>");
 		appendLine("");
 
 		for (String ns : namespaceParts)
@@ -870,9 +873,28 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitArrayCreationExpression(ArrayCreationExpression expression)
 	{
-		String elementType = toCppType(expression.getResolvedType());
+		// 1. Get the resolved type of the array, which is an ArrayType.
+		Type resolvedType = expression.getResolvedType();
+
+		// 2. Safely cast to ArrayType and get the element type (e.g., PrimitiveType.INT).
+		Type elementType;
+		if (resolvedType instanceof ArrayType)
+		{
+			elementType = ((ArrayType) resolvedType).getElementType();
+		}
+		else
+		{
+			// Fallback or error handling for safety.
+			error(expression.getFirstToken(), "Array creation expression did not resolve to an array type.");
+			return "nullptr";
+		}
+
+		// 3. Convert the element type to its C++ string representation (e.g., "int32_t").
+		String cppElementType = toCppType(elementType);
 		String sizeExpr = expression.getSizeExpression().accept(this);
-		return "std::make_shared<std::vector<" + elementType + ">>(" + sizeExpr + ")";
+
+		// 4. Construct the C++ code to create a vector of the correct element type.
+		return "std::make_shared<std::vector<" + cppElementType + ">>(" + sizeExpr + ")";
 	}
 
 	/**
@@ -1265,27 +1287,35 @@ public class CppGenerator implements ASTVisitor<String>
 			{
 				String rightOperandForConcat = right;
 
+				// --- START OF FIXED BLOCK ---
 				if (rightType instanceof PrimitiveType)
 				{
-					if (rightType.equals(PrimitiveType.INT) ||
-							rightType.equals(PrimitiveType.FLOAT) ||
-							rightType.equals(PrimitiveType.DOUBLE))
+					PrimitiveType primitiveRightType = (PrimitiveType) rightType;
+
+					// For boolean, convert to "true" or "false" string
+					if (primitiveRightType.equals(PrimitiveType.BOOL))
 					{
-						// For numeric primitives, use std::to_string
-						rightOperandForConcat = "std::make_shared<nebula::core::String>(std::to_string(" + right + "))";
-					}
-					else if (rightType.equals(PrimitiveType.BOOL))
-					{
-						// For boolean, convert to "true" or "false" string
 						rightOperandForConcat = "std::make_shared<nebula::core::String>(" + right + " ? \"true\" : \"false\")";
 					}
-					else if (rightType.equals(PrimitiveType.CHAR) ||
-							rightType.equals(PrimitiveType.BYTE))
+					// For char types, convert to a single-character string
+					else if (primitiveRightType.equals(PrimitiveType.CHAR) ||
+							primitiveRightType.equals(PrimitiveType.CHAR16) ||
+							primitiveRightType.equals(PrimitiveType.CHAR32))
 					{
-						// For char/byte, convert to string containing single character
 						rightOperandForConcat = "std::make_shared<nebula::core::String>(std::string(1, " + right + "))";
 					}
+					// For floating-point types, use the high-precision conversion helper
+					else if (primitiveRightType.equals(PrimitiveType.FLOAT) || primitiveRightType.equals(PrimitiveType.DOUBLE))
+					{
+						rightOperandForConcat = generateHighPrecisionString(expression.getRight());
+					}
+					// For all other numeric types (int, byte, long, etc.), use std::to_string
+					else if (primitiveRightType.isNumeric())
+					{
+						rightOperandForConcat = "std::make_shared<nebula::core::String>(std::to_string(" + right + "))";
+					}
 				}
+				// --- END OF FIXED BLOCK ---
 				else if (rightType instanceof ClassType)
 				{
 					// If the right operand is another Nebula class, call its toString() method.
@@ -1445,9 +1475,23 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitDotExpression(DotExpression expr)
 	{
+		Symbol symbol = expr.getResolvedSymbol();
+
+		// NEW: Handle static properties on primitive types.
+		// We identify them because we stored them as static VariableSymbols with the 'isWrapper' flag.
+		if (symbol instanceof VariableSymbol)
+		{
+			VariableSymbol varSymbol = (VariableSymbol) symbol;
+			if (varSymbol.isStatic() && varSymbol.isWrapper() && varSymbol.getCppTarget() != null)
+			{
+				// This is one of our primitive static properties. Just return the C++ target code.
+				return varSymbol.getCppTarget();
+			}
+		}
+
+		// If not a static property, proceed with existing logic.
 		String left = expr.getLeft().accept(this);
 		String memberName = expr.getMemberName().getLexeme();
-		Symbol symbol = expr.getResolvedSymbol();
 		Type leftType = expr.getLeft().getResolvedType();
 
 		// When accessing '.size' on an array, which is a shared_ptr to a vector.
@@ -1455,8 +1499,17 @@ public class CppGenerator implements ASTVisitor<String>
 		{
 			if (memberName.equals("size"))
 			{
-				// FIX: Use the arrow operator '->' to call size() on the underlying vector.
 				return "static_cast<int>(" + left + "->size())";
+			}
+		}
+
+		// NEW: Handle instance property 'size' for strings.
+		if (leftType instanceof ClassType && ((ClassType) leftType).getFqn().equals("nebula.core.String"))
+		{
+			if (memberName.equals("length"))
+			{
+				// The native String class has a length() method. We map .size to a call to it.
+				return left + "->length()";
 			}
 		}
 
@@ -1466,6 +1519,7 @@ public class CppGenerator implements ASTVisitor<String>
 		}
 		else if (symbol instanceof VariableSymbol && ((VariableSymbol) symbol).isStatic())
 		{
+			// This handles regular static fields that are not wrappers.
 			return left + "::" + memberName;
 		}
 
@@ -1908,5 +1962,35 @@ public class CppGenerator implements ASTVisitor<String>
 		body = body.replace("->_data", "->raw()");
 
 		return body;
+	}
+
+	/**
+	 * Generates C++ code to create a high-precision nebula::core::String from a primitive.
+	 * This bypasses the low-precision std::to_string() function.
+	 *
+	 * @param expr The expression representing the primitive value.
+	 * @return A string of C++ code that produces a shared_ptr to a String.
+	 */
+	private String generateHighPrecisionString(Expression expr)
+	{
+		String exprCode = expr.accept(this);
+		Type type = expr.getResolvedType();
+
+		// Check if the type is a floating-point number.
+		if (type.equals(PrimitiveType.FLOAT) || type.equals(PrimitiveType.DOUBLE))
+		{
+			String cppType = toCppType(type);
+			// Use std::stringstream with max_digits10 to preserve precision.
+			return """
+					([&]() {
+					    std::stringstream ss;
+					    ss << std::setprecision(std::numeric_limits<""" + cppType + """
+					>::max_digits10) << """ + exprCode + """
+					    ;
+					    return std::make_shared<nebula::core::String>(ss.str());
+					})()""";
+		}
+		// Fallback for other primitives
+		return "std::make_shared<nebula::core::String>(std::to_string(" + exprCode + "))";
 	}
 }

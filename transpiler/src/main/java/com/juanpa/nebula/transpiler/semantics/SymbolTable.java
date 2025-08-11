@@ -1,5 +1,3 @@
-// File: src/main/java/com/juanpa.nebula.transpiler/semantics/SymbolTable.java
-
 package com.juanpa.nebula.transpiler.semantics;
 
 import com.juanpa.nebula.transpiler.lexer.Token;
@@ -34,7 +32,7 @@ public class SymbolTable
 	 */
 	public void define(Symbol symbol)
 	{
-		if(symbols.containsKey(symbol.getName()))
+		if (symbols.containsKey(symbol.getName()))
 		{
 			// This check should ideally be handled by a specific error in SemanticAnalyzer,
 			// but for now, a runtime exception indicates a semantic error during definition.
@@ -52,12 +50,39 @@ public class SymbolTable
 	public Symbol resolve(String name)
 	{
 		Symbol symbol = symbols.get(name);
-		if(symbol != null)
+		if (symbol != null)
 		{
 			return symbol;
 		}
+
+		// Handle primitive type aliases at the global scope.
+		if (enclosingScope == null)
+		{
+			// This should only happen in the global scope
+			// We can't define these as symbols directly because they would conflict with the canonical types.
+			switch (name)
+			{
+				case "byte":
+					return symbols.get("int8");
+				case "short":
+					return symbols.get("int16");
+				case "int":
+					return symbols.get("int32");
+				case "long":
+					return symbols.get("int64");
+				case "ubyte":
+					return symbols.get("uint8");
+				case "ushort":
+					return symbols.get("uint16");
+				case "uint":
+					return symbols.get("uint32");
+				case "ulong":
+					return symbols.get("uint64");
+			}
+		}
+
 		// If not found in current scope, try to resolve in the enclosing scope
-		if(enclosingScope != null)
+		if (enclosingScope != null)
 		{
 			return enclosingScope.resolve(name);
 		}
@@ -106,7 +131,7 @@ public class SymbolTable
 	{
 		StringBuilder sb = new StringBuilder();
 		sb.append("Scope '").append(scopeName).append("':\n");
-		for(Map.Entry<String, Symbol> entry : symbols.entrySet())
+		for (Map.Entry<String, Symbol> entry : symbols.entrySet())
 		{
 			sb.append("  ").append(entry.getValue()).append("\n");
 		}

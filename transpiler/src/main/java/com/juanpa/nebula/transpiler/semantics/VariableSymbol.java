@@ -10,61 +10,61 @@ import com.juanpa.nebula.transpiler.lexer.Token;
  */
 public class VariableSymbol extends Symbol
 {
-	private boolean initialized;
+	private boolean isInitialized;
 	private final boolean isStatic;
 	private final boolean isConst;
-	private final boolean isWrapper; // ADD THIS
-	private final String cppTarget;  // ADD THIS
+	private final boolean isWrapper;
+	private final String cppTarget;
 	private ClassSymbol ownerClass;
 
 	/**
-	 * Constructs a VariableSymbol.
+	 * Full constructor for a VariableSymbol.
 	 *
 	 * @param name             The name of the variable.
 	 * @param type             The type of the variable.
-	 * @param declarationToken The token where this variable was declared.
-	 * @param initialized      True if the variable is initialized at declaration, false otherwise.
-	 * @param isStatic         True if this is a static field, false otherwise.
-	 * @param isConst          True if this is a constant variable/field, false otherwise.
-	 * @param isPublic         True if this field is public, false otherwise. (Relevant for fields)
+	 * @param declarationToken The token where it was declared.
+	 * @param isInitialized    Whether the variable is initialized at declaration.
+	 * @param isStatic         Whether the variable is static.
+	 * @param isConst          Whether the variable is constant.
+	 * @param isPublic         Whether the variable is public.
+	 * @param isWrapper        Whether this is a wrapper for native C++ code.
+	 * @param cppTarget        The native C++ code to generate if it's a wrapper.
 	 */
-	public VariableSymbol(String name, Type type, Token declarationToken, boolean initialized, boolean isStatic, boolean isConst, boolean isPublic, boolean isWrapper, String cppTarget)
-	{
+	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized, boolean isStatic, boolean isConst, boolean isPublic, boolean isWrapper, String cppTarget) {
 		super(name, type, declarationToken, isPublic);
-		this.initialized = initialized;
+		this.isInitialized = isInitialized;
 		this.isStatic = isStatic;
 		this.isConst = isConst;
-		this.ownerClass = null;
-		this.isWrapper = isWrapper; // ADD THIS
-		this.cppTarget = cppTarget; // ADD THIS
+		this.isWrapper = isWrapper;
+		this.cppTarget = cppTarget;
 	}
 
 	// To maintain compatibility, you need to create a constructor chain.
 	// The most specific one is above. Let's adapt the existing ones.
-	public VariableSymbol(String name, Type type, Token declarationToken, boolean initialized, boolean isStatic, boolean isConst, boolean isPublic)
+	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized, boolean isStatic, boolean isConst, boolean isPublic)
 	{
-		this(name, type, declarationToken, initialized, isStatic, isConst, isPublic, false, null);
+		this(name, type, declarationToken, isInitialized, isStatic, isConst, isPublic, false, null);
 	}
 
-	public VariableSymbol(String name, Type type, Token declarationToken, boolean initialized)
+	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized)
 	{
-		this(name, type, declarationToken, initialized, false, false, false, false, null);
+		this(name, type, declarationToken, isInitialized, false, false, false, false, null);
 	}
 
-	public VariableSymbol(String name, Type type, Token declarationToken, boolean initialized, boolean isStatic, boolean isConst)
+	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized, boolean isStatic, boolean isConst)
 	{
-		this(name, type, declarationToken, initialized, isStatic, isConst, false, false, null);
+		this(name, type, declarationToken, isInitialized, isStatic, isConst, false, false, null);
 	}
 
 
 	public boolean isInitialized()
 	{
-		return initialized;
+		return isInitialized;
 	}
 
 	public void setInitialized(boolean initialized)
 	{
-		this.initialized = initialized;
+		this.isInitialized = initialized;
 	}
 
 	@Override
@@ -118,6 +118,6 @@ public class VariableSymbol extends Symbol
 	@Override
 	public String toString()
 	{
-		return "VariableSymbol{" + "name='" + getName() + '\'' + ", type=" + getType() + ", initialized=" + initialized + ", static=" + isStatic() + ", const=" + isConst() + ", public=" + isPublic() + (ownerClass != null ? ", owner=" + ownerClass.getName() : "") + '}';
+		return "VariableSymbol{" + "name='" + getName() + '\'' + ", type=" + getType() + ", initialized=" + isInitialized + ", static=" + isStatic() + ", const=" + isConst() + ", public=" + isPublic() + (ownerClass != null ? ", owner=" + ownerClass.getName() : "") + '}';
 	}
 }

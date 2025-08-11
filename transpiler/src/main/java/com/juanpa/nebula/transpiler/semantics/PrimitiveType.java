@@ -2,12 +2,22 @@
 
 package com.juanpa.nebula.transpiler.semantics;
 
+// Add these imports
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * Represents primitive types in the Nebula language (e.g., int, bool, String, double).
  * Implements type compatibility rules for these basic types.
  */
 public class PrimitiveType extends Type
 {
+	// NEW: A map to hold static properties like 'max' and 'min'.
+	// This is initially mutable so it can be populated by our static initializer.
+	private Map<String, Symbol> staticProperties = new HashMap<>();
+
 	// Pre-defined singletons for common primitive types
 	public static final PrimitiveType VOID = new PrimitiveType("void");
 	public static final PrimitiveType BOOL = new PrimitiveType("bool");
@@ -40,6 +50,89 @@ public class PrimitiveType extends Type
 	public PrimitiveType(String name)
 	{
 		super(name);
+	}
+
+	// NEW: A central place to initialize all static properties for primitives.
+	// This avoids circular dependency issues during static instantiation.
+	private static boolean staticPropertiesInitialized = false;
+
+	// In PrimitiveType.java
+	public static void initializeStaticProperties()
+	{
+		if (staticPropertiesInitialized)
+		{
+			return;
+		}
+
+		// --- INT8 / BYTE ---
+		Map<String, Symbol> int8Props = new HashMap<>();
+		int8Props.put("max", new VariableSymbol("max", INT8, null, true, true, true, true, true, "std::numeric_limits<int8_t>::max()"));
+		int8Props.put("min", new VariableSymbol("min", INT8, null, true, true, true, true, true, "std::numeric_limits<int8_t>::min()"));
+		INT8.staticProperties = Collections.unmodifiableMap(int8Props);
+
+		// --- INT16 / SHORT ---
+		Map<String, Symbol> int16Props = new HashMap<>();
+		int16Props.put("max", new VariableSymbol("max", INT16, null, true, true, true, true, true, "std::numeric_limits<int16_t>::max()"));
+		int16Props.put("min", new VariableSymbol("min", INT16, null, true, true, true, true, true, "std::numeric_limits<int16_t>::min()"));
+		INT16.staticProperties = Collections.unmodifiableMap(int16Props);
+
+		// --- INT32 / INT ---
+		Map<String, Symbol> int32Props = new HashMap<>();
+		int32Props.put("max", new VariableSymbol("max", INT32, null, true, true, true, true, true, "std::numeric_limits<int32_t>::max()"));
+		int32Props.put("min", new VariableSymbol("min", INT32, null, true, true, true, true, true, "std::numeric_limits<int32_t>::min()"));
+		INT32.staticProperties = Collections.unmodifiableMap(int32Props);
+
+		// --- INT64 / LONG ---
+		Map<String, Symbol> int64Props = new HashMap<>();
+		int64Props.put("max", new VariableSymbol("max", INT64, null, true, true, true, true, true, "std::numeric_limits<int64_t>::max()"));
+		int64Props.put("min", new VariableSymbol("min", INT64, null, true, true, true, true, true, "std::numeric_limits<int64_t>::min()"));
+		INT64.staticProperties = Collections.unmodifiableMap(int64Props);
+
+		// --- UINT8 / UBYTE ---
+		Map<String, Symbol> uint8Props = new HashMap<>();
+		uint8Props.put("max", new VariableSymbol("max", UINT8, null, true, true, true, true, true, "std::numeric_limits<uint8_t>::max()"));
+		uint8Props.put("min", new VariableSymbol("min", UINT8, null, true, true, true, true, true, "std::numeric_limits<uint8_t>::min()"));
+		UINT8.staticProperties = Collections.unmodifiableMap(uint8Props);
+
+		// --- UINT16 / USHORT ---
+		Map<String, Symbol> uint16Props = new HashMap<>();
+		uint16Props.put("max", new VariableSymbol("max", UINT16, null, true, true, true, true, true, "std::numeric_limits<uint16_t>::max()"));
+		uint16Props.put("min", new VariableSymbol("min", UINT16, null, true, true, true, true, true, "std::numeric_limits<uint16_t>::min()"));
+		UINT16.staticProperties = Collections.unmodifiableMap(uint16Props);
+
+		// --- UINT32 / UINT ---
+		Map<String, Symbol> uint32Props = new HashMap<>();
+		uint32Props.put("max", new VariableSymbol("max", UINT32, null, true, true, true, true, true, "std::numeric_limits<uint32_t>::max()"));
+		uint32Props.put("min", new VariableSymbol("min", UINT32, null, true, true, true, true, true, "std::numeric_limits<uint32_t>::min()"));
+		UINT32.staticProperties = Collections.unmodifiableMap(uint32Props);
+
+		// --- UINT64 / ULONG ---
+		Map<String, Symbol> uint64Props = new HashMap<>();
+		uint64Props.put("max", new VariableSymbol("max", UINT64, null, true, true, true, true, true, "std::numeric_limits<uint64_t>::max()"));
+		uint64Props.put("min", new VariableSymbol("min", UINT64, null, true, true, true, true, true, "std::numeric_limits<uint64_t>::min()"));
+		UINT64.staticProperties = Collections.unmodifiableMap(uint64Props);
+
+		// --- FLOAT ---
+		Map<String, Symbol> floatProps = new HashMap<>();
+		floatProps.put("max", new VariableSymbol("max", FLOAT, null, true, true, true, true, true, "std::numeric_limits<float>::max()"));
+		floatProps.put("min", new VariableSymbol("min", FLOAT, null, true, true, true, true, true, "std::numeric_limits<float>::lowest()"));
+		floatProps.put("epsilon", new VariableSymbol("epsilon", FLOAT, null, true, true, true, true, true, "std::numeric_limits<float>::epsilon()"));
+		FLOAT.staticProperties = Collections.unmodifiableMap(floatProps);
+
+		// --- DOUBLE ---
+		Map<String, Symbol> doubleProps = new HashMap<>();
+		doubleProps.put("max", new VariableSymbol("max", DOUBLE, null, true, true, true, true, true, "std::numeric_limits<double>::max()"));
+		doubleProps.put("min", new VariableSymbol("min", DOUBLE, null, true, true, true, true, true, "std::numeric_limits<double>::lowest()"));
+		doubleProps.put("epsilon", new VariableSymbol("epsilon", DOUBLE, null, true, true, true, true, true, "std::numeric_limits<double>::epsilon()"));
+		DOUBLE.staticProperties = Collections.unmodifiableMap(doubleProps);
+
+		staticPropertiesInitialized = true;
+	}
+
+	// NEW: Method to resolve a static property by name.
+	public Symbol resolveStaticProperty(String name)
+	{
+		return staticProperties.get(name);
 	}
 
 	@Override
