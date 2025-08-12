@@ -1077,151 +1077,6 @@ public class CppGenerator implements ASTVisitor<String>
 		return "std::make_shared<std::vector<" + elementType + ">>(std::vector<" + elementType + ">{" + elements + "})";
 	}
 
-	private void generateObjectCpp(ClassDeclaration declaration)
-	{
-		String simpleName = currentClassSymbol.getName();
-		// Default constructor definition for Object
-		//appendLine(simpleName + "::" + simpleName + "() { } \n");
-
-		// Ensure const qualifier is also in implementation
-		appendLine("bool " + simpleName + "::operator==(const std::shared_ptr<Object>& other) const {");
-		indent();
-		appendLine("return this == other.get();"); // Pointer comparison for Object
-		dedent();
-		appendLine("}\n");
-
-		appendLine("std::shared_ptr<String> " + simpleName + "::hashCode() const {");
-		indent();
-		appendLine("std::stringstream ss;");
-		appendLine("ss << static_cast<const void*>(this);");
-		appendLine("return std::make_shared<String>(ss.str());");
-		dedent();
-		appendLine("}\n");
-
-		appendLine("std::shared_ptr<String> " + simpleName + "::toString() const {");
-		indent();
-		appendLine("return this->hashCode();");
-		dedent();
-		appendLine("}\n");
-	}
-
-	private void generateStringCpp(ClassDeclaration declaration)
-	{
-		String simpleName = currentClassSymbol.getName();
-
-		appendLine(simpleName + "::String() : _data(\"\") {}\n"); // Default constructor
-		appendLine(simpleName + "::String(const std::string& raw_str) : _data(raw_str) {}\n"); // std::string constructor
-
-		// Special copy constructor: String(const std::shared_ptr<nebula::core::String>& other)
-		appendLine(simpleName + "::String(const std::shared_ptr<nebula::core::String>& other) : _data(other ? other->raw() : \"\") { /* User constructor logic */ }\n");
-
-
-		appendLine("int " + simpleName + "::length() const {");
-		indent();
-		appendLine("return static_cast<int>(_data.length());");
-		dedent();
-		appendLine("}\n");
-
-		appendLine("std::shared_ptr<String> " + simpleName + "::operator+(const std::shared_ptr<String>& other) {");
-		indent();
-		appendLine("return std::make_shared<String>(this->_data + (other ? other->raw() : \"\"));");
-		dedent();
-		appendLine("}\n");
-
-		// Override of Object::operator==
-		appendLine("bool " + simpleName + "::operator==(const std::shared_ptr<Object>& other) const {");
-		indent();
-		appendLine("auto other_str = std::dynamic_pointer_cast<String>(other);");
-		appendLine("if (other_str) { return this->_data == other_str->_data; }");
-		appendLine("return false;"); // Different types or other is null
-		dedent();
-		appendLine("}\n");
-
-		// Overload for String to String comparison
-		appendLine("bool " + simpleName + "::operator==(const std::shared_ptr<String>& other) const {");
-		indent();
-		appendLine("if (other) { return this->_data == other->_data; }");
-		appendLine("return false;"); // Comparing to nullptr
-		dedent();
-		appendLine("}\n");
-
-
-		appendLine("std::shared_ptr<String> " + simpleName + "::toString() const {");
-		indent();
-		appendLine("return std::make_shared<String>(this->_data);");
-		dedent();
-		appendLine("}\n");
-
-		appendLine("std::shared_ptr<String> " + simpleName + "::hashCode() const {");
-		indent();
-		appendLine("return std::make_shared<String>(std::to_string(std::hash<std::string>{}(this->_data)));");
-		dedent();
-		appendLine("}\n");
-
-		appendLine("const std::string& " + simpleName + "::raw() const {");
-		indent();
-		appendLine("return _data;");
-		dedent();
-		appendLine("}\n");
-	}
-
-	private void generateConsoleCpp(ClassDeclaration declaration)
-	{
-		String simpleName = currentClassSymbol.getName();
-		for (MethodDeclaration method : declaration.getMethods())
-		{
-			String methodName = method.getName().getLexeme();
-			String params = formatCppParameters(method.getParameters());
-			// Use fully qualified namespace for Console method definitions
-			String fullMethodName = "void " + currentNamespacePrefix.replace(".", "::") + "::" + simpleName + "::" + methodName;
-			appendLine(fullMethodName + "(" + params + ") {");
-			indent();
-
-			// Assume parameters list has at least 2 tokens (type, name)
-			// The original Console.neb had parameters like (Object anything), (string anyString)
-			// so the second token is the actual parameter name.
-			// This assumes single-parameter print/println methods.
-			if (!method.getParameters().isEmpty())
-			{
-				Token paramNameToken = method.getParameters().get(1); // Parameter name is the second token
-				Token paramTypeToken = method.getParameters().get(0); // Parameter type is the first token
-				String paramName = paramNameToken.getLexeme();
-				Type paramType = resolveTypeFromToken(paramTypeToken);
-
-
-				if (paramType instanceof ClassType)
-				{
-					// Use the raw() method for printing Nebula String/Object content
-					appendLine("if (" + paramName + ") { std::cout << " + paramName + "->toString()->raw(); } else { std::cout << \"null\"; }");
-				}
-				else if (paramType.equals(PrimitiveType.BOOL))
-				{
-					// Use std::boolalpha for cleaner boolean output (true/false)
-					appendLine("std::cout << std::boolalpha << " + paramName + ";");
-				}
-				else
-				{
-					// For other primitives, direct print is fine
-					appendLine("std::cout << " + paramName + ";");
-				}
-			}
-			else
-			{
-				// Handle parameterless print/println if they were ever added
-				appendLine("// No parameters to print");
-			}
-
-
-			if (methodName.startsWith("println"))
-			{
-				appendLine("std::cout << std::endl;");
-			}
-
-			dedent();
-			appendLine("}\n");
-		}
-	}
-
 	private void generateGenericClassCpp(ClassDeclaration declaration)
 	{
 		String simpleName = currentClassSymbol.getName();
@@ -1523,6 +1378,11 @@ public class CppGenerator implements ASTVisitor<String>
 			// Use the new helper to make the string C++ safe
 			String escapedValue = escapeCppString(value.toString());
 			return "std::make_shared<nebula::core::String>(\"" + escapedValue + "\")";
+		}
+		if (expression.getLiteralToken().getType() == TokenType.CHAR_LITERAL)
+		{
+			// Use the new helper to make the string C++ safe
+			return "'" + value.toString() + "'";
 		}
 		if (expression.getLiteralToken().getType() == TokenType.BOOLEAN_LITERAL)
 		{

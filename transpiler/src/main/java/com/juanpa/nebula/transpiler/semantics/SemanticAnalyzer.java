@@ -2845,13 +2845,51 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	public Type visitArrayInitializerExpression(ArrayInitializerExpression expression)
 	{
 		// Check if the type has already been resolved by the contextual visit
-		// from visitVariableDeclarationStatement.
 		if (expression.getResolvedType() != null)
 		{
 			return expression.getResolvedType();
 		}
 
-		// If the initializer is empty and not handled by context, it's an error.
+		Type expectedElementType = null;
+		// Check for an expected type from the context (e.g., from a variable declaration)
+		if (this.expectedTypeForNextExpression instanceof ArrayType)
+		{
+			expectedElementType = ((ArrayType) this.expectedTypeForNextExpression).getElementType();
+		}
+
+		// If we have an expected type from the context, use it to validate elements.
+		if (expectedElementType != null)
+		{
+			for (Expression element : expression.getElements())
+			{
+				// Set the context for each element to guide its type resolution
+				Type oldExpected = this.expectedTypeForNextExpression;
+				this.expectedTypeForNextExpression = expectedElementType;
+				Type elementType = element.accept(this);
+				this.expectedTypeForNextExpression = oldExpected;
+
+				if (elementType instanceof ErrorType)
+				{
+					expression.setResolvedType(ErrorType.INSTANCE);
+					return ErrorType.INSTANCE;
+				}
+
+				// Check if the element can be assigned to the expected type
+				if (!elementType.isAssignableTo(expectedElementType))
+				{
+					error(element.getFirstToken(), "Incompatible type in array initializer: cannot convert from '"
+							+ elementType.getName() + "' to '" + expectedElementType.getName() + "'.");
+					expression.setResolvedType(ErrorType.INSTANCE);
+					return ErrorType.INSTANCE;
+				}
+			}
+			ArrayType resolvedArrayType = new ArrayType(expectedElementType);
+			expression.setResolvedType(resolvedArrayType);
+			return resolvedArrayType;
+		}
+
+
+		// --- Original logic for when type is inferred (e.g., var x = ...) ---
 		if (expression.getElements().isEmpty())
 		{
 			error(expression.getFirstToken(), "Array initializer cannot be empty without an explicit type context.");
@@ -2876,9 +2914,6 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 			else
 			{
-				// Ensure all elements are compatible with the common type
-				// This logic might need to be more sophisticated to find a "least common supertype"
-				// For simplicity, checking assignability of subsequent elements to the first one's type.
 				if (!elementType.isAssignableTo(commonElementType) && !commonElementType.isAssignableTo(elementType))
 				{
 					error(element.getFirstToken(), "Array initializer elements have incompatible types: expected '"
@@ -2886,7 +2921,6 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 					expression.setResolvedType(ErrorType.INSTANCE);
 					return ErrorType.INSTANCE;
 				}
-				// If one type is assignable to the other, use the wider type as the common type.
 				if (commonElementType.isAssignableTo(elementType))
 				{
 					commonElementType = elementType; // elementType is wider or same.
@@ -2894,7 +2928,6 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 		}
 
-		// The resolved type of the ArrayInitializerExpression is an ArrayType of the common element type
 		ArrayType resolvedArrayType = new ArrayType(commonElementType);
 		expression.setResolvedType(resolvedArrayType);
 		return resolvedArrayType;

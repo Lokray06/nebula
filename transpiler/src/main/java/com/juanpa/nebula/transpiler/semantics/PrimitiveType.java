@@ -158,6 +158,15 @@ public class PrimitiveType extends Type
 
 		// --- The rest of your existing widening conversion rules ---
 
+		// This is a common implicit conversion for character literals.
+		if (this.equals(CHAR) || this.equals(CHAR16) || this.equals(CHAR32))
+		{
+			if (other.isNumeric())
+			{
+				return true;
+			}
+		}
+
 		// A DOUBLE can be assigned from any other numeric type
 		if (this.equals(DOUBLE))
 		{
