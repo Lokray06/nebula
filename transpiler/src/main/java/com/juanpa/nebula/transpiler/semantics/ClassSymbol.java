@@ -17,8 +17,8 @@ public class ClassSymbol extends Symbol
 	private final boolean isNative; // ADD THIS
 
 	public final Map<String, List<MethodSymbol>> methodsByName;
+	public final Map<String, PropertySymbol> propertiesByName;
 
-	// MODIFY constructor
 	public ClassSymbol(String name, ClassType type, Token declarationToken, SymbolTable classScope, boolean isNative)
 	{
 		super(name, type, declarationToken, true);
@@ -26,7 +26,8 @@ public class ClassSymbol extends Symbol
 		this.declarationToken = declarationToken;
 		this.classScope = classScope;
 		this.methodsByName = new HashMap<>();
-		this.isNative = isNative; // ADD THIS
+		this.propertiesByName = new HashMap<>();
+		this.isNative = isNative;
 	}
 
 	public ClassType getType()

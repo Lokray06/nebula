@@ -2,12 +2,7 @@
 
 package com.juanpa.nebula.transpiler.ast;
 
-import com.juanpa.nebula.transpiler.ast.declarations.ClassDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.ConstructorDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.FieldDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.MethodDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.NamespaceDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.ImportDirective;
+import com.juanpa.nebula.transpiler.ast.declarations.*;
 import com.juanpa.nebula.transpiler.ast.expressions.*;
 import com.juanpa.nebula.transpiler.ast.statements.*;
 
@@ -37,6 +32,8 @@ public interface ASTVisitor<R>
 
 	R visitFieldDeclaration(FieldDeclaration declaration);
 
+	R visitPropertyDeclaration(PropertyDeclaration declaration);
+
 	// --- Statements ---
 	R visitBlockStatement(BlockStatement statement);
 
@@ -49,7 +46,6 @@ public interface ASTVisitor<R>
 	R visitForStatement(ForStatement statement);
 
 	R visitForEachStatement(ForEachStatement statement); // ADD THIS LINE
-
 
 	R visitReturnStatement(ReturnStatement statement);
 

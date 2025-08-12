@@ -4,12 +4,7 @@ package com.juanpa.nebula.transpiler.parser;
 
 import com.juanpa.nebula.transpiler.ast.Program;
 import com.juanpa.nebula.transpiler.ast.ASTNode;
-import com.juanpa.nebula.transpiler.ast.declarations.ClassDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.MethodDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.NamespaceDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.ConstructorDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.FieldDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.ImportDirective;
+import com.juanpa.nebula.transpiler.ast.declarations.*;
 import com.juanpa.nebula.transpiler.ast.expressions.*;
 import com.juanpa.nebula.transpiler.ast.statements.*;
 import com.juanpa.nebula.transpiler.lexer.Token;
@@ -391,11 +386,7 @@ public class NebulaParser
 	 */
 	private ClassDeclaration classDeclaration(List<Token> modifiers, String containingNamespace) throws SyntaxError
 	{
-		// In the caller (namespaceDeclaration), the modifier loop is now:
-		// while (check(TokenType.PUBLIC) || check(TokenType.PRIVATE) || check(TokenType.STATIC) || check(TokenType.NATIVE))
-		// We need to add NATIVE to that loop.
-		// Assuming NATIVE is parsed as a modifier:
-
+		// The existing logic for parsing the class header is correct.
 		boolean isNative = modifiers.stream().anyMatch(m -> m.getType() == TokenType.NATIVE);
 
 		Token classKeyword = consume(TokenType.CLASS, "Expected 'class' keyword.");
@@ -414,7 +405,9 @@ public class NebulaParser
 		List<FieldDeclaration> fields = new ArrayList<>();
 		List<MethodDeclaration> methods = new ArrayList<>();
 		List<ConstructorDeclaration> constructors = new ArrayList<>();
+		List<PropertyDeclaration> properties = new ArrayList<>();
 
+		// The key change is in the order of the 'if-else if' checks inside this loop.
 		while (!check(TokenType.RIGHT_BRACE) && !isAtEnd())
 		{
 			List<Token> memberModifiers = new ArrayList<>();
@@ -426,24 +419,38 @@ public class NebulaParser
 
 			Token nextTokenAfterModifiers = peek();
 
+			// 1. Check for constructors (the most specific case).
 			if (nextTokenAfterModifiers.getType() == TokenType.IDENTIFIER &&
 					nextTokenAfterModifiers.getLexeme().equals(className.getLexeme()) &&
 					check(1, TokenType.LEFT_PAREN))
 			{
 				constructors.add(constructorDeclaration(memberModifiers, className));
 			}
+			// 2. Check for operator declarations (another specific case).
 			else if (isTypeToken(nextTokenAfterModifiers.getType()) &&
 					check(1, TokenType.OPERATOR) &&
 					isOperatorToken(peek(2).getType()))
 			{
 				methods.add(methodDeclaration(memberModifiers, true));
 			}
-			else if (isTypeToken(nextTokenAfterModifiers.getType()) &&
+			// 3. Check for property declarations (Type Identifier { ... }). This is the crucial fix.
+			//    We must check for this before fields or methods, as it has the same prefix.
+			else if ((isTypeToken(nextTokenAfterModifiers.getType()) || nextTokenAfterModifiers.getType() == TokenType.VAR) &&
+					check(1, TokenType.IDENTIFIER) &&
+					check(2, TokenType.LEFT_BRACE))
+			{
+				properties.add(propertyDeclaration(memberModifiers));
+			}
+			// 4. Check for method declarations (Type Identifier ( ... )).
+			//    This check comes after properties to avoid ambiguity.
+			else if ((isTypeToken(nextTokenAfterModifiers.getType()) || nextTokenAfterModifiers.getType() == TokenType.VAR) &&
 					check(1, TokenType.IDENTIFIER) &&
 					check(2, TokenType.LEFT_PAREN))
 			{
 				methods.add(methodDeclaration(memberModifiers, false));
 			}
+			// 5. Finally, check for field declarations (the most general case).
+			//    This check will not be run if the token stream matches one of the more specific cases above.
 			else if ((isTypeToken(nextTokenAfterModifiers.getType()) || nextTokenAfterModifiers.getType() == TokenType.VAR) &&
 					check(1, TokenType.IDENTIFIER) &&
 					!check(2, TokenType.LEFT_PAREN))
@@ -459,7 +466,7 @@ public class NebulaParser
 
 		Token rightBrace = consume(TokenType.RIGHT_BRACE, "Expected '}' after class body.");
 
-		return new ClassDeclaration(modifiers, classKeyword, className, extendsKeyword, superClassName, leftBrace, fields, methods, constructors, rightBrace, containingNamespace, isNative);
+		return new ClassDeclaration(modifiers, classKeyword, className, extendsKeyword, superClassName, leftBrace, fields, properties, methods, constructors, rightBrace, containingNamespace, isNative);
 	}
 
 	/**
@@ -1852,5 +1859,74 @@ public class NebulaParser
 			}
 		}
 		return new TypeSpecifier(baseType, rank);
+	}
+
+	/**
+	 * Parses a property declaration.
+	 * Grammar: MODIFIERS TYPE IDENTIFIER '{' ACCESSOR+ '}'
+	 * Returns a list of method declarations because a property is desugared into get/set methods.
+	 */
+	private PropertyDeclaration propertyDeclaration(List<Token> modifiers) throws SyntaxError
+	{
+		Token type = advance();
+		Token name = consume(TokenType.IDENTIFIER, "Expected property name.");
+		consume(TokenType.LEFT_BRACE, "Expected '{' to start property body.");
+
+		AccessorDeclaration getAccessor = null;
+		AccessorDeclaration setAccessor = null;
+
+		while (!check(TokenType.RIGHT_BRACE) && !isAtEnd())
+		{
+			List<Token> accessorModifiers = new ArrayList<>();
+			while (check(TokenType.PUBLIC) || check(TokenType.PRIVATE))
+			{
+				accessorModifiers.add(advance());
+			}
+
+			if (check(TokenType.GET))
+			{
+				if (getAccessor != null)
+				{
+					throw error(peek(), "Cannot define 'get' accessor twice.");
+				}
+				getAccessor = accessorDeclaration(accessorModifiers);
+			}
+			else if (check(TokenType.SET))
+			{
+				if (setAccessor != null)
+				{
+					throw error(peek(), "Cannot define 'set' accessor twice.");
+				}
+				setAccessor = accessorDeclaration(accessorModifiers);
+			}
+			else
+			{
+				throw error(peek(), "Expected 'get' or 'set' accessor in property body.");
+			}
+		}
+
+		consume(TokenType.RIGHT_BRACE, "Expected '}' to end property body.");
+		return new PropertyDeclaration(modifiers, type, name, getAccessor, setAccessor);
+	}
+
+	/**
+	 * Parses a single 'get' or 'set' accessor.
+	 * Grammar: (MODIFIER)* ('get'|'set') (';' | BLOCK_STATEMENT)
+	 */
+	private AccessorDeclaration accessorDeclaration(List<Token> modifiers) throws SyntaxError
+	{
+		Token keyword = advance(); // Consume 'get' or 'set'
+		BlockStatement body = null;
+		Token semicolon = null;
+
+		if (check(TokenType.LEFT_BRACE))
+		{
+			body = blockStatement();
+		}
+		else
+		{
+			semicolon = consume(TokenType.SEMICOLON, "Expected ';' for auto-property accessor or '{' for a body.");
+		}
+		return new AccessorDeclaration(keyword, modifiers, body, semicolon);
 	}
 }

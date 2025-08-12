@@ -568,17 +568,73 @@ public class CppGenerator implements ASTVisitor<String>
 			}
 		}
 
+		// ================== START OF FIX ==================
+
+		// Property Getter/Setter Declarations
+		for (PropertyDeclaration prop : declaration.getProperties())
+		{
+			PropertySymbol propSymbol = prop.getResolvedSymbol();
+			if (propSymbol != null)
+			{
+				if (propSymbol.getGetter() != null)
+				{
+					MethodSymbol getter = propSymbol.getGetter();
+					String returnType = toCppType(getter.getType());
+					appendHeaderLine(returnType + " " + getter.getName() + "() const;");
+				}
+				if (propSymbol.getSetter() != null)
+				{
+					MethodSymbol setter = propSymbol.getSetter();
+					String paramType = toCppType(propSymbol.getType());
+					appendHeaderLine("void " + setter.getName() + "(const " + paramType + "& value);");
+				}
+			}
+		}
+
+		// This handles the special case for the native String class's private members
 		if (currentClassSymbol.isNative() && "nebula.core.String".equals(fqn))
 		{
-			appendHeaderLine("\n\t// Special constructor for wrapping std::string");
-			appendHeaderLine("\tString(const std::string& raw_str);");
-			appendHeaderLine("\n\t// Accessor for the raw C++ string data");
-			appendHeaderLine("\tconst std::string& raw() const;");
-			dedent();
+			appendHeaderLine("\\n\\t// Special constructor for wrapping std::string");
+			appendHeaderLine("\\tString(const std::string& raw_str);");
+			appendHeaderLine("\\n\\t// Accessor for the raw C++ string data");
+			appendHeaderLine("\\tconst std::string& raw() const;");
+		}
+
+		// Backing Fields for Auto-Properties
+		List<PropertyDeclaration> autoProps = declaration.getProperties().stream()
+				.filter(PropertyDeclaration::isAuto)
+				.toList();
+
+		if (!autoProps.isEmpty())
+		{
+			dedent(); // Exit public section
 			appendHeaderLine("private:");
 			indent();
+			for (PropertyDeclaration prop : autoProps)
+			{
+				PropertySymbol propSymbol = prop.getResolvedSymbol();
+				if (propSymbol != null)
+				{
+					String fieldType = toCppType(propSymbol.getType());
+					String fieldName = "_" + propSymbol.getName();
+					appendHeaderLine(fieldType + " " + fieldName + ";");
+				}
+			}
+		}
+
+		// Add the private _data field for the native String class
+		if (currentClassSymbol.isNative() && "nebula.core.String".equals(fqn))
+		{
+			if (autoProps.isEmpty())
+			{ // Only start a private section if one isn't already open
+				dedent();
+				appendHeaderLine("private:");
+				indent();
+			}
 			appendHeaderLine("std::string _data;");
 		}
+
+		// =================== END OF FIX ===================
 
 		dedent();
 		appendHeaderLine("}; // class " + simpleName);
@@ -636,6 +692,61 @@ public class CppGenerator implements ASTVisitor<String>
 		generatedClassCodeMap.put(fqn.replace('.', '/') + ".cpp", currentClassCodeBuilder.toString());
 
 		this.currentClassSymbol = previousClassSymbol;
+		return null;
+	}
+
+	@Override
+	public String visitPropertyDeclaration(PropertyDeclaration declaration)
+	{
+		// This visitor is responsible for generating the C++ code for the property's
+		// get and set methods. The declaration of the backing field (for auto-props)
+		// happens in the header generation part of visitClassDeclaration.
+
+		PropertySymbol propSymbol = declaration.getResolvedSymbol();
+		if (propSymbol == null)
+		{
+			error(declaration.getName(), "Property symbol not resolved for '" + declaration.getName().getLexeme() + "'.");
+			return null;
+		}
+
+		String simpleName = currentClassSymbol.getName();
+
+		// --- Generate Getter ---
+		if (declaration.getGetAccessor() != null)
+		{
+			MethodSymbol getter = propSymbol.getGetter();
+			appendLine(toCppType(getter.getType()) + " " + simpleName + "::" + getter.getName() + "() const {");
+			indent();
+			if (declaration.isAuto())
+			{
+				appendLine("return this->_" + propSymbol.getName() + ";");
+			}
+			else
+			{
+				declaration.getGetAccessor().getBody().accept(this);
+			}
+			dedent();
+			appendLine("}\n");
+		}
+
+		// --- Generate Setter ---
+		if (declaration.getSetAccessor() != null)
+		{
+			MethodSymbol setter = propSymbol.getSetter();
+			appendLine("void " + simpleName + "::" + setter.getName() + "(const " + toCppType(propSymbol.getType()) + "& value) {");
+			indent();
+			if (declaration.isAuto())
+			{
+				appendLine("this->_" + propSymbol.getName() + " = value;");
+			}
+			else
+			{
+				declaration.getSetAccessor().getBody().accept(this);
+			}
+			dedent();
+			appendLine("}\n");
+		}
+
 		return null;
 	}
 
@@ -1148,21 +1259,17 @@ public class CppGenerator implements ASTVisitor<String>
 				String params = formatCppParameters(ctor.getParameters());
 				String ctorSignature = simpleName + "::" + simpleName + "(" + params + ")";
 
-				// +++ FIX: Differentiate between String constructors +++
 				if ("nebula.core.String".equals(fqn))
 				{
 					if (ctor.getParameters().isEmpty())
 					{
-						// Default constructor: String()
 						ctorSignature += " : _data(\"\")";
 					}
 					else
 					{
-						// Copy constructor: String(String other)
 						ctorSignature += " : _data(other ? other->raw() : \"\")";
 					}
 				}
-				// +++ END OF FIX +++
 
 				appendLine(ctorSignature + " {");
 				indent();
@@ -1185,7 +1292,7 @@ public class CppGenerator implements ASTVisitor<String>
 			appendLine("}\n");
 		}
 
-		// 3. Methods
+		// 3. Methods (from explicit method declarations)
 		for (MethodDeclaration method : declaration.getMethods())
 		{
 			MethodSymbol methodSymbol = method.getResolvedSymbol();
@@ -1231,6 +1338,12 @@ public class CppGenerator implements ASTVisitor<String>
 				dedent();
 				appendLine("}\n");
 			}
+		}
+
+		// 4. Properties (generates the bodies of get/set methods)
+		for (PropertyDeclaration propDecl : declaration.getProperties())
+		{
+			propDecl.accept(this); // This will call our new visitPropertyDeclaration
 		}
 	}
 
@@ -1298,82 +1411,92 @@ public class CppGenerator implements ASTVisitor<String>
 		String left = expression.getLeft().accept(this);
 		String right = expression.getRight().accept(this);
 		String op = expression.getOperator().getLexeme();
-
 		Type leftType = expression.getLeft().getResolvedType();
 		Type rightType = expression.getRight().getResolvedType();
 
-		// Handle null comparisons for reference types without dereferencing.
+		// Handle null comparisons first
 		if ((op.equals("==") || op.equals("!=")) && (leftType.isReferenceType() || rightType.isReferenceType()))
 		{
-			String cxxRight = right;
 			if (rightType instanceof NullType)
 			{
-				cxxRight = "nullptr";
+				right = "nullptr";
 			}
-			return "(" + left + " " + op + " " + cxxRight + ")";
+			if (leftType instanceof NullType)
+			{
+				left = "nullptr";
+			}
+			return "(" + left + " " + op + " " + right + ")";
 		}
 
-		// If the left side is a class or array type, it's a shared_ptr.
-		// Member operators require the object to be dereferenced.
+		// --- REVISED STRING CONCATENATION LOGIC ---
+		if (op.equals("+") && (isNebulaString(leftType) || isNebulaString(rightType)))
+		{
+			String leftOperand = left;
+			String rightOperand = right;
+
+			// If the left type is a string, but the right isn't, convert the right.
+			if (isNebulaString(leftType) && !isNebulaString(rightType))
+			{
+				rightOperand = convertToNebulaString(expression.getRight());
+			}
+			// If the right type is a string, but the left isn't, convert the left.
+			else if (!isNebulaString(leftType) && isNebulaString(rightType))
+			{
+				leftOperand = convertToNebulaString(expression.getLeft());
+			}
+
+			return "(*" + leftOperand + " + " + rightOperand + ")";
+		}
+
+		// --- Original Logic for other operators ---
 		if (leftType instanceof ClassType || leftType instanceof ArrayType)
 		{
 			// For any class type, dereference the left operand to access member operators.
-			String leftOperand = "*" + left;
-
-			// String concatenation requires special handling for the right operand,
-			// which may need to be converted to a string.
-			if (op.equals("+") && leftType instanceof ClassType && ((ClassType) leftType).getFqn().equals("nebula.core.String"))
-			{
-				String rightOperandForConcat = right;
-
-				// --- START OF FIXED BLOCK ---
-				if (rightType instanceof PrimitiveType)
-				{
-					PrimitiveType primitiveRightType = (PrimitiveType) rightType;
-
-					// For boolean, convert to "true" or "false" string
-					if (primitiveRightType.equals(PrimitiveType.BOOL))
-					{
-						rightOperandForConcat = "std::make_shared<nebula::core::String>(" + right + " ? \"true\" : \"false\")";
-					}
-					// For char types, convert to a single-character string
-					else if (primitiveRightType.equals(PrimitiveType.CHAR) ||
-							primitiveRightType.equals(PrimitiveType.CHAR16) ||
-							primitiveRightType.equals(PrimitiveType.CHAR32))
-					{
-						rightOperandForConcat = "std::make_shared<nebula::core::String>(std::string(1, " + right + "))";
-					}
-					// For floating-point types, use the high-precision conversion helper
-					else if (primitiveRightType.equals(PrimitiveType.FLOAT) || primitiveRightType.equals(PrimitiveType.DOUBLE))
-					{
-						rightOperandForConcat = generateHighPrecisionString(expression.getRight());
-					}
-					// For all other numeric types (int, byte, long, etc.), use std::to_string
-					else if (primitiveRightType.isNumeric())
-					{
-						rightOperandForConcat = "std::make_shared<nebula::core::String>(std::to_string(" + right + "))";
-					}
-				}
-				// --- END OF FIXED BLOCK ---
-				else if (rightType instanceof ClassType)
-				{
-					// If the right operand is another Nebula class, call its toString() method.
-					if (!((ClassType) rightType).getFqn().equals("nebula.core.String"))
-					{
-						rightOperandForConcat = right + "->toString()";
-					}
-				}
-
-				return "(*" + left + " + " + rightOperandForConcat + ")";
-			}
-
-			// For all other class types and operators, use the dereferenced
-			// left operand. The right operand is assumed to be of a compatible type.
-			return "(" + leftOperand + " " + op + " " + right + ")";
+			return "(*" + left + " " + op + " " + right + ")";
 		}
 
 		// Default binary expression handling for primitives (e.g., int + int)
 		return "(" + left + " " + op + " " + right + ")";
+	}
+
+	// Add this new helper method to encapsulate the conversion logic
+	private String convertToNebulaString(Expression expression)
+	{
+		Type type = expression.getResolvedType();
+		String operand = expression.accept(this);
+
+		if (type instanceof PrimitiveType)
+		{
+			PrimitiveType primitiveType = (PrimitiveType) type;
+			if (primitiveType.equals(PrimitiveType.BOOL))
+			{
+				return "std::make_shared<nebula::core::String>(" + operand + " ? \"true\" : \"false\")";
+			}
+			else if (primitiveType.equals(PrimitiveType.CHAR) ||
+					primitiveType.equals(PrimitiveType.CHAR16) ||
+					primitiveType.equals(PrimitiveType.CHAR32))
+			{
+				return "std::make_shared<nebula::core::String>(std::string(1, " + operand + "))";
+			}
+			else if (primitiveType.equals(PrimitiveType.FLOAT) || primitiveType.equals(PrimitiveType.DOUBLE))
+			{
+				return generateHighPrecisionString(expression);
+			}
+			else if (primitiveType.isNumeric())
+			{
+				return "std::make_shared<nebula::core::String>(std::to_string(" + operand + "))";
+			}
+		}
+		else if (type instanceof ClassType)
+		{
+			// If the operand is another Nebula class, call its toString() method.
+			if (!isNebulaString(type))
+			{
+				return operand + "->toString()";
+			}
+		}
+		// For other cases, just return the operand as is (e.g., if it's already a string).
+		return operand;
 	}
 
 	@Override
@@ -1397,8 +1520,9 @@ public class CppGenerator implements ASTVisitor<String>
 		Object value = expression.getValue();
 		if (expression.getLiteralToken().getType() == TokenType.STRING_LITERAL)
 		{
-			// Ensure string literals are wrapped in std::make_shared<nebula::core::String>
-			return "std::make_shared<nebula::core::String>(\"" + value.toString().replace("\"", "\\\"") + "\")";
+			// Use the new helper to make the string C++ safe
+			String escapedValue = escapeCppString(value.toString());
+			return "std::make_shared<nebula::core::String>(\"" + escapedValue + "\")";
 		}
 		if (expression.getLiteralToken().getType() == TokenType.BOOLEAN_LITERAL)
 		{
@@ -1416,6 +1540,31 @@ public class CppGenerator implements ASTVisitor<String>
 	public String visitIdentifierExpression(IdentifierExpression expression)
 	{
 		Symbol symbol = expression.getResolvedSymbol();
+
+		// ================== START OF FIX ==================
+		if (symbol instanceof PropertySymbol)
+		{
+			PropertySymbol propSymbol = (PropertySymbol) symbol;
+			MethodSymbol getter = propSymbol.getGetter();
+			if (getter == null)
+			{
+				error(expression.getName(), "Property '" + propSymbol.getName() + "' is write-only and cannot be read.");
+				return "/* ERROR: read from write-only property */";
+			}
+
+			// If it's an instance property, it's an implicit 'this' call.
+			if (!propSymbol.isStatic())
+			{
+				return "this->" + getter.getName() + "()";
+			}
+			else
+			{
+				// Handle static property access.
+				return propSymbol.getOwnerClass().getFqn().replace(".", "::") + "::" + getter.getName() + "()";
+			}
+		}
+		// =================== END OF FIX ===================
+
 		if (symbol instanceof VariableSymbol)
 		{
 			VariableSymbol varSym = (VariableSymbol) symbol;
@@ -1441,25 +1590,46 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitAssignmentExpression(AssignmentExpression expression)
 	{
+		// Check if the target of the assignment is a property.
+		Symbol targetSymbol = expression.getTarget().getResolvedSymbol();
+
+		if (targetSymbol instanceof PropertySymbol)
+		{
+			PropertySymbol propSymbol = (PropertySymbol) targetSymbol;
+			MethodSymbol setter = propSymbol.getSetter();
+			if (setter == null)
+			{
+				error(expression.getTarget().getFirstToken(), "Property '" + propSymbol.getName() + "' is read-only.");
+				return "/* ERROR: assignment to read-only property */";
+			}
+
+			String targetObject;
+			// The target itself can be complex (e.g., array[i].prop), so we need to get the object part
+			if (expression.getTarget() instanceof DotExpression)
+			{
+				targetObject = ((DotExpression) expression.getTarget()).getLeft().accept(this);
+			}
+			else
+			{
+				targetObject = "this"; // Implied 'this' for direct property access
+			}
+
+			String value = expression.getValue().accept(this);
+			return targetObject + "->" + setter.getName() + "(" + value + ")";
+		}
+
+		// --- Original logic for non-property assignments ---
 		String target = expression.getTarget().accept(this);
 		String value = expression.getValue().accept(this);
 		String op = expression.getOperator().getLexeme();
-
 		Type targetType = expression.getTarget().getResolvedType();
 
-		// Check for a compound assignment operator (e.g., "+=", "-=") on a class type.
 		if (targetType instanceof ClassType && op.length() > 1 && op.endsWith("="))
 		{
-			// Transform "a += b" into "a = (*a) + b".
-			// This makes compound assignment syntactic sugar for the binary operator.
-			String binaryOp = op.substring(0, op.length() - 1); // Extract "+" from "+="
-
-			// The expression `(*target + value)` will be handled by your now-fixed
-			// visitBinaryExpression, which correctly dereferences the object.
+			String binaryOp = op.substring(0, op.length() - 1);
 			return target + " = (*" + target + " " + binaryOp + " " + value + ")";
 		}
 
-		// Default behavior for primitives or simple assignment ("=").
 		return target + " " + op + " " + value;
 	}
 
@@ -1516,24 +1686,34 @@ public class CppGenerator implements ASTVisitor<String>
 	{
 		Symbol symbol = expr.getResolvedSymbol();
 
-		// NEW: Handle static properties on primitive types.
-		// We identify them because we stored them as static VariableSymbols with the 'isWrapper' flag.
+		// Check if we are accessing a property
+		if (symbol instanceof PropertySymbol)
+		{
+			PropertySymbol propSymbol = (PropertySymbol) symbol;
+			MethodSymbol getter = propSymbol.getGetter();
+			if (getter == null)
+			{
+				error(expr.getMemberName(), "Property '" + propSymbol.getName() + "' is write-only.");
+				return "/* ERROR: access to write-only property */";
+			}
+			String left = expr.getLeft().accept(this);
+			return left + "->" + getter.getName() + "()";
+		}
+
+		// --- Original logic for non-property access ---
 		if (symbol instanceof VariableSymbol)
 		{
 			VariableSymbol varSymbol = (VariableSymbol) symbol;
 			if (varSymbol.isStatic() && varSymbol.isWrapper() && varSymbol.getCppTarget() != null)
 			{
-				// This is one of our primitive static properties. Just return the C++ target code.
 				return varSymbol.getCppTarget();
 			}
 		}
 
-		// If not a static property, proceed with existing logic.
 		String left = expr.getLeft().accept(this);
 		String memberName = expr.getMemberName().getLexeme();
 		Type leftType = expr.getLeft().getResolvedType();
 
-		// When accessing '.size' on an array, which is a shared_ptr to a vector.
 		if (leftType instanceof ArrayType)
 		{
 			if (memberName.equals("size"))
@@ -1542,12 +1722,10 @@ public class CppGenerator implements ASTVisitor<String>
 			}
 		}
 
-		// NEW: Handle instance property 'size' for strings.
 		if (leftType instanceof ClassType && ((ClassType) leftType).getFqn().equals("nebula.core.String"))
 		{
 			if (memberName.equals("length"))
 			{
-				// The native String class has a length() method. We map .size to a call to it.
 				return left + "->length()";
 			}
 		}
@@ -1558,11 +1736,9 @@ public class CppGenerator implements ASTVisitor<String>
 		}
 		else if (symbol instanceof VariableSymbol && ((VariableSymbol) symbol).isStatic())
 		{
-			// This handles regular static fields that are not wrappers.
 			return left + "::" + memberName;
 		}
 
-		// For regular member access on a shared_ptr, use ->
 		return left + "->" + memberName;
 	}
 
@@ -2031,5 +2207,44 @@ public class CppGenerator implements ASTVisitor<String>
 		}
 		// Fallback for other primitives
 		return "std::make_shared<nebula::core::String>(std::to_string(" + exprCode + "))";
+	}
+
+	private String escapeCppString(String rawString)
+	{
+		if (rawString == null)
+		{
+			return "";
+		}
+		StringBuilder escaped = new StringBuilder();
+		for (char c : rawString.toCharArray())
+		{
+			switch (c)
+			{
+				case '\\':
+					escaped.append("\\\\");
+					break;
+				case '"':
+					escaped.append("\\\"");
+					break;
+				case '\n':
+					escaped.append("\\n");
+					break;
+				case '\t':
+					escaped.append("\\t");
+					break;
+				case '\r':
+					escaped.append("\\r");
+					break;
+				default:
+					escaped.append(c);
+					break;
+			}
+		}
+		return escaped.toString();
+	}
+
+	private boolean isNebulaString(Type type)
+	{
+		return type instanceof ClassType && ((ClassType) type).getFqn().equals("nebula.core.String");
 	}
 }

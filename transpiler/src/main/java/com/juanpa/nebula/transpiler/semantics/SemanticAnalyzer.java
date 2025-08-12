@@ -3,12 +3,7 @@ package com.juanpa.nebula.transpiler.semantics;
 
 import com.juanpa.nebula.transpiler.ast.ASTVisitor;
 import com.juanpa.nebula.transpiler.ast.Program;
-import com.juanpa.nebula.transpiler.ast.declarations.ClassDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.ConstructorDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.FieldDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.MethodDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.NamespaceDeclaration;
-import com.juanpa.nebula.transpiler.ast.declarations.ImportDirective;
+import com.juanpa.nebula.transpiler.ast.declarations.*;
 import com.juanpa.nebula.transpiler.ast.expressions.*;
 import com.juanpa.nebula.transpiler.ast.statements.*;
 import com.juanpa.nebula.transpiler.lexer.Token;
@@ -171,6 +166,73 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 					vs.setOwnerClass(cs);
 					cs.getClassScope().define(vs);
 				}
+
+				// Define properties and synthesize their accessors before body analysis
+				for (PropertyDeclaration pd : cd.getProperties())
+				{
+					Type propertyType = resolveType(pd.getTypeToken(), 0);
+					if (propertyType instanceof ErrorType)
+					{
+						propertyType = ErrorType.INSTANCE;
+					}
+
+					boolean isStatic = pd.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.STATIC);
+					boolean isPublic = pd.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.PUBLIC);
+
+					PropertySymbol ps = new PropertySymbol(pd.getName().getLexeme(), propertyType, pd.getName(), isStatic, isPublic);
+					ps.setOwnerClass(cs);
+					cs.propertiesByName.put(ps.getName(), ps);
+					cs.getClassScope().define(ps);
+					pd.setResolvedSymbol(ps);
+
+					// ======================= LOGIC MOVED HERE (START) =======================
+					if (pd.isAuto())
+					{
+						// 1. Synthesize a backing field
+						String backingFieldName = "_" + ps.getName();
+						VariableSymbol backingField = new VariableSymbol(backingFieldName, propertyType, pd.getName(), true, isStatic, false, false, false, null);
+						backingField.setOwnerClass(cs);
+						cs.getClassScope().define(backingField);
+
+						// 2. Synthesize getter and setter methods
+						if (pd.getGetAccessor() != null)
+						{
+							MethodSymbol getter = new MethodSymbol("get_" + ps.getName(), propertyType, List.of(), pd.getName(), new SymbolTable(cs.getClassScope(), "Getter"), isStatic, isPublic);
+							getter.setOwnerClass(cs);
+							ps.setGetter(getter);
+							cs.defineMethod(getter);
+						}
+						if (pd.getSetAccessor() != null)
+						{
+							boolean isSetterPublic = !pd.getSetAccessor().getModifiers().stream().anyMatch(m -> m.getType() == TokenType.PRIVATE);
+							MethodSymbol setter = new MethodSymbol("set_" + ps.getName(), PrimitiveType.VOID, List.of(propertyType), pd.getName(), new SymbolTable(cs.getClassScope(), "Setter"), isStatic, isSetterPublic);
+							setter.setOwnerClass(cs);
+							ps.setSetter(setter);
+							cs.defineMethod(setter);
+						}
+					}
+					else
+					{ // Handle Full Property
+						if (pd.getGetAccessor() != null)
+						{
+							MethodSymbol getter = new MethodSymbol("get_" + ps.getName(), propertyType, List.of(), pd.getName(), new SymbolTable(cs.getClassScope(), "GetterBody"), isStatic, isPublic);
+							getter.setOwnerClass(cs);
+							ps.setGetter(getter);
+							cs.defineMethod(getter);
+						}
+						if (pd.getSetAccessor() != null)
+						{
+							AccessorDeclaration accessor = pd.getSetAccessor();
+							boolean isSetterPublic = !accessor.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.PRIVATE);
+							MethodSymbol setter = new MethodSymbol("set_" + ps.getName(), PrimitiveType.VOID, List.of(propertyType), pd.getName(), new SymbolTable(cs.getClassScope(), "SetterBody"), isStatic, isSetterPublic);
+							setter.setOwnerClass(cs);
+							ps.setSetter(setter);
+							cs.defineMethod(setter);
+						}
+					}
+					// ======================== LOGIC MOVED HERE (END) ========================
+				}
+
 				// Define constructors
 				for (ConstructorDeclaration ctor : cd.getConstructors())
 				{
@@ -925,6 +987,19 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			inStaticContext = oldStaticContext; // Restore
 		}
 
+		// ADD THIS LOOP for properties. It synthesizes symbols before methods are analyzed.
+		for (PropertyDeclaration propDecl : declaration.getProperties())
+		{
+			boolean oldStaticContext = inStaticContext;
+			if (propDecl.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.STATIC))
+			{
+				inStaticContext = true;
+			}
+			propDecl.accept(this);
+			inStaticContext = oldStaticContext;
+		}
+
+
 		// Phase 2: Visit the bodies of methods and constructors
 		for (ConstructorDeclaration constructorDecl : declaration.getConstructors())
 		{
@@ -1132,6 +1207,53 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		exitScope();
 		currentClass = null;
+		return PrimitiveType.VOID;
+	}
+
+	@Override
+	public Type visitPropertyDeclaration(PropertyDeclaration declaration)
+	{
+		// Symbols were created in Phase 2. Here, we only analyze the bodies of full properties.
+		PropertySymbol propertySymbol = declaration.getResolvedSymbol();
+		if (propertySymbol == null)
+		{
+			return ErrorType.INSTANCE; // Should not happen
+		}
+
+		// Only analyze bodies for non-auto properties
+		if (!declaration.isAuto())
+		{
+			// Analyze the getter body if it exists
+			if (declaration.getGetAccessor() != null)
+			{
+				MethodSymbol getter = propertySymbol.getGetter();
+				MethodSymbol oldMethod = currentMethod;
+				currentMethod = getter;
+				enterScope(getter.getMethodScope());
+				declaration.getGetAccessor().getBody().accept(this);
+				exitScope();
+				currentMethod = oldMethod;
+			}
+
+			// Analyze the setter body if it exists
+			if (declaration.getSetAccessor() != null)
+			{
+				MethodSymbol setter = propertySymbol.getSetter();
+				MethodSymbol oldMethod = currentMethod;
+				currentMethod = setter;
+				enterScope(setter.getMethodScope());
+
+				// Define the implicit 'value' parameter for the setter body
+				Token valueToken = new Token(TokenType.IDENTIFIER, "value", null, declaration.getName().getLine(), declaration.getName().getColumn());
+				VariableSymbol valueParam = new VariableSymbol("value", propertySymbol.getType(), valueToken, true, false, false, true);
+				currentScope.define(valueParam);
+
+				declaration.getSetAccessor().getBody().accept(this);
+				exitScope();
+				currentMethod = oldMethod;
+			}
+		}
+
 		return PrimitiveType.VOID;
 	}
 
@@ -1984,14 +2106,13 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return ErrorType.INSTANCE;
 		}
 
-		if (!(expression.getTarget() instanceof IdentifierExpression ||
-				expression.getTarget() instanceof DotExpression ||
-				expression.getTarget() instanceof ArrayAccessExpression))
+		if (!(expression.getTarget() instanceof IdentifierExpression || expression.getTarget() instanceof DotExpression || expression.getTarget() instanceof ArrayAccessExpression))
 		{
 			error(expression.getOperator(), "Invalid assignment target. Must be a variable, property, or array element.");
 			return ErrorType.INSTANCE;
 		}
 
+		// This block replaces the original 'resolvedTargetSymbol instanceof VariableSymbol' check.
 		Symbol resolvedTargetSymbol = null;
 		if (expression.getTarget() instanceof IdentifierExpression)
 		{
@@ -2001,37 +2122,45 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		{
 			resolvedTargetSymbol = ((DotExpression) expression.getTarget()).getResolvedSymbol();
 		}
-		else if (expression.getTarget() instanceof ArrayAccessExpression)
+
+		if (resolvedTargetSymbol instanceof PropertySymbol)
 		{
-			// For array access, the base array/string itself might be the target symbol
-			Expression baseArray = ((ArrayAccessExpression) expression.getTarget()).getArray();
-			if (baseArray instanceof IdentifierExpression)
+			PropertySymbol propSymbol = (PropertySymbol) resolvedTargetSymbol;
+			MethodSymbol setter = propSymbol.getSetter();
+			if (setter == null)
 			{
-				resolvedTargetSymbol = ((IdentifierExpression) baseArray).getResolvedSymbol();
+				error(expression.getOperator(), "Property '" + propSymbol.getName() + "' is read-only and cannot be assigned to.");
+				return ErrorType.INSTANCE;
 			}
-			else if (baseArray instanceof DotExpression)
+
+			// ================== START OF FIX ==================
+			// Check if the setter is accessible from the current context.
+			if (!checkAccess(setter, expression.getTarget().getFirstToken()))
 			{
-				resolvedTargetSymbol = ((DotExpression) baseArray).getResolvedSymbol();
+				return ErrorType.INSTANCE; // Access denied
 			}
-			// resolvedTargetSymbol will be the array/string itself, not the element, which is correct for const check
+			// =================== END OF FIX ===================
+
 		}
-
-
-		if (resolvedTargetSymbol instanceof VariableSymbol)
+		else if (resolvedTargetSymbol instanceof VariableSymbol)
 		{
 			VariableSymbol varSymbol = (VariableSymbol) resolvedTargetSymbol;
+
+			// ================== START OF FIX ==================
+			// Check if the field is accessible.
+			if (!checkAccess(varSymbol, expression.getTarget().getFirstToken()))
+			{
+				return ErrorType.INSTANCE;
+			}
+			// =================== END OF FIX ===================
+
 			if (varSymbol.isConst())
 			{
 				error(expression.getOperator(), "Cannot assign to constant variable/field '" + varSymbol.getName() + "'.");
 				return ErrorType.INSTANCE;
 			}
-			// Mark as initialized if it's a variable or field
 			varSymbol.setInitialized(true);
 		}
-		// The ArrayAccessExpression const check logic was redundant here as it's now handled by the general
-		// `resolvedTargetSymbol instanceof VariableSymbol` check if the base of the array access is a variable/field.
-		// If the base is a literal array (e.g., `new int[]{1,2,3}[0] = 5;`), that would be an AST structure
-		// where the base is not a VariableSymbol, and generally array literals are not mutable in this way.
 
 		// Corrected assignment check direction.
 		if (!targetType.isAssignableFrom(valueType))
@@ -2181,6 +2310,14 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return ErrorType.INSTANCE;
 		}
 
+		// ================== START OF FIX ==================
+		if (!checkAccess(resolvedMethod, nameToken))
+		{
+			expression.setResolvedType(ErrorType.INSTANCE);
+			return ErrorType.INSTANCE;
+		}
+		// =================== END OF FIX ===================
+
 		expression.getCallee().setResolvedSymbol(resolvedMethod);
 
 		Type resultType = resolvedMethod.getType();
@@ -2285,6 +2422,33 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		// Resolve the member within the containerClassSymbol's scope
 		String memberName = expression.getMemberName().getLexeme();
+
+		// First, check if the member is a property.
+		if (containerClassSymbol.propertiesByName.containsKey(memberName))
+		{
+			PropertySymbol propSymbol = containerClassSymbol.propertiesByName.get(memberName);
+			MethodSymbol getter = propSymbol.getGetter();
+
+			if (getter == null)
+			{
+				error(expression.getMemberName(), "Property '" + propSymbol.getName() + "' is write-only.");
+				expression.setResolvedType(ErrorType.INSTANCE);
+				return ErrorType.INSTANCE;
+			}
+
+			// ================== START OF FIX ==================
+			if (!checkAccess(getter, expression.getMemberName()))
+			{
+				expression.setResolvedType(ErrorType.INSTANCE);
+				return ErrorType.INSTANCE; // Access denied
+			}
+			// =================== END OF FIX ===================
+
+			expression.setResolvedSymbol(propSymbol);
+			expression.setResolvedType(propSymbol.getType());
+			return propSymbol.getType();
+		}
+
 		resolvedMemberSymbol = containerClassSymbol.resolveMember(memberName);
 
 		if (resolvedMemberSymbol == null)
@@ -2294,6 +2458,15 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			expression.setResolvedType(ErrorType.INSTANCE);
 			return ErrorType.INSTANCE;
 		}
+
+		// ================== START OF FIX ==================
+		// Add an access check for any resolved member (field or method group).
+		if (!checkAccess(resolvedMemberSymbol, expression.getMemberName()))
+		{
+			expression.setResolvedType(ErrorType.INSTANCE);
+			return ErrorType.INSTANCE;
+		}
+		// =================== END OF FIX ===================
 
 		// Check for static vs. instance access consistency
 		// If the left part resolved to a ClassSymbol itself, it's a static access.
@@ -2730,8 +2903,20 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	@Override
 	public Type visitCastExpression(CastExpression expression)
 	{
+		// Resolve the type we are casting to. This is our hint.
 		Type targetType = resolveType(expression.getTypeToken(), expression.getRank());
+
+		// Before visiting the inner expression, we set the "expected type" context.
+		// This allows the resolver to use the cast's target type as a hint.
+		Type oldExpectedType = this.expectedTypeForNextExpression; // Save the outer context
+		this.expectedTypeForNextExpression = targetType;           // Provide the hint
+
+		// Now, visit the inner expression (e.g., the getPi() call).
+		// The `visitCallExpression` will now have the context it needs to resolve the ambiguity.
 		Type originalType = expression.getExpression().accept(this);
+
+		// Restore the outer context to avoid affecting other expressions at the same level.
+		this.expectedTypeForNextExpression = oldExpectedType;
 
 		if (targetType instanceof ErrorType || originalType instanceof ErrorType)
 		{
@@ -2739,7 +2924,9 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return ErrorType.INSTANCE;
 		}
 
-		// Add more sophisticated casting rules here if needed
+		// You could add more sophisticated casting rules here, e.g., checking if `originalType`
+		// can actually be cast to `targetType`. For now, we trust the programmer's cast.
+
 		expression.setResolvedType(targetType);
 		return targetType;
 	}
@@ -3164,5 +3351,47 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// m1 is more specific only if it's assignable in all positions AND
 		// is strictly narrower in at least one position.
 		return hasStricterParameter;
+	}
+
+	/**
+	 * Checks if a member symbol is accessible from the current class context.
+	 * Reports an error if access is denied.
+	 *
+	 * @param member     The member symbol (field, method, property accessor) to check.
+	 * @param errorToken The token to use for error reporting location.
+	 * @return True if access is allowed, false otherwise.
+	 */
+	private boolean checkAccess(Symbol member, Token errorToken)
+	{
+		if (member.isPublic())
+		{
+			return true; // Public members are always accessible.
+		}
+
+		// Determine the class that owns the member
+		ClassSymbol ownerClass = null;
+		if (member instanceof MethodSymbol)
+		{
+			ownerClass = ((MethodSymbol) member).getOwnerClass();
+		}
+		else if (member instanceof VariableSymbol)
+		{
+			ownerClass = ((VariableSymbol) member).getOwnerClass();
+		}
+
+		if (ownerClass == null)
+		{
+			return true; // Not a class member (e.g., local variable), so access is fine.
+		}
+
+		// Private members are only accessible from within their own class.
+		if (currentClass != null && currentClass.equals(ownerClass))
+		{
+			return true;
+		}
+
+		// If we reach here, access is denied.
+		error(errorToken, "Member '" + member.getName() + "' is inaccessible due to its protection level.");
+		return false;
 	}
 }

@@ -25,12 +25,12 @@ public class ClassDeclaration implements ASTNode
 	private final Token rightBrace; // The '}' token closing the class body
 
 	private final List<FieldDeclaration> fields;
+	private final List<PropertyDeclaration> properties;
 	private final List<ConstructorDeclaration> constructors;
 	private final List<MethodDeclaration> methods;
 
-	// NEW: Field to store the fully qualified name of the containing namespace
 	private String containingNamespace;
-	private final boolean isNative; // ADD THIS
+	private final boolean isNative;
 
 	/**
 	 * Comprehensive constructor for ClassDeclaration used by the parser.
@@ -49,7 +49,7 @@ public class ClassDeclaration implements ASTNode
 	 */
 	public ClassDeclaration(List<Token> modifiers, Token classKeyword, Token name,
 	                        Token extendsKeyword, Token superClassName,
-	                        Token leftBrace, List<FieldDeclaration> fields,
+	                        Token leftBrace, List<FieldDeclaration> fields, List<PropertyDeclaration> properties,
 	                        List<MethodDeclaration> methods, List<ConstructorDeclaration> constructors,
 	                        Token rightBrace, String containingNamespace, boolean isNative) // NEW: Added containingNamespace parameter
 	{
@@ -62,9 +62,10 @@ public class ClassDeclaration implements ASTNode
 		this.rightBrace = rightBrace;
 		this.fields = fields;
 		this.constructors = constructors;
+		this.properties = properties;
 		this.methods = methods;
 		this.containingNamespace = containingNamespace;
-		this.isNative = isNative; // ADD THIS
+		this.isNative = isNative;
 	}
 
 	public Token getName()
@@ -99,6 +100,11 @@ public class ClassDeclaration implements ASTNode
 	public List<FieldDeclaration> getFields()
 	{
 		return Collections.unmodifiableList(fields);
+	}
+
+	public List<PropertyDeclaration> getProperties()
+	{
+		return Collections.unmodifiableList(properties);
 	}
 
 	public List<ConstructorDeclaration> getConstructors()

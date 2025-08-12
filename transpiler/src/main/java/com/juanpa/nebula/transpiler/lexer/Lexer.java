@@ -76,7 +76,7 @@ public class Lexer
 		keywords.put("case", TokenType.CASE);
 		keywords.put("default", TokenType.DEFAULT);
 		keywords.put("is", TokenType.IS);
-		keywords.put("alias", TokenType.ALIAS); // NEW: Added alias keyword
+		keywords.put("alias", TokenType.ALIAS);
 		keywords.put("native", TokenType.NATIVE);
 		keywords.put("wrapper", TokenType.WRAPPER);
 		keywords.put("char16", TokenType.CHAR16);
@@ -89,13 +89,13 @@ public class Lexer
 		keywords.put("uint16", TokenType.UINT16);
 		keywords.put("uint32", TokenType.UINT32);
 		keywords.put("uint64", TokenType.UINT64);
-		keywords.put("ubyte", TokenType.UINT8); // Alias
-		keywords.put("ushort", TokenType.UINT16); // Alias
-		keywords.put("uint", TokenType.UINT32); // Alias
-		keywords.put("ulong", TokenType.UINT64); // Alias
-		keywords.put("short", TokenType.INT16); // Alias
-		keywords.put("long", TokenType.INT64); // Alias
-		keywords.put("null", TokenType.NULL); // Alias
+		keywords.put("ubyte", TokenType.UINT8);
+		keywords.put("ushort", TokenType.UINT16);
+		keywords.put("uint", TokenType.UINT32);
+		keywords.put("ulong", TokenType.UINT64);
+		keywords.put("short", TokenType.INT16);
+		keywords.put("long", TokenType.INT64);
+		keywords.put("null", TokenType.NULL);
 	}
 
 	/**
@@ -502,11 +502,10 @@ public class Lexer
 		if (peek() == '.' && Character.isDigit(peekNext()))
 		{
 			isFloatingPoint = true;
-			advance(); // Consume the '.'
-			while (Character.isDigit(peek()))
+			do
 			{
 				advance();
-			}
+			} while (Character.isDigit(peek()));
 		}
 
 		String numberStr = source.substring(start, current);
@@ -815,6 +814,14 @@ public class Lexer
 		}
 
 		// The indentation is the whitespace after the last newline.
+		StringBuilder finalValue = getStringBuilder(rawContent, lastNewline);
+
+		// 5. Add the final processed string token.
+		addToken(TokenType.STRING_LITERAL, finalValue.toString());
+	}
+
+	private static StringBuilder getStringBuilder(String rawContent, int lastNewline)
+	{
 		String closingIndent = rawContent.substring(lastNewline + 1);
 
 		// The C# spec requires the closing line to contain only whitespace.
@@ -853,8 +860,6 @@ public class Lexer
 				finalValue.append(currentLine);
 			}
 		}
-
-		// 5. Add the final processed string token.
-		addToken(TokenType.STRING_LITERAL, finalValue.toString());
+		return finalValue;
 	}
 }
