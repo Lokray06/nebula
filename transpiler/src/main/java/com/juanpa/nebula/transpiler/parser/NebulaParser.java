@@ -1,19 +1,15 @@
 // File: src/main/java/com/juanpa/nebula/transpiler/parser/NebulaParser.java
-
 package com.juanpa.nebula.transpiler.parser;
 
 import com.juanpa.nebula.transpiler.ast.Program;
-import com.juanpa.nebula.transpiler.ast.ASTNode;
 import com.juanpa.nebula.transpiler.ast.declarations.*;
 import com.juanpa.nebula.transpiler.ast.expressions.*;
 import com.juanpa.nebula.transpiler.ast.statements.*;
 import com.juanpa.nebula.transpiler.lexer.Token;
 import com.juanpa.nebula.transpiler.lexer.TokenType;
-import com.juanpa.nebula.transpiler.semantics.PrimitiveType;
 import com.juanpa.nebula.transpiler.util.ErrorReporter;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,9 +30,7 @@ public class NebulaParser
 	private String currentNamespaceFqn = ""; // Initialized to empty string for global scope
 	String[] words = new String[2];
 
-	private record TypeSpecifier(
-			Token baseType,
-			int rank)
+	private record TypeSpecifier(Token baseType, int rank)
 	{
 	}
 
@@ -68,30 +62,25 @@ public class NebulaParser
 		Map<String, List<Token>> discoveredAliases = new HashMap<>();
 		List<Token> nonAliasTokens = new ArrayList<>();
 		int cursor = 0;
-
-		// Pass 1: Discover all aliases and collect non-alias tokens.
 		while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.EOF)
 		{
 			if (originalTokens.get(cursor).getType() == TokenType.ALIAS)
 			{
 				Token aliasKeyword = originalTokens.get(cursor++);
-
 				if (cursor >= originalTokens.size() || originalTokens.get(cursor).getType() != TokenType.IDENTIFIER)
 				{
 					errorReporter.report(aliasKeyword.getLine(), aliasKeyword.getColumn(), "Expected an identifier for the alias name after 'alias' keyword.");
-					// Skip until semicolon to recover
 					while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON)
 					{
 						cursor++;
 					}
 					if (cursor < originalTokens.size())
 					{
-						cursor++; // skip semicolon
+						cursor++;
 					}
 					continue;
 				}
 				Token aliasName = originalTokens.get(cursor++);
-
 				List<Token> replacement = new ArrayList<>();
 				int replacementStartCursor = cursor;
 				while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON)
@@ -100,7 +89,6 @@ public class NebulaParser
 					if (part.getType() != TokenType.IDENTIFIER && part.getType() != TokenType.DOT)
 					{
 						errorReporter.report(part.getLine(), part.getColumn(), "Alias replacement can only consist of identifiers and dots.");
-						// Invalidate this alias and skip to semicolon
 						replacement.clear();
 						while (cursor < originalTokens.size() && originalTokens.get(cursor).getType() != TokenType.SEMICOLON)
 						{
@@ -111,12 +99,11 @@ public class NebulaParser
 					replacement.add(part);
 					cursor++;
 				}
-
 				if (cursor < originalTokens.size() && originalTokens.get(cursor).getType() == TokenType.SEMICOLON)
 				{
 					cursor++; // consume ';'
 					if (replacement.isEmpty() && replacementStartCursor == cursor - 1)
-					{ // Check if replacement part was empty
+					{
 						errorReporter.report(aliasName.getLine(), aliasName.getColumn(), "Alias replacement cannot be empty.");
 					}
 					else if (!replacement.isEmpty())
@@ -152,14 +139,7 @@ public class NebulaParser
 				List<Token> replacementTokens = discoveredAliases.get(token.getLexeme());
 				for (Token replacementToken : replacementTokens)
 				{
-					// Create a new token to carry over the position info of the original alias usage
-					finalTokens.add(new Token(
-							replacementToken.getType(),
-							replacementToken.getLexeme(),
-							replacementToken.getLiteral(),
-							token.getLine(),
-							token.getColumn() // Column info is approximate for expanded aliases
-					));
+					finalTokens.add(new Token(replacementToken.getType(), replacementToken.getLexeme(), replacementToken.getLiteral(), token.getLine(), token.getColumn()));
 				}
 			}
 			else
@@ -167,13 +147,10 @@ public class NebulaParser
 				finalTokens.add(token);
 			}
 		}
-
-		// Add the EOF token at the end
 		if (!originalTokens.isEmpty())
 		{
 			finalTokens.add(originalTokens.get(originalTokens.size() - 1));
 		}
-
 		return finalTokens;
 	}
 
@@ -189,7 +166,6 @@ public class NebulaParser
 		{
 			try
 			{
-				// Prioritize parsing 'import' directives before namespace declarations
 				if (check(TokenType.IMPORT) || check(TokenType.GLOBAL) || check(TokenType.STATIC))
 				{
 					int tempCurrent = current;
@@ -207,14 +183,12 @@ public class NebulaParser
 						}
 						tempCurrent++;
 					}
-
 					if (hasImport)
 					{
 						program.addImportDirective(importDirective());
 						continue;
 					}
 				}
-
 				if (check(TokenType.NAMESPACE))
 				{
 					program.addNamespace(namespaceDeclaration());
@@ -247,11 +221,9 @@ public class NebulaParser
 		{
 			modifiers.add(advance());
 		}
-
 		Token importKeyword = consume(TokenType.IMPORT, "Expected 'import' keyword.");
 		Expression qualifiedNameExpr = qualifiedName();
 		consume(TokenType.SEMICOLON, "Expected ';' after 'import' directive.");
-
 		return new ImportDirective(modifiers, importKeyword, qualifiedNameExpr);
 	}
 
@@ -266,7 +238,6 @@ public class NebulaParser
 	private Expression qualifiedName() throws SyntaxError
 	{
 		Expression namePart = new IdentifierExpression(consume(TokenType.IDENTIFIER, "Expected identifier for qualified name."));
-
 		while (match(TokenType.DOT))
 		{
 			Token dotToken = previous();
@@ -287,12 +258,8 @@ public class NebulaParser
 	{
 		consume(TokenType.NAMESPACE, "Expected 'namespace' keyword.");
 		Expression namespaceNameExpr = qualifiedName();
-
-		// Get the FQN string of the current namespace being entered
 		String newNamespaceSegment = getExpressionFQN(namespaceNameExpr);
-		String previousNamespaceFqn = this.currentNamespaceFqn; // Save previous FQN
-
-		// Update currentNamespaceFqn for nested parsing
+		String previousNamespaceFqn = this.currentNamespaceFqn;
 		if (this.currentNamespaceFqn.isEmpty())
 		{
 			this.currentNamespaceFqn = newNamespaceSegment;
@@ -301,11 +268,8 @@ public class NebulaParser
 		{
 			this.currentNamespaceFqn += "." + newNamespaceSegment;
 		}
-
 		consume(TokenType.LEFT_BRACE, "Expected '{' after namespace name.");
-
 		NamespaceDeclaration namespaceDecl = new NamespaceDeclaration(namespaceNameExpr);
-
 		while (!check(TokenType.RIGHT_BRACE) && !isAtEnd())
 		{
 			List<Token> classModifiers = new ArrayList<>();
@@ -313,10 +277,8 @@ public class NebulaParser
 			{
 				classModifiers.add(advance());
 			}
-
 			if (check(TokenType.CLASS))
 			{
-				// Pass the current fully qualified namespace to classDeclaration
 				namespaceDecl.addClass(classDeclaration(classModifiers, this.currentNamespaceFqn));
 			}
 			else
@@ -325,9 +287,8 @@ public class NebulaParser
 				synchronizeNamespaceBody();
 			}
 		}
-
 		consume(TokenType.RIGHT_BRACE, "Expected '}' after namespace body.");
-		this.currentNamespaceFqn = previousNamespaceFqn; // Restore previous FQN
+		this.currentNamespaceFqn = previousNamespaceFqn;
 		return namespaceDecl;
 	}
 
@@ -349,15 +310,9 @@ public class NebulaParser
 		return "";
 	}
 
-
-	/**
-	 * Helper to synchronize parsing within a namespace body in case of an error.
-	 * Skips tokens until a known class declaration start or closing brace.
-	 */
 	private void synchronizeNamespaceBody()
 	{
 		advance();
-
 		while (!isAtEnd())
 		{
 			TokenType type = peek().getType();
@@ -386,12 +341,9 @@ public class NebulaParser
 	 */
 	private ClassDeclaration classDeclaration(List<Token> modifiers, String containingNamespace) throws SyntaxError
 	{
-		// The existing logic for parsing the class header is correct.
 		boolean isNative = modifiers.stream().anyMatch(m -> m.getType() == TokenType.NATIVE);
-
 		Token classKeyword = consume(TokenType.CLASS, "Expected 'class' keyword.");
 		Token className = consume(TokenType.IDENTIFIER, "Expected class name.");
-
 		Token extendsKeyword = null;
 		Token superClassName = null;
 		if (check(TokenType.EXTENDS))
@@ -399,77 +351,52 @@ public class NebulaParser
 			extendsKeyword = advance();
 			superClassName = consume(TokenType.IDENTIFIER, "Expected superclass name after 'extends'.");
 		}
-
 		Token leftBrace = consume(TokenType.LEFT_BRACE, "Expected '{' after class name.");
-
 		List<FieldDeclaration> fields = new ArrayList<>();
 		List<MethodDeclaration> methods = new ArrayList<>();
 		List<ConstructorDeclaration> constructors = new ArrayList<>();
 		List<PropertyDeclaration> properties = new ArrayList<>();
-
-		// The key change is in the order of the 'if-else if' checks inside this loop.
 		while (!check(TokenType.RIGHT_BRACE) && !isAtEnd())
 		{
 			List<Token> memberModifiers = new ArrayList<>();
-			while (check(TokenType.PUBLIC) || check(TokenType.PRIVATE) ||
-					check(TokenType.STATIC) || check(TokenType.CONST) || check(TokenType.WRAPPER))
+			while (check(TokenType.PUBLIC) || check(TokenType.PRIVATE) || check(TokenType.STATIC) || check(TokenType.CONST) || check(TokenType.WRAPPER))
 			{
 				memberModifiers.add(advance());
 			}
-
-			// Handle constructors first (special case: name matches class name)
-			if (check(TokenType.IDENTIFIER) &&
-					peek().getLexeme().equals(className.getLexeme()) &&
-					check(1, TokenType.LEFT_PAREN))
+			if (check(TokenType.IDENTIFIER) && peek().getLexeme().equals(className.getLexeme()) && check(1, TokenType.LEFT_PAREN))
 			{
 				constructors.add(constructorDeclaration(memberModifiers, className));
 				continue;
 			}
-
-			// Handle operator overloads
-			if (isTypeToken(peek().getType()) &&
-					check(1, TokenType.OPERATOR) &&
-					isOperatorToken(peek(2).getType()))
+			if (isTypeToken(peek().getType()) && check(1, TokenType.OPERATOR) && isOperatorToken(peek(2).getType()))
 			{
 				TypeSpecifier typeSpecifier = parseTypeSpecifier();
 				methods.add(methodDeclaration(memberModifiers, typeSpecifier, true));
 				continue;
 			}
-
-			// ---- NEW: parse the full type specifier before deciding member kind ----
 			if (isTypeToken(peek().getType()) || peek().getType() == TokenType.VAR)
 			{
 				TypeSpecifier typeSpec = parseTypeSpecifier();
-
-				// Property: TYPE IDENTIFIER '{'
 				if (check(TokenType.IDENTIFIER) && check(1, TokenType.LEFT_BRACE))
 				{
 					properties.add(propertyDeclaration(memberModifiers, typeSpec));
 					continue;
 				}
-
-				// Method: TYPE IDENTIFIER '('
 				if (check(TokenType.IDENTIFIER) && check(1, TokenType.LEFT_PAREN))
 				{
 					methods.add(methodDeclaration(memberModifiers, typeSpec, false));
 					continue;
 				}
-
-				// Field: TYPE IDENTIFIER [= ...] ;
 				if (check(TokenType.IDENTIFIER))
 				{
 					fields.add(fieldDeclaration(memberModifiers, typeSpec));
 					continue;
 				}
 			}
-
-			// If none matched, it's a syntax error
 			error(peek(), "Expected field, method, constructor, or operator declaration inside class.");
 			synchronizeClassBody();
 		}
-
 		Token rightBrace = consume(TokenType.RIGHT_BRACE, "Expected '}' after class body.");
-
 		return new ClassDeclaration(modifiers, classKeyword, className, extendsKeyword, superClassName, leftBrace, fields, properties, methods, constructors, rightBrace, containingNamespace, isNative);
 	}
 
@@ -480,7 +407,6 @@ public class NebulaParser
 	private void synchronizeClassBody()
 	{
 		advance();
-
 		while (!isAtEnd())
 		{
 			TokenType type = peek().getType();
@@ -494,7 +420,6 @@ public class NebulaParser
 				case RIGHT_BRACE:
 				case OPERATOR, WRAPPER:
 					return;
-
 				default:
 					if (isTypeToken(type) || type == TokenType.VAR)
 					{
@@ -520,16 +445,12 @@ public class NebulaParser
 	private ConstructorDeclaration constructorDeclaration(List<Token> modifiers, Token classNameToken) throws SyntaxError
 	{
 		Token constructorName = consume(TokenType.IDENTIFIER, "Expected constructor name (must match class name).");
-
 		if (!constructorName.getLexeme().equals(classNameToken.getLexeme()))
 		{
-			errorReporter.report(constructorName.getLine(), constructorName.getColumn(),
-					"Constructor name '" + constructorName.getLexeme() + "' does not match class name '" + classNameToken.getLexeme() + "'.");
+			errorReporter.report(constructorName.getLine(), constructorName.getColumn(), "Constructor name '" + constructorName.getLexeme() + "' does not match class name '" + classNameToken.getLexeme() + "'.");
 			throw new SyntaxError();
 		}
-
 		consume(TokenType.LEFT_PAREN, "Expected '(' after constructor name.");
-
 		List<Token> parameters = new ArrayList<>();
 		if (!check(TokenType.RIGHT_PAREN))
 		{
@@ -540,12 +461,9 @@ public class NebulaParser
 						TokenType.DOUBLE, TokenType.BYTE, TokenType.CHAR, TokenType.IDENTIFIER
 				}, "Expected parameter type."));
 				parameters.add(consume(TokenType.IDENTIFIER, "Expected parameter name."));
-			}
-			while (match(TokenType.COMMA));
+			} while (match(TokenType.COMMA));
 		}
-
 		consume(TokenType.RIGHT_PAREN, "Expected ')' after parameters.");
-
 		BlockStatement body = blockStatement();
 		return new ConstructorDeclaration(modifiers, constructorName, parameters, body);
 	}
@@ -564,11 +482,9 @@ public class NebulaParser
 	{
 		boolean isWrapper = modifiers.stream().anyMatch(m -> m.getType() == TokenType.WRAPPER);
 		Token cppTarget = null;
-
-		Token returnType = typeSpec.baseType(); // unwrap type
+		Token returnType = typeSpec.baseType();
 		Token methodName;
 		Token operatorKeyword = null;
-
 		if (isOperatorOverload)
 		{
 			operatorKeyword = consume(TokenType.OPERATOR, "Expected 'operator' keyword for operator overloading.");
@@ -582,9 +498,7 @@ public class NebulaParser
 		{
 			methodName = consume(TokenType.IDENTIFIER, "Expected method name.");
 		}
-
 		consume(TokenType.LEFT_PAREN, "Expected '(' after method name or operator.");
-
 		List<Token> parameters = new ArrayList<>();
 		if (!check(TokenType.RIGHT_PAREN))
 		{
@@ -598,15 +512,11 @@ public class NebulaParser
 				Token paramName = consume(TokenType.IDENTIFIER, "Expected parameter name.");
 				parameters.add(paramType);
 				parameters.add(paramName);
-			}
-			while (match(TokenType.COMMA));
+			} while (match(TokenType.COMMA));
 		}
-
 		consume(TokenType.RIGHT_PAREN, "Expected ')' after method parameters.");
-
 		BlockStatement body = null;
 		Token semicolon = null;
-
 		if (isWrapper)
 		{
 			consume(TokenType.ARROW, "Expected '->' for wrapper method.");
@@ -621,7 +531,6 @@ public class NebulaParser
 		{
 			semicolon = consume(TokenType.SEMICOLON, "Expected method body or ';' after method declaration.");
 		}
-
 		return new MethodDeclaration(modifiers, returnType, methodName, parameters, body, semicolon, operatorKeyword, isWrapper, cppTarget);
 	}
 
@@ -662,12 +571,9 @@ public class NebulaParser
 	{
 		boolean isWrapper = modifiers.stream().anyMatch(m -> m.getType() == TokenType.WRAPPER);
 		Token cppTarget = null;
-
-		Token type = typeSpec.baseType(); // unwrap type
+		Token type = typeSpec.baseType();
 		Token name = consume(TokenType.IDENTIFIER, "Expected field name.");
-
 		Expression initializer = null;
-
 		if (isWrapper)
 		{
 			consume(TokenType.ARROW, "Expected '->' for wrapper field.");
@@ -677,12 +583,10 @@ public class NebulaParser
 		{
 			initializer = expression();
 		}
-
 		if (isWrapper && initializer != null)
 		{
 			error(previous(), "A wrapper field cannot have an initializer ('=').");
 		}
-
 		consume(TokenType.SEMICOLON, "Expected ';' after field declaration.");
 		return new FieldDeclaration(modifiers, type, name, initializer, isWrapper, cppTarget);
 	}
@@ -699,12 +603,10 @@ public class NebulaParser
 	{
 		consume(TokenType.LEFT_BRACE, "Expected '{' before block statement.");
 		List<Statement> statements = new ArrayList<>();
-
 		while (!check(TokenType.RIGHT_BRACE) && !isAtEnd())
 		{
 			statements.add(statement());
 		}
-
 		consume(TokenType.RIGHT_BRACE, "Expected '}' after block statement.");
 		return new BlockStatement(statements);
 	}
@@ -722,26 +624,23 @@ public class NebulaParser
 		{
 			return blockStatement();
 		}
-
 		List<Token> modifiers = new ArrayList<>();
 		while (check(TokenType.CONST) || check(TokenType.PUBLIC) || check(TokenType.PRIVATE) || check(TokenType.STATIC))
 		{
 			modifiers.add(advance());
 		}
-
 		if (isTypeToken(peek().getType()))
 		{
 			int lookahead = 1;
 			while (check(lookahead, TokenType.LEFT_BRACKET))
 			{
-				lookahead += 2; // Skip past a "[]"
+				lookahead += 2;
 			}
 			if (check(lookahead, TokenType.IDENTIFIER))
 			{
 				return variableDeclarationStatement(modifiers);
 			}
 		}
-
 		if (check(TokenType.THIS) && check(1, TokenType.LEFT_PAREN))
 		{
 			return constructorChainingCallStatement();
@@ -758,7 +657,7 @@ public class NebulaParser
 		{
 			return forStatement();
 		}
-		if (match(TokenType.FOREACH)) // ADD THIS BLOCK
+		if (match(TokenType.FOREACH))
 		{
 			return forEachStatement();
 		}
@@ -770,12 +669,10 @@ public class NebulaParser
 		{
 			return switchStatement();
 		}
-
 		if (!modifiers.isEmpty())
 		{
 			errorReporter.report(peek().getLine(), peek().getColumn(), "Modifiers are only allowed on declarations (variables, fields, methods).");
 		}
-
 		return expressionStatement();
 	}
 
@@ -791,19 +688,16 @@ public class NebulaParser
 	{
 		Token thisKeyword = consume(TokenType.THIS, "Expected 'this' keyword for constructor call.");
 		Token leftParen = consume(TokenType.LEFT_PAREN, "Expected '(' after 'this' for constructor call.");
-
 		List<Expression> arguments = new ArrayList<>();
 		if (!check(TokenType.RIGHT_PAREN))
 		{
 			do
 			{
 				arguments.add(expression());
-			}
-			while (match(TokenType.COMMA));
+			} while (match(TokenType.COMMA));
 		}
 		Token rightParen = consume(TokenType.RIGHT_PAREN, "Expected ')' after constructor call arguments.");
 		consume(TokenType.SEMICOLON, "Expected ';' after constructor call.");
-
 		return new ConstructorChainingCallStatement(thisKeyword, leftParen, arguments, rightParen);
 	}
 
@@ -817,11 +711,9 @@ public class NebulaParser
 	private IfStatement ifStatement() throws SyntaxError
 	{
 		Token ifKeyword = previous();
-
 		consume(TokenType.LEFT_PAREN, "Expected '(' after 'if'.");
 		Expression condition = expression();
 		consume(TokenType.RIGHT_PAREN, "Expected ')' after if condition.");
-
 		Statement thenBranch;
 		if (check(TokenType.LEFT_BRACE))
 		{
@@ -831,7 +723,6 @@ public class NebulaParser
 		{
 			thenBranch = statement();
 		}
-
 		Statement elseBranch = null;
 		if (match(TokenType.ELSE))
 		{
@@ -844,7 +735,6 @@ public class NebulaParser
 				elseBranch = statement();
 			}
 		}
-
 		return new IfStatement(ifKeyword, condition, thenBranch, elseBranch);
 	}
 
@@ -860,7 +750,6 @@ public class NebulaParser
 		consume(TokenType.LEFT_PAREN, "Expected '(' after 'while'.");
 		Expression condition = expression();
 		consume(TokenType.RIGHT_PAREN, "Expected ')' after while condition.");
-
 		BlockStatement body = blockStatement();
 		return new WhileStatement(condition, body);
 	}
@@ -877,13 +766,9 @@ public class NebulaParser
 	private ForStatement forStatement() throws SyntaxError
 	{
 		consume(TokenType.LEFT_PAREN, "Expected '(' after 'for'.");
-
 		Statement initializer = null;
 		Expression condition = null;
 		Expression increment = null;
-
-		// Look ahead to see if there is a semicolon inside the parentheses
-		// to distinguish between simplified and standard for-loops.
 		boolean hasSemicolon = false;
 		int tempCursor = current;
 		int parenDepth = 1;
@@ -899,10 +784,9 @@ public class NebulaParser
 				parenDepth--;
 				if (parenDepth == 0)
 				{
-					break; // Found the matching ')' for our for-loop header
+					break;
 				}
 			}
-			// Only consider semicolons at the top-level of the for-header
 			if (type == TokenType.SEMICOLON && parenDepth == 1)
 			{
 				hasSemicolon = true;
@@ -910,54 +794,26 @@ public class NebulaParser
 			}
 			tempCursor++;
 		}
-
 		if (!hasSemicolon)
 		{
-			// --- PARSE SIMPLIFIED SYNTAX ---
 			if (!check(TokenType.RIGHT_PAREN))
 			{
 				Expression parsedCondition = expression();
-
-				// ======================= NEW CHECK =======================
-				// This check handles the case `for(i = 0 <= nums.length)`.
-				// A standard parser will incorrectly interpret this as `i = (0 <= nums.length)`
-				// due to operator precedence (comparison > assignment).
-				// We check for this specific AST structure: AssignmentExpression(target, BinaryExpression(...))
-				// and rewrite it to the intended structure: BinaryExpression(AssignmentExpression(...), ...).
-				if (parsedCondition instanceof AssignmentExpression &&
-						((AssignmentExpression) parsedCondition).getValue() instanceof BinaryExpression)
+				if (parsedCondition instanceof AssignmentExpression && ((AssignmentExpression) parsedCondition).getValue() instanceof BinaryExpression)
 				{
 					AssignmentExpression outerAssignment = (AssignmentExpression) parsedCondition;
 					BinaryExpression innerBinary = (BinaryExpression) outerAssignment.getValue();
-
-					// Create the new assignment expression, e.g., `i = 0`.
-					// This will become the left-hand side of the new condition.
-					AssignmentExpression newInitializerPart = new AssignmentExpression(
-							outerAssignment.getTarget(),   // The target of the original assignment (e.g., IdentifierExpression for 'i')
-							outerAssignment.getOperator(), // The assignment operator token (e.g., ASSIGN)
-							innerBinary.getLeft()          // The left side of the inner comparison (e.g., LiteralExpression for '0')
-					);
-
-					// Rebuild the condition to have the correct precedence, creating a new BinaryExpression.
-					// The new condition becomes `(i = 0) <= nums.length`.
-					condition = new BinaryExpression(
-							newInitializerPart,      // The new assignment expression as the left operand
-							innerBinary.getOperator(), // The comparison operator token (e.g., LESS_EQUAL)
-							innerBinary.getRight()     // The original right operand
-					);
+					AssignmentExpression newInitializerPart = new AssignmentExpression(outerAssignment.getTarget(), outerAssignment.getOperator(), innerBinary.getLeft());
+					condition = new BinaryExpression(newInitializerPart, innerBinary.getOperator(), innerBinary.getRight());
 				}
 				else
 				{
-					// If the pattern doesn't match, use the parsed condition as-is.
 					condition = parsedCondition;
 				}
-				// ===================== END NEW CHECK =====================
 			}
 		}
 		else
 		{
-			// --- PARSE STANDARD C-STYLE SYNTAX ---
-			// 1. Initializer
 			if (!check(TokenType.SEMICOLON))
 			{
 				if (isTypeToken(peek().getType()))
@@ -985,23 +841,17 @@ public class NebulaParser
 			{
 				consume(TokenType.SEMICOLON, "Expected ';' after empty initializer in for-loop.");
 			}
-
-			// 2. Condition
 			if (!check(TokenType.SEMICOLON))
 			{
 				condition = expression();
 			}
 			consume(TokenType.SEMICOLON, "Expected ';' after for loop condition.");
-
-			// 3. Increment
 			if (!check(TokenType.RIGHT_PAREN))
 			{
 				increment = expression();
 			}
 		}
-
 		consume(TokenType.RIGHT_PAREN, "Expected ')' after for loop clauses.");
-
 		BlockStatement body = blockStatement();
 		return new ForStatement(initializer, condition, increment, body);
 	}
@@ -1017,23 +867,12 @@ public class NebulaParser
 	{
 		Token foreachKeyword = previous();
 		consume(TokenType.LEFT_PAREN, "Expected '(' after 'foreach'.");
-
-		// Parse the type of the loop variable (e.g., "int" or "String[]")
 		TypeSpecifier typeSpec = parseTypeSpecifier();
-
-		// Parse the loop variable name
 		Token variableName = consume(TokenType.IDENTIFIER, "Expected loop variable name.");
-
-		// Consume the 'in' keyword
 		consume(TokenType.IN, "Expected 'in' keyword in foreach loop.");
-
-		// Parse the collection expression
 		Expression collection = expression();
-
 		consume(TokenType.RIGHT_PAREN, "Expected ')' after foreach loop condition.");
-
 		BlockStatement body = blockStatement();
-
 		return new ForEachStatement(foreachKeyword, typeSpec.baseType(), typeSpec.rank(), variableName, collection, body);
 	}
 
@@ -1124,9 +963,15 @@ public class NebulaParser
 
 	private Expression assignment() throws SyntaxError
 	{
-		Expression expr = ternary(); // Call the new ternary() method
+		Expression expr = ternary();
 
-		if (match(TokenType.ASSIGN, TokenType.PLUS_ASSIGN, TokenType.MINUS_ASSIGN, TokenType.STAR_ASSIGN, TokenType.SLASH_ASSIGN, TokenType.MODULO_ASSIGN))
+		// UPDATED: Now includes all compound assignment operators
+		if (match(
+				TokenType.ASSIGN, TokenType.PLUS_ASSIGN, TokenType.MINUS_ASSIGN,
+				TokenType.STAR_ASSIGN, TokenType.SLASH_ASSIGN, TokenType.MODULO_ASSIGN,
+				TokenType.POWER_ASSIGN, TokenType.AMPERSAND_ASSIGN, TokenType.PIPE_ASSIGN,
+				TokenType.XOR_ASSIGN, TokenType.LEFT_SHIFT_ASSIGN, TokenType.RIGHT_SHIFT_ASSIGN
+		))
 		{
 			Token operator = previous();
 			Expression value = assignment(); // Right-associative
@@ -1145,9 +990,8 @@ public class NebulaParser
 	}
 
 	private Expression or() throws SyntaxError
-	{
+	{ // Logical OR (short-circuit)
 		Expression expr = and();
-
 		while (match(TokenType.PIPE_PIPE))
 		{
 			Token operator = previous();
@@ -1158,10 +1002,48 @@ public class NebulaParser
 	}
 
 	private Expression and() throws SyntaxError
+	{ // Logical AND (short-circuit)
+		Expression expr = bitwiseOr();
+		while (match(TokenType.AMPERSAND_AMPERSAND))
+		{
+			Token operator = previous();
+			Expression right = bitwiseOr();
+			expr = new BinaryExpression(expr, operator, right);
+		}
+		return expr;
+	}
+
+	// NEW: Handles bitwise OR and non-short-circuiting logical OR
+	private Expression bitwiseOr() throws SyntaxError
+	{
+		Expression expr = bitwiseXor();
+		while (match(TokenType.PIPE))
+		{
+			Token operator = previous();
+			Expression right = bitwiseXor();
+			expr = new BinaryExpression(expr, operator, right);
+		}
+		return expr;
+	}
+
+	// NEW: Handles bitwise XOR
+	private Expression bitwiseXor() throws SyntaxError
+	{
+		Expression expr = bitwiseAnd();
+		while (match(TokenType.XOR))
+		{
+			Token operator = previous();
+			Expression right = bitwiseAnd();
+			expr = new BinaryExpression(expr, operator, right);
+		}
+		return expr;
+	}
+
+	// NEW: Handles bitwise AND and non-short-circuiting logical AND
+	private Expression bitwiseAnd() throws SyntaxError
 	{
 		Expression expr = equality();
-
-		while (match(TokenType.AMPERSAND_AMPERSAND))
+		while (match(TokenType.AMPERSAND))
 		{
 			Token operator = previous();
 			Expression right = equality();
@@ -1202,9 +1084,30 @@ public class NebulaParser
 
 	private Expression comparison() throws SyntaxError
 	{
-		Expression expr = additive();
+		Expression expr = shift();
+		while (match(TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL, TokenType.IS))
+		{
+			Token operator = previous();
+			if (operator.getType() == TokenType.IS)
+			{
+				// This logic correctly parses 'is' expressions at this precedence level
+				Token typeToken = consume(new TokenType[]{TokenType.IDENTIFIER, TokenType.STRING_KEYWORD, TokenType.INT, TokenType.BOOL /* etc. */}, "Expected a type name after 'is'.");
+				expr = new IsExpression(expr, operator, typeToken);
+			}
+			else
+			{
+				Expression right = shift();
+				expr = new BinaryExpression(expr, operator, right);
+			}
+		}
+		return expr;
+	}
 
-		while (match(TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL))
+	// NEW: Handles bitwise shift operators
+	private Expression shift() throws SyntaxError
+	{
+		Expression expr = additive();
+		while (match(TokenType.LEFT_SHIFT, TokenType.RIGHT_SHIFT))
 		{
 			Token operator = previous();
 			Expression right = additive();
@@ -1258,20 +1161,21 @@ public class NebulaParser
 	}
 
 	/**
-	 * Parses unary expressions (e.g., `-x`, `!isTrue`, `++i`, `--j`).
-	 * Grammar: `(UNARY_OPERATOR)* CALL`
+	 * Parses a unary expression.
+	 * Grammar: ('!' | '-' | '++' | '--' | '~' | CAST) UNARY_EXPRESSION | POSTFIX_EXPRESSION
 	 *
-	 * @return A UnaryExpression AST node or a higher precedence expression.
+	 * @return The parsed Expression AST node.
 	 * @throws SyntaxError if a syntax error occurs.
 	 */
 	private Expression unary() throws SyntaxError
 	{
-		if (match(TokenType.BANG, TokenType.MINUS, TokenType.PLUS_PLUS, TokenType.MINUS_MINUS))
+		if (match(TokenType.BANG, TokenType.MINUS, TokenType.PLUS_PLUS, TokenType.MINUS_MINUS, TokenType.BITWISE_NOT))
 		{
 			Token operator = previous();
-			Expression right = unary();
+			Expression right = unary(); // Recursively call unary() to handle chained unary operators
 			return new UnaryExpression(operator, right);
 		}
+
 		return call();
 	}
 
@@ -1619,7 +1523,7 @@ public class NebulaParser
 			case ULONG:
 			case STRING_KEYWORD:
 			case VAR:
-			case IDENTIFIER: // For class types
+			case IDENTIFIER:
 				return true;
 			default:
 				return false;
@@ -1707,7 +1611,6 @@ public class NebulaParser
 	private void synchronize()
 	{
 		advance();
-
 		while (!isAtEnd())
 		{
 			if (previous().getType() == TokenType.SEMICOLON)
@@ -1719,7 +1622,6 @@ public class NebulaParser
 				advance();
 				return;
 			}
-
 			switch (peek().getType())
 			{
 				case CLASS:
@@ -1750,7 +1652,6 @@ public class NebulaParser
 	 */
 	private static class SyntaxError extends RuntimeException
 	{
-		// No special fields or constructors needed for this basic error type
 	}
 
 	/**
@@ -1767,10 +1668,8 @@ public class NebulaParser
 		Expression switchExpr = expression();
 		consume(TokenType.RIGHT_PAREN, "Expected ')' after switch expression.");
 		consume(TokenType.LEFT_BRACE, "Expected '{' for switch body.");
-
 		List<SwitchCase> cases = new ArrayList<>();
 		BlockStatement defaultBlock = null;
-
 		while (!check(TokenType.RIGHT_BRACE) && !isAtEnd())
 		{
 			if (match(TokenType.CASE))
@@ -1814,7 +1713,6 @@ public class NebulaParser
 		Token caseKeyword = previous();
 		Expression caseValue = expression();
 		consume(TokenType.COLON, "Expected ':' after 'case' value.");
-
 		List<Statement> caseBodyStatements = new ArrayList<>();
 		while (!check(TokenType.CASE) && !check(TokenType.DEFAULT) && !check(TokenType.RIGHT_BRACE) && !isAtEnd())
 		{
@@ -1837,8 +1735,7 @@ public class NebulaParser
 			do
 			{
 				elements.add(expression());
-			}
-			while (match(TokenType.COMMA));
+			} while (match(TokenType.COMMA));
 		}
 		consume(TokenType.RIGHT_BRACE, "Expected '}' to end array initializer.");
 		return new ArrayInitializerExpression(leftBrace, elements);
@@ -1857,24 +1754,19 @@ public class NebulaParser
 		{
 			throw error(peek(), "Expected a type name.");
 		}
-		Token baseType = advance(); // Consume the base type (e.g., int, float, MyClass)
-
+		Token baseType = advance();
 		int rank = 0;
-		// This loop is primarily for declarations like `int[] myArr;` or `MyClass[][] anotherArr;`
-		// For `new MyType[size]`, the brackets for `[size]` are handled separately in primary().
-		while (check(TokenType.LEFT_BRACKET)) // Use check, not match, to decide if it's a type array specifier
+		while (check(TokenType.LEFT_BRACKET))
 		{
-			// Peek ahead to ensure it's a closing bracket, not an expression bracket.
-			// This is a heuristic and might need refinement for complex cases.
 			if (check(1, TokenType.RIGHT_BRACKET))
 			{
-				advance(); // Consume LEFT_BRACKET
-				advance(); // Consume RIGHT_BRACKET
+				advance();
+				advance();
 				rank++;
 			}
 			else
 			{
-				break; // It's not a type array specifier like `[]`, but possibly `[expression]`
+				break;
 			}
 		}
 		return new TypeSpecifier(baseType, rank);
@@ -1889,10 +1781,8 @@ public class NebulaParser
 	{
 		Token name = consume(TokenType.IDENTIFIER, "Expected property name.");
 		consume(TokenType.LEFT_BRACE, "Expected '{' to start property body.");
-
 		AccessorDeclaration getAccessor = null;
 		AccessorDeclaration setAccessor = null;
-
 		while (!check(TokenType.RIGHT_BRACE) && !isAtEnd())
 		{
 			List<Token> accessorModifiers = new ArrayList<>();
@@ -1900,7 +1790,6 @@ public class NebulaParser
 			{
 				accessorModifiers.add(advance());
 			}
-
 			if (check(TokenType.GET))
 			{
 				if (getAccessor != null)
@@ -1922,11 +1811,7 @@ public class NebulaParser
 				throw error(peek(), "Expected 'get' or 'set' accessor in property body.");
 			}
 		}
-
 		consume(TokenType.RIGHT_BRACE, "Expected '}' to end property body.");
-
-		// --- THIS IS THE FIX ---
-		// Pass the array rank from the TypeSpecifier to the constructor.
 		return new PropertyDeclaration(modifiers, typeSpec.baseType(), typeSpec.rank(), name, getAccessor, setAccessor);
 	}
 
@@ -1937,10 +1822,9 @@ public class NebulaParser
 	 */
 	private AccessorDeclaration accessorDeclaration(List<Token> modifiers) throws SyntaxError
 	{
-		Token keyword = advance(); // Consume 'get' or 'set'
+		Token keyword = advance();
 		BlockStatement body = null;
 		Token semicolon = null;
-
 		if (check(TokenType.LEFT_BRACE))
 		{
 			body = blockStatement();

@@ -43,7 +43,7 @@ public enum TokenType
 	// --- Operators ---
 	// Unary
 	PLUS_PLUS, MINUS_MINUS,         // ++ --
-	BANG, TILDE,                     // !  ~ (TILDE is new for bitwise NOT)
+	BANG,                     // !
 
 	// Multiplicative
 	STAR, SLASH, MODULO,             // * / %
@@ -60,9 +60,10 @@ public enum TokenType
 	EQUAL_EQUAL, BANG_EQUAL,        // == !=
 
 	// Bitwise
-	AMPERSAND,                       // &
-	PIPE,                            // |
-	XOR,                             // ^
+	AMPERSAND,                      // &
+	PIPE,                           // |
+	XOR,                            // ^
+	BITWISE_NOT,                    // ~ (TILDE is new for bitwise NOT)
 
 	// Logical
 	AMPERSAND_AMPERSAND,             // &&

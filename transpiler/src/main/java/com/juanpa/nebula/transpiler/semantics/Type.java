@@ -42,6 +42,18 @@ public abstract class Type
 	}
 
 	/**
+	 * Checks if this type is an integer type.
+	 *
+	 * @return True if integer, false otherwise.
+	 */
+	public boolean isInteger()
+	{
+		// Default implementation: most types are not numeric unless specified.
+		// PrimitiveType will override this.
+		return false;
+	}
+
+	/**
 	 * Returns the wider of two numeric types.
 	 * This should ideally be a static helper or a method on a numeric type utility.
 	 * Placed here for now to satisfy `SemanticAnalyzer`'s `Type.getWiderNumericType` calls.

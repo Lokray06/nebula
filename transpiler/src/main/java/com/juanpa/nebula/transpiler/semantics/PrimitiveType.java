@@ -142,6 +142,10 @@ public class PrimitiveType extends Type
 		return this.equals(STRING);
 	}
 
+	/**
+	 * Determines if this type is assignable from another type.
+	 * This method should be used for variable-to-variable assignments.
+	 */
 	@Override
 	public boolean isAssignableFrom(Type other)
 	{
@@ -287,4 +291,47 @@ public class PrimitiveType extends Type
 				|| this.equals(FLOAT) || this.equals(DOUBLE)
 				|| this.equals(CHAR) || this.equals(CHAR16) || this.equals(CHAR32);
 	}
+
+	@Override
+	public boolean isInteger()
+	{
+		return this.equals(INT8) || this.equals(INT16) || this.equals(INT32) || this.equals(INT64)
+				|| this.equals(UINT8) || this.equals(UINT16) || this.equals(UINT32) || this.equals(UINT64);
+	}
+
+	public static boolean fitsInRange(Type targetType, long value)
+	{
+		if (!(targetType instanceof PrimitiveType))
+		{
+			return false;
+		}
+
+		if (targetType.equals(PrimitiveType.INT8))
+		{
+			return value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE;
+		}
+		if (targetType.equals(PrimitiveType.UINT8))
+		{
+			return value >= 0 && value <= 255;
+		}
+		if (targetType.equals(PrimitiveType.INT16))
+		{
+			return value >= Short.MIN_VALUE && value <= Short.MAX_VALUE;
+		}
+		if (targetType.equals(PrimitiveType.UINT16))
+		{
+			return value >= 0 && value <= 65535;
+		}
+		if (targetType.equals(PrimitiveType.INT32))
+		{
+			return value >= Integer.MIN_VALUE && value <= Integer.MAX_VALUE;
+		}
+		if (targetType.equals(PrimitiveType.UINT32))
+		{
+			return value >= 0 && value <= 0xFFFFFFFFL;
+		}
+		// INT64 and UINT64 — practically always fits if parsed as long
+		return true;
+	}
+
 }

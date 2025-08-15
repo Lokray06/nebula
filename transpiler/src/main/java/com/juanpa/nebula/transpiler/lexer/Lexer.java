@@ -39,7 +39,7 @@ public class Lexer
 		keywords.put("private", TokenType.PRIVATE);
 		keywords.put("static", TokenType.STATIC);
 		keywords.put("void", TokenType.VOID);
-		keywords.put("string", TokenType.STRING_KEYWORD); // 'string' is a keyword, not just an identifier
+		keywords.put("string", TokenType.STRING_KEYWORD);
 		keywords.put("int", TokenType.INT);
 		keywords.put("bool", TokenType.BOOL);
 		keywords.put("float", TokenType.FLOAT);
@@ -142,7 +142,7 @@ public class Lexer
 
 		switch (c)
 		{
-			// --- Single-character tokens ---
+			// Punctuation
 			case '(':
 				addToken(TokenType.LEFT_PAREN);
 				break;
@@ -167,105 +167,32 @@ public class Lexer
 			case ';':
 				addToken(TokenType.SEMICOLON);
 				break;
-			case '?':
-				addToken(TokenType.QUESTION);
-				break;
-			case ':': // Added COLON
+			case ':':
 				addToken(TokenType.COLON);
 				break;
+			case '?':
+				addToken(match('?') ? TokenType.NULL_COALESCING : TokenType.QUESTION);
+				break;
 
-			// --- Operators that can be single or double characters ---
+			// Operators
 			case '+':
-				if (match('+'))
+				addToken(match('=') ? TokenType.PLUS_ASSIGN : (match('+') ? TokenType.PLUS_PLUS : TokenType.PLUS));
+				break;
+			case '*':
+				if (match('*'))
 				{
-					addToken(TokenType.PLUS_PLUS);
-				}
-				else if (match('='))
-				{
-					addToken(TokenType.PLUS_ASSIGN);
+					addToken(match('=') ? TokenType.POWER_ASSIGN : TokenType.POWER);
 				}
 				else
 				{
-					addToken(TokenType.PLUS);
+					addToken(match('=') ? TokenType.STAR_ASSIGN : TokenType.STAR);
 				}
 				break;
 			case '-':
-				if (match('>'))
-				{
-					addToken(TokenType.ARROW);
-				}
-				else if (match('-'))
-				{
-					addToken(TokenType.MINUS_MINUS);
-				}
-				else if (match('='))
-				{
-					addToken(TokenType.MINUS_ASSIGN);
-				}
-				else
-				{
-					addToken(TokenType.MINUS);
-				}
-				break;
-			case '*':
-				if (match('='))
-				{
-					addToken(TokenType.STAR_ASSIGN);
-				}
-				else
-				{
-					addToken(TokenType.STAR);
-				}
-				break;
-			case '/':
-				if (match('='))
-				{
-					addToken(TokenType.SLASH_ASSIGN);
-				}
-				else if (match('/'))
-				{
-					// It's a single-line comment, consume until newline
-					while (peek() != '\n' && !isAtEnd())
-					{
-						advance();
-					}
-				}
-				else if (match('*'))
-				{
-					// Multi-line comment, consume until '*/'
-					while (!(peek() == '*' && peekNext() == '/') && !isAtEnd())
-					{
-						if (peek() == '\n')
-						{
-							line++;
-							column = 0; // Reset column for new line
-						}
-						advance();
-					}
-					if (!isAtEnd())
-					{ // Consume '*/'
-						advance();
-						advance();
-					}
-					else
-					{
-						error("Unterminated multi-line comment.");
-					}
-				}
-				else
-				{
-					addToken(TokenType.SLASH);
-				}
+				addToken(match('=') ? TokenType.MINUS_ASSIGN : (match('-') ? TokenType.MINUS_MINUS : (match('>') ? TokenType.ARROW : TokenType.MINUS)));
 				break;
 			case '%':
-				if (match('='))
-				{
-					addToken(TokenType.MODULO_ASSIGN);
-				}
-				else
-				{
-					addToken(TokenType.MODULO);
-				}
+				addToken(match('=') ? TokenType.MODULO_ASSIGN : TokenType.MODULO);
 				break;
 			case '=':
 				addToken(match('=') ? TokenType.EQUAL_EQUAL : TokenType.ASSIGN);
@@ -273,89 +200,83 @@ public class Lexer
 			case '!':
 				addToken(match('=') ? TokenType.BANG_EQUAL : TokenType.BANG);
 				break;
-			case '<':
-				addToken(match('=') ? TokenType.LESS_EQUAL : TokenType.LESS);
+			case '^':
+				addToken(match('=') ? TokenType.XOR_ASSIGN : TokenType.XOR);
 				break;
-			case '>':
-				addToken(match('=') ? TokenType.GREATER_EQUAL : TokenType.GREATER);
-				break;
+			case '~':
+				addToken(TokenType.BITWISE_NOT);
+				break; // Renamed NOT to TILDE for clarity
+
 			case '&':
-				if (match('&'))
-				{
-					addToken(TokenType.AMPERSAND_AMPERSAND);
-				}
-				else
-				{
-					addToken(TokenType.AMPERSAND);
-				}
+				addToken(match('=') ? TokenType.AMPERSAND_ASSIGN : (match('&') ? TokenType.AMPERSAND_AMPERSAND : TokenType.AMPERSAND));
 				break;
 			case '|':
-				if (match('|'))
-				{
-					addToken(TokenType.PIPE_PIPE);
+				addToken(match('=') ? TokenType.PIPE_ASSIGN : (match('|') ? TokenType.PIPE_PIPE : TokenType.PIPE));
+				break;
+
+			case '<':
+				addToken(match('=') ? TokenType.LESS_EQUAL : (match('<') ? (match('=') ? TokenType.LEFT_SHIFT_ASSIGN : TokenType.LEFT_SHIFT) : TokenType.LESS));
+				break;
+			case '>':
+				addToken(match('=') ? TokenType.GREATER_EQUAL : (match('>') ? (match('=') ? TokenType.RIGHT_SHIFT_ASSIGN : TokenType.RIGHT_SHIFT) : TokenType.GREATER));
+				break;
+
+			case '/':
+				if (match('/'))
+				{ // Single-line comment
+					while (peek() != '\n' && !isAtEnd())
+					{
+						advance();
+					}
+				}
+				else if (match('*'))
+				{ // Multi-line comment
+					multilineComment();
 				}
 				else
 				{
-					addToken(TokenType.PIPE);
-				}
-				break;
-			case '.':
-				if (Character.isDigit(peek()))
-				{
-					error("Floating point number cannot start with a decimal point. Expected a digit before '.'.");
-					addToken(TokenType.DOT);
-				}
-				else
-				{
-					addToken(TokenType.DOT);
+					addToken(match('=') ? TokenType.SLASH_ASSIGN : TokenType.SLASH);
 				}
 				break;
 
+			// Whitespace
+			case ' ':
+			case '\r':
+			case '\t':
+				// Ignore.
+				break;
+			case '\n':
+				line++;
+				column = 0;
+				break;
 
-			// --- Literals and Identifiers ---
+			// Literals
 			case '"':
-				// Check if this is the start of a raw string (""")
-				if (peek() == '"' && peek(1) == '"')
-				{
-					// Consume the next two quotes to move past the """ delimiter
-					advance();
-					advance();
-					rawString(); // Call the existing rawString method
-				}
-				else
-				{
-					// Otherwise, it's a regular string literal
-					scanStringLiteral();
-				}
+				scanStringLiteral();
 				break;
 			case '\'':
 				scanCharacterLiteral();
 				break;
-
-			// --- Whitespace ---
-			case ' ':
-			case '\r':
-			case '\t':
-				// Ignore whitespace.
-				break;
-			case '\n':
-				line++;
-				column = 0; // Reset column for new line
+			case '.':
+				if (Character.isDigit(peek()))
+				{
+					error("Floating point numbers cannot start with a decimal point. Expected a digit before '.'.");
+				}
+				addToken(TokenType.DOT);
 				break;
 
 			default:
 				if (Character.isDigit(c))
-				{ // Corrected: Use Character.isDigit()
+				{
 					scanNumber();
 				}
 				else if (Character.isLetter(c) || c == '_')
-				{ // Corrected: Use Character.isLetter()
+				{
 					scanIdentifier();
 				}
 				else
 				{
 					error("Unexpected character '" + c + "'.");
-					addToken(TokenType.ERROR, null); // Add an error token to continue parsing
 				}
 				break;
 		}
@@ -486,18 +407,36 @@ public class Lexer
 		errorReporter.report(line, column - (current - start), "[Lexical Error] " + message);
 	}
 
+	private void multilineComment()
+	{
+		while (!(peek() == '*' && peekNext() == '/') && !isAtEnd())
+		{
+			if (peek() == '\n')
+			{
+				line++;
+				column = 0;
+			}
+			advance();
+		}
+		if (isAtEnd())
+		{
+			error("Unterminated multi-line comment.");
+			return;
+		}
+		// Consume the closing */
+		advance();
+		advance();
+	}
+
 	/**
 	 * Scans a number literal (integer, float, or double).
 	 */
 	private void scanNumber()
 	{
-		// Consume all digits before the decimal point
 		while (Character.isDigit(peek()))
 		{
 			advance();
 		}
-
-		// Check for a decimal point and subsequent digits (for float/double)
 		boolean isFloatingPoint = false;
 		if (peek() == '.' && Character.isDigit(peekNext()))
 		{
@@ -507,15 +446,12 @@ public class Lexer
 				advance();
 			} while (Character.isDigit(peek()));
 		}
-
 		String numberStr = source.substring(start, current);
-
-		// Check for float/double literal suffixes ('f', 'F', 'd', 'D')
 		if (isFloatingPoint)
 		{
 			if (peek() == 'f' || peek() == 'F')
 			{
-				advance(); // Consume 'f'
+				advance();
 				try
 				{
 					addToken(TokenType.FLOAT_LITERAL, Float.parseFloat(numberStr));
@@ -528,7 +464,7 @@ public class Lexer
 			}
 			else if (peek() == 'd' || peek() == 'D')
 			{
-				advance(); // Consume 'd'
+				advance();
 				try
 				{
 					addToken(TokenType.DOUBLE_LITERAL, Double.parseDouble(numberStr));
@@ -541,7 +477,6 @@ public class Lexer
 			}
 			else
 			{
-				// Default to DOUBLE_LITERAL if no suffix or unknown suffix
 				try
 				{
 					addToken(TokenType.DOUBLE_LITERAL, Double.parseDouble(numberStr));
@@ -555,7 +490,6 @@ public class Lexer
 		}
 		else
 		{
-			// It's an integer literal
 			try
 			{
 				addToken(TokenType.INTEGER_LITERAL, Integer.parseInt(numberStr));
@@ -568,9 +502,6 @@ public class Lexer
 		}
 	}
 
-
-	// In Lexer.java
-
 	/**
 	 * Scans a string literal enclosed in double quotes.
 	 */
@@ -579,15 +510,15 @@ public class Lexer
 		StringBuilder value = new StringBuilder();
 		while (peek() != '"' && !isAtEnd())
 		{
-			char c = advance(); // Consume character
+			char c = advance();
 			if (c == '\\')
-			{ // Handle escape sequences inside strings
+			{
 				if (isAtEnd())
 				{
 					error("Unterminated escape sequence in string literal.");
 					break;
 				}
-				char escapeChar = advance(); // Consume the escaped character
+				char escapeChar = advance();
 				switch (escapeChar)
 				{
 					case 'n':
@@ -605,41 +536,39 @@ public class Lexer
 					case 'f':
 						value.append('\f');
 						break;
-					case '"': // This case correctly handles \"
+					case '"':
 						value.append('"');
 						break;
 					case '\\':
 						value.append('\\');
 						break;
 					case '0':
-						value.append('\0'); // Null character
+						value.append('\0');
 						break;
 					default:
 						error("Invalid escape sequence '\\" + escapeChar + "' in string literal.");
-						value.append('\\').append(escapeChar); // Append as-is if invalid escape
+						value.append('\\').append(escapeChar);
 						break;
 				}
 			}
 			else if (c == '\n')
-			{ // This correctly handles newlines
-				value.append('\n'); // Append the newline character to the string value
-				line++;             // Increment line count
-				column = 0;         // Reset column for the new line
+			{
+				value.append('\n');
+				line++;
+				column = 0;
 			}
 			else
 			{
 				value.append(c);
 			}
 		}
-
 		if (isAtEnd())
 		{
 			error("Unterminated string literal.");
 			addToken(TokenType.ERROR, null);
 			return;
 		}
-
-		advance(); // Consume the closing '"'
+		advance();
 		addToken(TokenType.STRING_LITERAL, value.toString());
 	}
 
@@ -648,29 +577,24 @@ public class Lexer
 	 */
 	private void scanCharacterLiteral()
 	{
-		// Consume the opening single quote
-		// `start` already points to the beginning of the literal (before the first '\'')
-		// `current` is on the character after the first '\''
 		char charValue;
-
 		if (isAtEnd())
 		{
 			error("Unterminated character literal.");
 			addToken(TokenType.ERROR, null);
 			return;
 		}
-
 		char c = peek();
 		if (c == '\\')
-		{ // Handle escape sequences
-			advance(); // Consume '\'
+		{
+			advance();
 			if (isAtEnd())
 			{
 				error("Unterminated escape sequence in character literal.");
 				addToken(TokenType.ERROR, null);
 				return;
 			}
-			char escapeChar = advance(); // Consume the escaped character
+			char escapeChar = advance();
 			switch (escapeChar)
 			{
 				case 'n':
@@ -695,41 +619,37 @@ public class Lexer
 					charValue = '\\';
 					break;
 				case '0':
-					charValue = '\0'; // Specifically handle null character
+					charValue = '\0';
 					break;
 				default:
 					error("Invalid escape sequence '\\" + escapeChar + "' in character literal.");
-					charValue = '\0'; // Assign dummy value for error recovery
+					charValue = '\0';
 			}
 		}
 		else if (c == '\n' || c == '\r')
 		{
 			error("Newline in character literal.");
-			charValue = '\0'; // Assign dummy value for error recovery
+			charValue = '\0';
 		}
 		else
 		{
-			charValue = advance(); // Consume the character itself
+			charValue = advance();
 		}
-
-		// Check for closing single quote
 		if (isAtEnd() || peek() != '\'')
 		{
 			error("Unterminated character literal. Expected '.");
 			addToken(TokenType.ERROR, null);
-			// Try to recover by advancing until end of line or next quote
 			while (!isAtEnd() && peek() != '\n' && peek() != '\'')
 			{
 				advance();
 			}
 			if (!isAtEnd() && peek() == '\'')
-			{ // If we found the closing quote
-				advance(); // Consume it
+			{
+				advance();
 			}
 			return;
 		}
-
-		advance(); // Consume the closing single quote
+		advance();
 		addToken(TokenType.CHAR_LITERAL, charValue);
 	}
 
@@ -740,30 +660,25 @@ public class Lexer
 	private void scanIdentifier()
 	{
 		while (Character.isLetterOrDigit(peek()) || peek() == '_')
-		{ // Corrected: Use Character.isLetterOrDigit()
+		{
 			advance();
 		}
-
 		String text = source.substring(start, current);
-		TokenType type = keywords.get(text); // Check if it's a reserved keyword
-
+		TokenType type = keywords.get(text);
 		if (type == null)
 		{
-			type = TokenType.IDENTIFIER; // If not a keyword, it's an identifier
-			addToken(type); // Identifiers don't have literal values
+			type = TokenType.IDENTIFIER;
+			addToken(type);
 		}
 		else
 		{
-			// Check if it's a boolean literal keyword ('true' or 'false')
 			if (type == TokenType.BOOLEAN_LITERAL)
 			{
-				// Parse the boolean string and pass the Boolean object as the literal value
 				addToken(type, Boolean.parseBoolean(text));
 			}
 			else
 			{
-				// For other keywords (like 'class', 'void', 'if', etc.), they don't have a literal value.
-				addToken(type); // This calls addToken(type, null) implicitly.
+				addToken(type);
 			}
 		}
 	}
@@ -777,8 +692,6 @@ public class Lexer
 	{
 		int contentStartLine = line;
 		int contentStartCol = column;
-
-		// 1. Find the closing delimiter """
 		while (!(peek() == '"' && peek(1) == '"' && peek(2) == '"'))
 		{
 			if (isAtEnd())
@@ -786,71 +699,45 @@ public class Lexer
 				errorReporter.report(contentStartLine, contentStartCol, "[Lexical Error] Unterminated raw string literal.");
 				return;
 			}
-
 			if (peek() == '\n')
 			{
 				line++;
-				column = 0; // Reset column for the new line
+				column = 0;
 			}
 			advance();
 		}
-
-		// 2. We found the end. Extract the raw content.
-		// The content is from the character after the opening """ to the one before the closing """.
 		String rawContent = source.substring(start + 3, current);
-
-		// Consume the closing delimiter
 		advance();
 		advance();
 		advance();
-
-		// 3. Calculate the indentation of the closing line.
 		int lastNewline = rawContent.lastIndexOf('\n');
 		if (lastNewline == -1)
 		{
-			// Single-line raw string: """some content"""
 			addToken(TokenType.STRING_LITERAL, rawContent);
 			return;
 		}
-
-		// The indentation is the whitespace after the last newline.
 		StringBuilder finalValue = getStringBuilder(rawContent, lastNewline);
-
-		// 5. Add the final processed string token.
 		addToken(TokenType.STRING_LITERAL, finalValue.toString());
 	}
 
 	private static StringBuilder getStringBuilder(String rawContent, int lastNewline)
 	{
 		String closingIndent = rawContent.substring(lastNewline + 1);
-
-		// The C# spec requires the closing line to contain only whitespace.
 		if (!closingIndent.trim().isEmpty())
 		{
-			// We can be lenient and just assume no indentation in this malformed case.
 			closingIndent = "";
 		}
-
-		// The actual content to process is everything before this last newline.
 		String contentToProcess = rawContent.substring(0, lastNewline);
-
-		// 4. Split into lines and strip the common indentation.
 		String[] lines = contentToProcess.split("\n");
 		StringBuilder finalValue = new StringBuilder();
-
-		// Handle the first line separately to ignore whitespace after opening quotes.
 		if (lines.length > 0)
 		{
 			finalValue.append(lines[0].stripLeading());
 		}
-
-		// Process the rest of the lines
 		for (int i = 1; i < lines.length; i++)
 		{
 			finalValue.append('\n');
 			String currentLine = lines[i];
-
-			// Only strip indentation if the line isn't blank and has the prefix
 			if (!currentLine.isBlank() && currentLine.startsWith(closingIndent))
 			{
 				finalValue.append(currentLine.substring(closingIndent.length()));

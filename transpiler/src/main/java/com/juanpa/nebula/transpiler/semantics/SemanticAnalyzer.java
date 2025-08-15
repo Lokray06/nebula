@@ -763,10 +763,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return ErrorType.INSTANCE;
 		}
 
-		// Arithmetic operations (+, -, *, /, %)
+		// Arithmetic operations (+, -, *, /, %, **)
 		if (operator.getType() == TokenType.PLUS || operator.getType() == TokenType.MINUS ||
 				operator.getType() == TokenType.STAR || operator.getType() == TokenType.SLASH ||
-				operator.getType() == TokenType.MODULO)
+				operator.getType() == TokenType.MODULO || operator.getType() == TokenType.POWER)
 		{
 			// If compatible, use the wider numeric type for the result
 			return Type.getWiderNumericType(leftType, rightType);
@@ -797,6 +797,21 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return PrimitiveType.BOOL;
 		}
 
+		// Bitwise operations (&, |, ^, <<, >>)
+		if (operator.getType() == TokenType.AMPERSAND || operator.getType() == TokenType.PIPE ||
+				operator.getType() == TokenType.XOR || operator.getType() == TokenType.LEFT_SHIFT ||
+				operator.getType() == TokenType.RIGHT_SHIFT)
+		{
+			if (!leftType.isInteger() || !rightType.isInteger())
+			{
+				error(operator, "Bitwise operators require integer operands.");
+				return ErrorType.INSTANCE;
+			}
+			// Bitwise operations return the wider integer type
+			return Type.getWiderNumericType(leftType, rightType);
+		}
+
+
 		error(operator, "Unsupported binary operator '" + operator.getLexeme() + "' for given types.");
 		return ErrorType.INSTANCE;
 	}
@@ -817,30 +832,41 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		switch (operator.getType())
 		{
-			case BANG: // Logical NOT (!)
+			// Logical NOT
+			case BANG:
 				if (!operandType.equals(PrimitiveType.BOOL))
 				{
-					error(operator, "Unary operator '!' can only be applied to a boolean expression.");
+					error(operator, "Logical NOT operator '!' requires a boolean operand.");
 					return ErrorType.INSTANCE;
 				}
 				return PrimitiveType.BOOL;
-			case MINUS: // Negation (-)
-				if (!(operandType.equals(PrimitiveType.INT) || operandType.equals(PrimitiveType.DOUBLE) || operandType.equals(PrimitiveType.FLOAT) || operandType.equals(PrimitiveType.BYTE) || operandType.equals(PrimitiveType.CHAR)))
+			// Arithmetic negation
+			case MINUS:
+				if (!operandType.isNumeric())
 				{
-					error(operator, "Unary operator '-' can only be applied to numeric expressions.");
+					error(operator, "Arithmetic negation operator '-' requires a numeric operand.");
 					return ErrorType.INSTANCE;
 				}
-				return operandType; // Type remains the same (int -> int, double -> double)
-			case PLUS_PLUS:   // Increment (++)
-			case MINUS_MINUS: // Decrement (--)
-				if (!(operandType.isNumeric())) // Use isNumeric helper
+				return operandType;
+			// Bitwise NOT
+			case BITWISE_NOT:
+				if (!operandType.isInteger())
 				{
-					error(operator, "Increment/decrement operators '++' and '--' can only be applied to numeric expressions.");
+					error(operator, "Bitwise NOT operator '~' requires an integer operand.");
+					return ErrorType.INSTANCE;
+				}
+				return operandType;
+			// Postfix and prefix increment/decrement
+			case PLUS_PLUS:
+			case MINUS_MINUS:
+				if (!operandType.isNumeric())
+				{
+					error(operator, "Increment/decrement operators require a numeric operand.");
 					return ErrorType.INSTANCE;
 				}
 				return operandType;
 			default:
-				error(operator, "Unsupported unary operator: '" + operator.getLexeme() + "'.");
+				error(operator, "Unsupported unary operator '" + operator.getLexeme() + "' for type '" + operandType.getName() + "'.");
 				return ErrorType.INSTANCE;
 		}
 	}
@@ -1858,12 +1884,39 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			// Other cases (regular, non-const variable without initializer) are fine for now.
 		}
 
-		// This single check correctly handles all assignments, including null,
-		// assuming the isAssignableFrom logic is correct in your Type classes.
-		if (declaredType != null && initializerType != null && !declaredType.isAssignableFrom(initializerType))
+		if (declaredType != null && initializerType != null)
 		{
-			error(statement.getName(), "Incompatible types in variable declaration: cannot assign '" + initializerType.getName() + "' to '" + declaredType.getName() + "'.");
+			boolean assignable = declaredType.isAssignableFrom(initializerType);
+
+			// Allow implicit narrowing for constant numeric literals in range
+			if (!assignable
+					&& initializerType.isNumeric()
+					&& statement.getInitializer() instanceof LiteralExpression)
+			{
+
+				LiteralExpression lit = (LiteralExpression) statement.getInitializer();
+				Token tok = lit.getLiteralToken(); // <- your actual token
+
+				// Check token type to ensure it's numeric
+				//if (tok.getType() == TokenType.INTEGER_LITERAL || tok.getType() == TokenType.HEX_LITERAL)
+				if (tok.getType() == TokenType.INTEGER_LITERAL)
+				{
+					long longVal = ((Number) tok.getLiteral()).longValue(); // parser already stored as Number
+					if (PrimitiveType.fitsInRange(declaredType, longVal))
+					{
+						assignable = true;
+					}
+				}
+			}
+
+			if (!assignable)
+			{
+				error(statement.getName(),
+						"Incompatible types in variable declaration: cannot assign '"
+								+ initializerType.getName() + "' to '" + declaredType.getName() + "'.");
+			}
 		}
+
 
 		VariableSymbol variableSymbol = new VariableSymbol(
 				statement.getName().getLexeme(),
@@ -2164,26 +2217,19 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				return ErrorType.INSTANCE;
 			}
 
-			// ================== START OF FIX ==================
-			// Check if the setter is accessible from the current context.
 			if (!checkAccess(setter, expression.getTarget().getFirstToken()))
 			{
-				return ErrorType.INSTANCE; // Access denied
+				return ErrorType.INSTANCE;
 			}
-			// =================== END OF FIX ===================
-
 		}
 		else if (resolvedTargetSymbol instanceof VariableSymbol)
 		{
 			VariableSymbol varSymbol = (VariableSymbol) resolvedTargetSymbol;
 
-			// ================== START OF FIX ==================
-			// Check if the field is accessible.
 			if (!checkAccess(varSymbol, expression.getTarget().getFirstToken()))
 			{
 				return ErrorType.INSTANCE;
 			}
-			// =================== END OF FIX ===================
 
 			if (varSymbol.isConst())
 			{
@@ -2193,15 +2239,16 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			varSymbol.setInitialized(true);
 		}
 
-		// Corrected assignment check direction.
-		if (!targetType.isAssignableFrom(valueType))
+		// For simple assignment (=), check for standard assignability.
+		if (expression.getOperator().getType() == TokenType.ASSIGN)
 		{
-			error(expression.getOperator(), "Incompatible types in assignment: cannot assign '" + valueType.getName() + "' to '" + targetType.getName() + "'.");
-			return ErrorType.INSTANCE;
+			if (!targetType.isAssignableFrom(valueType))
+			{
+				error(expression.getOperator(), "Incompatible types in assignment: cannot assign '" + valueType.getName() + "' to '" + targetType.getName() + "'.");
+				return ErrorType.INSTANCE;
+			}
 		}
-
-		// For compound assignments (+=, -=, etc.), check compatibility for the implicit binary operation
-		if (expression.getOperator().getType() != TokenType.ASSIGN)
+		else // For compound assignments (+=, -=, etc.)
 		{
 			TokenType baseBinaryOpType = null;
 			switch (expression.getOperator().getType())
@@ -2221,11 +2268,30 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				case MODULO_ASSIGN:
 					baseBinaryOpType = TokenType.MODULO;
 					break;
+				case AMPERSAND_ASSIGN:
+					baseBinaryOpType = TokenType.AMPERSAND;
+					break;
+				case PIPE_ASSIGN:
+					baseBinaryOpType = TokenType.PIPE;
+					break;
+				case XOR_ASSIGN:
+					baseBinaryOpType = TokenType.XOR;
+					break;
+				case LEFT_SHIFT_ASSIGN:
+					baseBinaryOpType = TokenType.LEFT_SHIFT;
+					break;
+				case RIGHT_SHIFT_ASSIGN:
+					baseBinaryOpType = TokenType.RIGHT_SHIFT;
+					break;
+				case POWER_ASSIGN:
+					baseBinaryOpType = TokenType.POWER;
+					break;
 				default:
 					error(expression.getOperator(), "Internal error: Unhandled compound assignment operator type: " + expression.getOperator().getType() + ".");
 					return ErrorType.INSTANCE;
 			}
-			Token baseBinaryOpToken = new Token(baseBinaryOpType, expression.getOperator().getLexeme().substring(0, 1), null,
+
+			Token baseBinaryOpToken = new Token(baseBinaryOpType, expression.getOperator().getLexeme().substring(0, expression.getOperator().getLexeme().length() - 1), null,
 					expression.getOperator().getLine(), expression.getOperator().getColumn());
 
 			Type binaryOpResultType = getBinaryExpressionResultType(baseBinaryOpToken, targetType, valueType);
@@ -2233,8 +2299,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			{
 				return ErrorType.INSTANCE;
 			}
-			// *** MODIFIED ***: Corrected assignment check direction.
-			if (!binaryOpResultType.isAssignableTo(targetType))
+
+			// A special check for compound assignments to allow implicit narrowing conversion
+			// as long as both types are numeric. This mimics Java's behavior.
+			if (!targetType.isNumeric() || !binaryOpResultType.isNumeric())
 			{
 				error(expression.getOperator(), "The result of the compound assignment operation ('" + expression.getOperator().getLexeme() + "') is not assignable back to the target type '" + targetType.getName() + "'.");
 				return ErrorType.INSTANCE;

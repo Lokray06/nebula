@@ -17,7 +17,7 @@ public class AssignmentExpression implements Expression
 	private final Expression target; // The left-hand side of the assignment (e.g., IdentifierExpression, DotExpression)
 	private final Token operator;    // The assignment operator token (e.g., ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN)
 	private final Expression value;  // The right-hand side expression
-	private Type resolvedType; // NEW: Field for resolved type
+	private Type resolvedType; // Field for resolved type
 
 	/**
 	 * Constructor for AssignmentExpression.
@@ -28,8 +28,8 @@ public class AssignmentExpression implements Expression
 	 */
 	public AssignmentExpression(Expression target, Token operator, Expression value)
 	{
-		// Basic validation for the operator type (can be expanded)
-		if(!isAssignmentOperator(operator.getType()))
+		// Basic validation for the operator type
+		if (!isAssignmentOperator(operator.getType()))
 		{
 			throw new IllegalArgumentException("Invalid token type for assignment operator: " + operator.getType());
 		}
@@ -40,9 +40,18 @@ public class AssignmentExpression implements Expression
 
 	private boolean isAssignmentOperator(TokenType type)
 	{
-		return type == TokenType.ASSIGN || type == TokenType.PLUS_ASSIGN ||
-				type == TokenType.MINUS_ASSIGN || type == TokenType.STAR_ASSIGN ||
-				type == TokenType.SLASH_ASSIGN || type == TokenType.MODULO_ASSIGN;
+		return type == TokenType.ASSIGN ||
+				type == TokenType.PLUS_ASSIGN ||
+				type == TokenType.MINUS_ASSIGN ||
+				type == TokenType.STAR_ASSIGN ||
+				type == TokenType.SLASH_ASSIGN ||
+				type == TokenType.MODULO_ASSIGN ||
+				type == TokenType.AMPERSAND_ASSIGN ||
+				type == TokenType.PIPE_ASSIGN ||
+				type == TokenType.XOR_ASSIGN ||
+				type == TokenType.LEFT_SHIFT_ASSIGN ||
+				type == TokenType.RIGHT_SHIFT_ASSIGN ||
+				type == TokenType.POWER_ASSIGN;
 	}
 
 	public Expression getTarget()
@@ -75,13 +84,13 @@ public class AssignmentExpression implements Expression
 	@Override
 	public Token getFirstToken()
 	{
-		return target.getFirstToken(); // The first token is the first token of the target expression
+		return target.getFirstToken();
 	}
 
 	@Override
 	public Symbol getResolvedSymbol()
 	{
-		return target.getResolvedSymbol(); // The symbol being assigned to
+		return target.getResolvedSymbol();
 	}
 
 	@Override
@@ -90,15 +99,14 @@ public class AssignmentExpression implements Expression
 		// The symbol is set on the target, not directly on the assignment expression itself.
 	}
 
-	// NEW: Implementation for getResolvedType()
 	@Override
-	public Type getResolvedType() {
-		// The type of an assignment expression is the type of its target (left-hand side).
+	public Type getResolvedType()
+	{
 		return resolvedType;
 	}
 
-	// Setter for resolved type
-	public void setResolvedType(Type resolvedType) {
+	public void setResolvedType(Type resolvedType)
+	{
 		this.resolvedType = resolvedType;
 	}
 }

@@ -1385,6 +1385,12 @@ public class CppGenerator implements ASTVisitor<String>
 			return "(" + left + " " + op + " " + right + ")";
 		}
 
+		// --- NEW: Power operator handling ---
+		if (op.equals("**"))
+		{
+			return "std::pow(" + left + ", " + right + ")";
+		}
+
 		// --- REVISED STRING CONCATENATION LOGIC ---
 		if (op.equals("+") && (isNebulaString(leftType) || isNebulaString(rightType)))
 		{
@@ -1566,38 +1572,33 @@ public class CppGenerator implements ASTVisitor<String>
 			MethodSymbol setter = propSymbol.getSetter();
 			if (setter == null)
 			{
-				error(expression.getTarget().getFirstToken(), "Property '" + propSymbol.getName() + "' is read-only.");
+				error(expression.getTarget().getFirstToken(),
+						"Property '" + propSymbol.getName() + "' is read-only.");
 				return "/* ERROR: assignment to read-only property */";
 			}
 
-			// --- START OF FIX ---
 			String targetObjectCode;
 			String accessor;
 
-			// Determine the object on which the property is being set
 			if (expression.getTarget() instanceof DotExpression)
 			{
 				DotExpression dot = (DotExpression) expression.getTarget();
 				Expression left = dot.getLeft();
 				targetObjectCode = left.accept(this);
-
-				// Determine the correct accessor based on ownership
 				OwnershipKind ownerOwnership = getOwnership(left.getResolvedSymbol());
 				accessor = (ownerOwnership == OwnershipKind.STACK) ? "." : "->";
 			}
-			else // This case is for implicit 'this' (e.g., MyProperty = value;)
+			else
 			{
 				targetObjectCode = "this";
-				accessor = "->"; // 'this' is always a pointer in C++
+				accessor = "->";
 			}
-			// --- END OF FIX ---
 
 			String value = expression.getValue().accept(this);
-			// Use the determined accessor to call the setter method
 			return targetObjectCode + accessor + setter.getName() + "(" + value + ")";
 		}
 
-		// --- Original logic for non-property assignments (this part is correct) ---
+		// --- Non-property assignment handling ---
 		String target = expression.getTarget().accept(this);
 
 		OwnershipKind ownership = OwnershipKind.SHARED;
@@ -1612,13 +1613,24 @@ public class CppGenerator implements ASTVisitor<String>
 		String value = expression.getValue().accept(this);
 		this.expectedOwnership = old;
 
-		// Optional: move semantics for UNIQUE
+		// Move semantics for UNIQUE
 		if (ownership == OwnershipKind.UNIQUE)
 		{
 			value = "std::move(" + value + ")";
 		}
 
-		return target + " " + expression.getOperator().getLexeme() + " " + value;
+		String op = expression.getOperator().getLexeme();
+
+		// --- Special case: POWER_ASSIGN ("**=") ---
+		if (op.equals("**="))
+		{
+			// In C++, exponentiation is done with std::pow()
+			// We also make sure to assign back to the same target
+			return target + " = std::pow(" + target + ", " + value + ")";
+		}
+
+		// --- Default handling ---
+		return target + " " + op + " " + value;
 	}
 
 	@Override
@@ -1780,7 +1792,7 @@ public class CppGenerator implements ASTVisitor<String>
 				.collect(Collectors.toList());
 		String args = String.join(", ", argCodes);
 
-		System.err.println("Generating a new statement for " + expression.getClassName() + " with the expected ownership " + this.expectedOwnership);
+		//System.err.println("Generating a new statement for " + expression.getClassName() + " with the expected ownership " + this.expectedOwnership);
 		// --- NEW: Generate code based on the expected ownership context ---
 		switch (this.expectedOwnership)
 		{
