@@ -417,51 +417,55 @@ public class NebulaParser
 				memberModifiers.add(advance());
 			}
 
-			Token nextTokenAfterModifiers = peek();
-
-			// 1. Check for constructors (the most specific case).
-			if (nextTokenAfterModifiers.getType() == TokenType.IDENTIFIER &&
-					nextTokenAfterModifiers.getLexeme().equals(className.getLexeme()) &&
+			// Handle constructors first (special case: name matches class name)
+			if (check(TokenType.IDENTIFIER) &&
+					peek().getLexeme().equals(className.getLexeme()) &&
 					check(1, TokenType.LEFT_PAREN))
 			{
 				constructors.add(constructorDeclaration(memberModifiers, className));
+				continue;
 			}
-			// 2. Check for operator declarations (another specific case).
-			else if (isTypeToken(nextTokenAfterModifiers.getType()) &&
+
+			// Handle operator overloads
+			if (isTypeToken(peek().getType()) &&
 					check(1, TokenType.OPERATOR) &&
 					isOperatorToken(peek(2).getType()))
 			{
-				methods.add(methodDeclaration(memberModifiers, true));
+				TypeSpecifier typeSpecifier = parseTypeSpecifier();
+				methods.add(methodDeclaration(memberModifiers, typeSpecifier, true));
+				continue;
 			}
-			// 3. Check for property declarations (Type Identifier { ... }). This is the crucial fix.
-			//    We must check for this before fields or methods, as it has the same prefix.
-			else if ((isTypeToken(nextTokenAfterModifiers.getType()) || nextTokenAfterModifiers.getType() == TokenType.VAR) &&
-					check(1, TokenType.IDENTIFIER) &&
-					check(2, TokenType.LEFT_BRACE))
+
+			// ---- NEW: parse the full type specifier before deciding member kind ----
+			if (isTypeToken(peek().getType()) || peek().getType() == TokenType.VAR)
 			{
-				properties.add(propertyDeclaration(memberModifiers));
+				TypeSpecifier typeSpec = parseTypeSpecifier();
+
+				// Property: TYPE IDENTIFIER '{'
+				if (check(TokenType.IDENTIFIER) && check(1, TokenType.LEFT_BRACE))
+				{
+					properties.add(propertyDeclaration(memberModifiers, typeSpec));
+					continue;
+				}
+
+				// Method: TYPE IDENTIFIER '('
+				if (check(TokenType.IDENTIFIER) && check(1, TokenType.LEFT_PAREN))
+				{
+					methods.add(methodDeclaration(memberModifiers, typeSpec, false));
+					continue;
+				}
+
+				// Field: TYPE IDENTIFIER [= ...] ;
+				if (check(TokenType.IDENTIFIER))
+				{
+					fields.add(fieldDeclaration(memberModifiers, typeSpec));
+					continue;
+				}
 			}
-			// 4. Check for method declarations (Type Identifier ( ... )).
-			//    This check comes after properties to avoid ambiguity.
-			else if ((isTypeToken(nextTokenAfterModifiers.getType()) || nextTokenAfterModifiers.getType() == TokenType.VAR) &&
-					check(1, TokenType.IDENTIFIER) &&
-					check(2, TokenType.LEFT_PAREN))
-			{
-				methods.add(methodDeclaration(memberModifiers, false));
-			}
-			// 5. Finally, check for field declarations (the most general case).
-			//    This check will not be run if the token stream matches one of the more specific cases above.
-			else if ((isTypeToken(nextTokenAfterModifiers.getType()) || nextTokenAfterModifiers.getType() == TokenType.VAR) &&
-					check(1, TokenType.IDENTIFIER) &&
-					!check(2, TokenType.LEFT_PAREN))
-			{
-				fields.add(fieldDeclaration(memberModifiers));
-			}
-			else
-			{
-				error(peek(), "Expected field, method, constructor, or operator declaration inside class.");
-				synchronizeClassBody();
-			}
+
+			// If none matched, it's a syntax error
+			error(peek(), "Expected field, method, constructor, or operator declaration inside class.");
+			synchronizeClassBody();
 		}
 
 		Token rightBrace = consume(TokenType.RIGHT_BRACE, "Expected '}' after class body.");
@@ -556,12 +560,12 @@ public class NebulaParser
 	 * @return A MethodDeclaration AST node.
 	 * @throws SyntaxError if a syntax error occurs.
 	 */
-	private MethodDeclaration methodDeclaration(List<Token> modifiers, boolean isOperatorOverload) throws SyntaxError
+	private MethodDeclaration methodDeclaration(List<Token> modifiers, TypeSpecifier typeSpec, boolean isOperatorOverload) throws SyntaxError
 	{
 		boolean isWrapper = modifiers.stream().anyMatch(m -> m.getType() == TokenType.WRAPPER);
 		Token cppTarget = null;
 
-		Token returnType = advance();
+		Token returnType = typeSpec.baseType(); // unwrap type
 		Token methodName;
 		Token operatorKeyword = null;
 
@@ -578,7 +582,6 @@ public class NebulaParser
 		{
 			methodName = consume(TokenType.IDENTIFIER, "Expected method name.");
 		}
-
 
 		consume(TokenType.LEFT_PAREN, "Expected '(' after method name or operator.");
 
@@ -619,7 +622,6 @@ public class NebulaParser
 			semicolon = consume(TokenType.SEMICOLON, "Expected method body or ';' after method declaration.");
 		}
 
-		// MODIFY the return statement
 		return new MethodDeclaration(modifiers, returnType, methodName, parameters, body, semicolon, operatorKeyword, isWrapper, cppTarget);
 	}
 
@@ -656,12 +658,12 @@ public class NebulaParser
 	 * @return A FieldDeclaration AST node.
 	 * @throws SyntaxError if a syntax error occurs.
 	 */
-	private FieldDeclaration fieldDeclaration(List<Token> modifiers) throws SyntaxError
+	private FieldDeclaration fieldDeclaration(List<Token> modifiers, TypeSpecifier typeSpec) throws SyntaxError
 	{
 		boolean isWrapper = modifiers.stream().anyMatch(m -> m.getType() == TokenType.WRAPPER);
 		Token cppTarget = null;
 
-		Token type = advance();
+		Token type = typeSpec.baseType(); // unwrap type
 		Token name = consume(TokenType.IDENTIFIER, "Expected field name.");
 
 		Expression initializer = null;
@@ -682,7 +684,6 @@ public class NebulaParser
 		}
 
 		consume(TokenType.SEMICOLON, "Expected ';' after field declaration.");
-		// MODIFY the return statement
 		return new FieldDeclaration(modifiers, type, name, initializer, isWrapper, cppTarget);
 	}
 
@@ -1227,7 +1228,7 @@ public class NebulaParser
 
 	private Expression multiplicative() throws SyntaxError
 	{
-		Expression expr = unary();
+		Expression expr = power();
 
 		while (match(TokenType.SLASH, TokenType.STAR, TokenType.MODULO))
 		{
@@ -1235,6 +1236,24 @@ public class NebulaParser
 			Expression right = unary();
 			expr = new BinaryExpression(expr, operator, right);
 		}
+		return expr;
+	}
+
+	/**
+	 * Parses a power expression (**)
+	 * Grammar: unary ( '**' unary )*
+	 */
+	private Expression power() throws SyntaxError
+	{
+		Expression expr = unary();
+
+		while (match(TokenType.POWER))
+		{
+			Token operator = previous();
+			Expression right = power(); // IMPORTANT: This makes it right-associative
+			expr = new BinaryExpression(expr, operator, right);
+		}
+
 		return expr;
 	}
 
@@ -1866,9 +1885,8 @@ public class NebulaParser
 	 * Grammar: MODIFIERS TYPE IDENTIFIER '{' ACCESSOR+ '}'
 	 * Returns a list of method declarations because a property is desugared into get/set methods.
 	 */
-	private PropertyDeclaration propertyDeclaration(List<Token> modifiers) throws SyntaxError
+	private PropertyDeclaration propertyDeclaration(List<Token> modifiers, TypeSpecifier typeSpec) throws SyntaxError
 	{
-		Token type = advance();
 		Token name = consume(TokenType.IDENTIFIER, "Expected property name.");
 		consume(TokenType.LEFT_BRACE, "Expected '{' to start property body.");
 
@@ -1906,8 +1924,12 @@ public class NebulaParser
 		}
 
 		consume(TokenType.RIGHT_BRACE, "Expected '}' to end property body.");
-		return new PropertyDeclaration(modifiers, type, name, getAccessor, setAccessor);
+
+		// --- THIS IS THE FIX ---
+		// Pass the array rank from the TypeSpecifier to the constructor.
+		return new PropertyDeclaration(modifiers, typeSpec.baseType(), typeSpec.rank(), name, getAccessor, setAccessor);
 	}
+
 
 	/**
 	 * Parses a single 'get' or 'set' accessor.

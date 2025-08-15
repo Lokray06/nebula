@@ -1,5 +1,3 @@
-// File: src/main/java/com/juanpa.nebula.transpiler/semantics/VariableSymbol.java
-
 package com.juanpa.nebula.transpiler.semantics;
 
 import com.juanpa.nebula.transpiler.lexer.Token;
@@ -17,6 +15,10 @@ public class VariableSymbol extends Symbol
 	private final String cppTarget;
 	private ClassSymbol ownerClass;
 
+	// --- NEW ---
+	// Holds the inferred ownership kind. Defaults to SHARED for safety.
+	private OwnershipKind ownership = OwnershipKind.SHARED;
+
 	/**
 	 * Full constructor for a VariableSymbol.
 	 *
@@ -30,7 +32,8 @@ public class VariableSymbol extends Symbol
 	 * @param isWrapper        Whether this is a wrapper for native C++ code.
 	 * @param cppTarget        The native C++ code to generate if it's a wrapper.
 	 */
-	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized, boolean isStatic, boolean isConst, boolean isPublic, boolean isWrapper, String cppTarget) {
+	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized, boolean isStatic, boolean isConst, boolean isPublic, boolean isWrapper, String cppTarget)
+	{
 		super(name, type, declarationToken, isPublic);
 		this.isInitialized = isInitialized;
 		this.isStatic = isStatic;
@@ -39,8 +42,7 @@ public class VariableSymbol extends Symbol
 		this.cppTarget = cppTarget;
 	}
 
-	// To maintain compatibility, you need to create a constructor chain.
-	// The most specific one is above. Let's adapt the existing ones.
+	// Constructor chains for compatibility
 	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized, boolean isStatic, boolean isConst, boolean isPublic)
 	{
 		this(name, type, declarationToken, isInitialized, isStatic, isConst, isPublic, false, null);
@@ -55,7 +57,6 @@ public class VariableSymbol extends Symbol
 	{
 		this(name, type, declarationToken, isInitialized, isStatic, isConst, false, false, null);
 	}
-
 
 	public boolean isInitialized()
 	{
@@ -114,10 +115,30 @@ public class VariableSymbol extends Symbol
 		this.ownerClass = ownerClass;
 	}
 
+	// --- NEW: Getter and Setter for OwnershipKind ---
+	public OwnershipKind getOwnership()
+	{
+		return ownership;
+	}
+
+	public void setOwnership(OwnershipKind ownership)
+	{
+		this.ownership = ownership;
+	}
+
 
 	@Override
 	public String toString()
 	{
-		return "VariableSymbol{" + "name='" + getName() + '\'' + ", type=" + getType() + ", initialized=" + isInitialized + ", static=" + isStatic() + ", const=" + isConst() + ", public=" + isPublic() + (ownerClass != null ? ", owner=" + ownerClass.getName() : "") + '}';
+		return "VariableSymbol{" +
+				"name='" + getName() + '\'' +
+				", type=" + getType() +
+				", ownership=" + ownership + // Added for debugging
+				", initialized=" + isInitialized +
+				", static=" + isStatic() +
+				", const=" + isConst() +
+				", public=" + isPublic() +
+				(ownerClass != null ? ", owner=" + ownerClass.getName() : "") +
+				'}';
 	}
 }

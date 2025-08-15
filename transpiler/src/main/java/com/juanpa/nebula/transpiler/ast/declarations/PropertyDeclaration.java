@@ -12,15 +12,17 @@ public class PropertyDeclaration implements ASTNode
 {
 	private final List<Token> modifiers;
 	private final Token typeToken;
+	private final int arrayRank; // --- ADD THIS ---
 	private final Token name;
 	private final AccessorDeclaration getAccessor;
 	private final AccessorDeclaration setAccessor;
 	private PropertySymbol resolvedSymbol;
 
-	public PropertyDeclaration(List<Token> modifiers, Token typeToken, Token name, AccessorDeclaration getAccessor, AccessorDeclaration setAccessor)
+	public PropertyDeclaration(List<Token> modifiers, Token typeToken, int arrayRank, Token name, AccessorDeclaration getAccessor, AccessorDeclaration setAccessor)
 	{
 		this.modifiers = modifiers;
 		this.typeToken = typeToken;
+		this.arrayRank = arrayRank; // --- ADD THIS ---
 		this.name = name;
 		this.getAccessor = getAccessor;
 		this.setAccessor = setAccessor;
@@ -43,6 +45,12 @@ public class PropertyDeclaration implements ASTNode
 	public Token getTypeToken()
 	{
 		return typeToken;
+	}
+
+	// --- ADD THIS GETTER ---
+	public int getArrayRank()
+	{
+		return arrayRank;
 	}
 
 	public Token getName()

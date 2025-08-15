@@ -68,7 +68,7 @@ public class Main
 		}
 
 		ErrorReporter errorReporter = new ErrorReporter();
-		SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(errorReporter);
+		SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(errorReporter, config);
 
 		Map<String, ClassSymbol> preloadedSymbols = new HashMap<>();
 		Path symbolCacheFile = Paths.get("ndk.nsf");
@@ -216,7 +216,7 @@ public class Main
 			return;
 		}
 
-		SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(errorReporter);
+		SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(errorReporter, config);
 		semanticAnalyzer.analyze(ndkAst);
 		if (errorReporter.hasErrors())
 		{
@@ -345,6 +345,9 @@ public class Main
 		// --- 2. Build the Compile Command ---
 		List<String> compileCommand = new ArrayList<>();
 		compileCommand.add(config.getCppCompilerPath());
+
+		// Add the optimization flag here
+		compileCommand.add("-O3");
 
 		// Include paths for user code and NDK headers
 		compileCommand.add("-I" + outputDirPath.toAbsolutePath());

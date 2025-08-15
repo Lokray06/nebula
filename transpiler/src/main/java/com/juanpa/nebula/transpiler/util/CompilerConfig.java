@@ -11,14 +11,15 @@ public class CompilerConfig
 	private final String cppCompilerPath;
 	private final String ndkHeaderPath;
 	private final String ndkLibraryPath;
+	private final boolean ownershipOptimizationEnabled; // --- NEW ---
 
 	public CompilerConfig(Properties props)
 	{
-		// Load properties with new keys and sensible defaults
 		this.cppCompilerPath = props.getProperty("compiler.cpp_path", "c++");
 		this.ndkHeaderPath = props.getProperty("ndk.header_path", "ndk_cpp");
-		// For the library path, we default to a 'libs' subdirectory in the current project
 		this.ndkLibraryPath = props.getProperty("ndk.library_path", "libs/libndk.so");
+		// --- NEW: Load the optimization flag, defaulting to true ---
+		this.ownershipOptimizationEnabled = Boolean.parseBoolean(props.getProperty("compiler.ownership_optimization", "true"));
 	}
 
 	public String getCppCompilerPath()
@@ -34,5 +35,11 @@ public class CompilerConfig
 	public String getNdkLibraryPath()
 	{
 		return ndkLibraryPath;
+	}
+
+	// --- NEW: Getter for the flag ---
+	public boolean isOwnershipOptimizationEnabled()
+	{
+		return ownershipOptimizationEnabled;
 	}
 }

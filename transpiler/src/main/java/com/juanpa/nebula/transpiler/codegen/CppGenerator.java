@@ -3,62 +3,59 @@ package com.juanpa.nebula.transpiler.codegen;
 
 import com.juanpa.nebula.transpiler.ast.ASTVisitor;
 import com.juanpa.nebula.transpiler.ast.Program;
-import com.juanpa.nebula.transpiler.ast.declarations.*; // Ensure ParameterDeclaration is here
+import com.juanpa.nebula.transpiler.ast.declarations.*;
 import com.juanpa.nebula.transpiler.ast.expressions.*;
 import com.juanpa.nebula.transpiler.ast.statements.*;
 import com.juanpa.nebula.transpiler.lexer.Token;
 import com.juanpa.nebula.transpiler.lexer.TokenType;
-import com.juanpa.nebula.transpiler.semantics.*; // Import all semantic types (including VariableSymbol as it represents fields)
+import com.juanpa.nebula.transpiler.semantics.*;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
 /**
  * CppGenerator is responsible for traversing the Abstract Syntax Tree (AST)
- * and generating corresponding C++ source code. It implements the ASTVisitor
- * interface, where each visit method returns a String representing the C++
- * code for that AST node.
- * <p>
- * It relies heavily on the semantic analysis phase to ensure type correctness
- * and symbol information through resolved symbols on AST nodes.
- * This version generates C++ code for each class into separate `.h` and `.cpp` strings,
- * returned in a Map. It also conditionally generates a `main.cpp` based on a detected
- * main entry point.
+ * and generating corresponding C++ source code.
+ * --- MODIFIED ---
+ * This version is ownership-aware and generates optimized C++ by choosing between
+ * stack allocation, std::unique_ptr, and std::shared_ptr based on semantic analysis.
  */
 public class CppGenerator implements ASTVisitor<String>
 {
 	private StringBuilder currentClassCodeBuilder;
 	private StringBuilder currentHeaderCodeBuilder;
-
-	SemanticAnalyzer semanticAnalyzer;
-
+	private final SemanticAnalyzer semanticAnalyzer;
 	private int indentLevel = 0;
-
 	private ClassSymbol currentClassSymbol;
-
-	// Changed to use the FQN directly, which is built up during namespace traversal.
 	private String currentNamespacePrefix;
-
 	private final Map<String, String> generatedClassCodeMap;
 	private final Map<String, ClassSymbol> declaredClasses;
+	private boolean inConstructor = false; // <-- ADD THIS FIELD
+	private MethodSymbol currentMethodSymbol = null; // <-- ADD THIS FIELD
+
+	// --- NEW ---
+	// State to track the expected ownership for the expression currently being visited.
+	// This allows a parent node (like a variable declaration) to inform a child
+	// (like a 'new' expression) how it should be allocated.
+	private OwnershipKind expectedOwnership = OwnershipKind.SHARED;
+
+	public CppGenerator(Map<String, ClassSymbol> declaredClasses, SemanticAnalyzer semanticAnalyzer)
+	{
+		this.declaredClasses = declaredClasses;
+		this.currentClassCodeBuilder = null;
+		this.currentHeaderCodeBuilder = null;
+		this.currentClassSymbol = null;
+		this.currentNamespacePrefix = "";
+		this.generatedClassCodeMap = new HashMap<>();
+		this.semanticAnalyzer = semanticAnalyzer;
+	}
 
 	private void error(Token token, String message)
 	{
 		System.err.println("Code Generation Error at " + token.getLine() + ":" + token.getColumn() + ": " + message);
 	}
 
-	public CppGenerator(Map<String, ClassSymbol> declaredClasses, SemanticAnalyzer semanticAnalyzer)
-	{
-		this.declaredClasses = declaredClasses; // Initialize the new field
-		this.currentClassCodeBuilder = null;
-		this.currentHeaderCodeBuilder = null;
-		this.currentClassSymbol = null;
-		this.currentNamespacePrefix = "";
-		this.generatedClassCodeMap = new HashMap<>();
-
-		this.semanticAnalyzer = semanticAnalyzer;
-	}
-
+	// ... generate() and generateMainCppIfNeeded() remain unchanged ...
 	public Map<String, String> generate(Program program)
 	{
 		// First pass to populate the map for classes and headers (and resolve symbols if applicable)
@@ -124,6 +121,7 @@ public class CppGenerator implements ASTVisitor<String>
 		}
 	}
 
+	// ... appendLine, appendHeaderLine, indent, dedent, resolveTypeFromToken helpers remain unchanged ...
 	private void appendLine(String line)
 	{
 		if (currentClassCodeBuilder == null)
@@ -165,11 +163,6 @@ public class CppGenerator implements ASTVisitor<String>
 		}
 	}
 
-	/**
-	 * *** NEW ***
-	 * Resolves a type from a token and array rank, necessary because the generator
-	 * doesn't have access to the fully resolved types on VariableDeclarationStatements.
-	 */
 	private Type resolveTypeFromToken(Token typeToken, int arrayRank)
 	{
 		Type baseType;
@@ -239,146 +232,171 @@ public class CppGenerator implements ASTVisitor<String>
 		// Keep the old method for calls that don't involve array ranks.
 		return resolveTypeFromToken(typeToken, 0);
 	}
+	// --- NEW HELPER ---
 
+	/**
+	 * Gets the inferred OwnershipKind from a resolved symbol.
+	 * Defaults to SHARED if the symbol is not a variable or has no ownership info.
+	 *
+	 * @param symbol The symbol resolved by the semantic analyzer.
+	 * @return The inferred OwnershipKind.
+	 */
+	private OwnershipKind getOwnership(Symbol symbol)
+	{
+		if (symbol instanceof VariableSymbol)
+		{
+			// Assumes SemanticAnalyzer has populated this field.
+			return ((VariableSymbol) symbol).getOwnership();
+		}
+		// Methods can also have ownership info for returns/params, but for expressions,
+		// we are primarily concerned with the variables holding the values.
+		return OwnershipKind.SHARED; // The safest default.
+	}
 
-	private String toCppType(Type type)
+	// --- REWRITTEN ---
+
+	/**
+	 * Converts a Nebula Type to its C++ equivalent, now respecting ownership semantics.
+	 *
+	 * @param type      The Nebula Type to convert.
+	 * @param ownership The inferred OwnershipKind guiding C++ type selection.
+	 * @return The corresponding C++ type as a string.
+	 */
+	private String toCppType(Type type, OwnershipKind ownership)
 	{
 		if (type instanceof PrimitiveType)
 		{
-			// Handle explicit-width primitives first for clarity and precision
-			if (type.equals(PrimitiveType.BOOL))
-			{
-				return "bool";
-			}
-			if (type.equals(PrimitiveType.CHAR))
-			{
-				return "char";
-			}
-			if (type.equals(PrimitiveType.CHAR16))
-			{
-				return "char16_t";
-			}
-			if (type.equals(PrimitiveType.CHAR32))
-			{
-				return "char32_t";
-			}
-			if (type.equals(PrimitiveType.INT8))
-			{
-				return "int8_t";
-			}
-			if (type.equals(PrimitiveType.INT16))
-			{
-				return "int16_t";
-			}
-			if (type.equals(PrimitiveType.INT32))
-			{
-				return "int32_t";
-			}
-			if (type.equals(PrimitiveType.INT64))
-			{
-				return "int64_t";
-			}
-			if (type.equals(PrimitiveType.UINT8))
-			{
-				return "uint8_t";
-			}
-			if (type.equals(PrimitiveType.UINT16))
-			{
-				return "uint16_t";
-			}
-			if (type.equals(PrimitiveType.UINT32))
-			{
-				return "uint32_t";
-			}
-			if (type.equals(PrimitiveType.UINT64))
-			{
-				return "uint64_t";
-			}
-			if (type.equals(PrimitiveType.FLOAT))
-			{
-				return "float";
-			}
-			if (type.equals(PrimitiveType.DOUBLE))
-			{
-				return "double";
-			}
-			if (type.equals(PrimitiveType.VOID))
-			{
-				return "void";
-			}
-			// Handle aliases by mapping them to their explicit-width types
-			if (type.equals(PrimitiveType.BYTE))
-			{
-				return "int8_t";
-			}
-			if (type.equals(PrimitiveType.SHORT))
-			{
-				return "int16_t";
-			}
-			if (type.equals(PrimitiveType.INT))
-			{
-				return "int32_t";
-			}
-			if (type.equals(PrimitiveType.LONG))
-			{
-				return "int64_t";
-			}
-			if (type.equals(PrimitiveType.UBYTE))
-			{
-				return "uint8_t";
-			}
-			if (type.equals(PrimitiveType.USHORT))
-			{
-				return "uint16_t";
-			}
-			if (type.equals(PrimitiveType.UINT))
-			{
-				return "uint32_t";
-			}
-			if (type.equals(PrimitiveType.ULONG))
-			{
-				return "uint64_t";
-			}
+			return toCppPrimitiveType(type);
 		}
 		else if (type instanceof ClassType)
 		{
 			ClassType classType = (ClassType) type;
-			// For all Nebula classes (including String and Object), use shared_ptr
 			String cppFqn = classType.getFqn().replace(".", "::");
-			return "std::shared_ptr<" + cppFqn + ">";
+			switch (ownership)
+			{
+				case STACK:
+					return cppFqn; // e.g., MyClass
+				case UNIQUE:
+					return "std::unique_ptr<" + cppFqn + ">";
+				case WEAK:
+					return "std::weak_ptr<" + cppFqn + ">";
+				case SHARED:
+				default:
+					return "std::shared_ptr<" + cppFqn + ">";
+			}
 		}
 		else if (type instanceof ArrayType)
 		{
-			// All arrays are treated as nullable shared_ptrs to a vector.
 			ArrayType arrayType = (ArrayType) type;
-			return "std::shared_ptr<std::vector<" + toCppType(arrayType.getElementType()) + ">>";
+			// Element ownership within containers is typically shared or by value.
+			// For simplicity, we'll assume elements follow the shared model for now.
+			String elementCppType = toCppType(arrayType.getElementType(), OwnershipKind.SHARED);
+			String vectorType = "std::vector<" + elementCppType + ">";
+			switch (ownership)
+			{
+				case STACK:
+					return vectorType;
+				case UNIQUE:
+					return "std::unique_ptr<" + vectorType + ">";
+				case SHARED:
+				default:
+					return "std::shared_ptr<" + vectorType + ">";
+			}
 		}
 		else if (type instanceof NullType)
 		{
-			return "decltype(nullptr)"; // Represents the type of 'nullptr'
+			return "decltype(nullptr)";
 		}
 		else if (type instanceof ErrorType)
 		{
-			return "/* ERROR_TYPE */ void*"; // Placeholder for unresolved types
+			return "/* ERROR_TYPE */ void*";
 		}
-		return "void*"; // Default fallback
+		return "void*";
 	}
 
-	// Helper to get the simple class name from a fully qualified name
+	/**
+	 * Overloaded helper for convenience. Defaults to SHARED ownership if not specified.
+	 */
+	private String toCppType(Type type)
+	{
+		return toCppType(type, OwnershipKind.SHARED);
+	}
+
+	/**
+	 * Helper to map primitive Nebula types to C++ primitive types. Unchanged.
+	 */
+	private String toCppPrimitiveType(Type type)
+	{
+		if (type.equals(PrimitiveType.BOOL))
+		{
+			return "bool";
+		}
+		if (type.equals(PrimitiveType.CHAR))
+		{
+			return "char";
+		}
+		if (type.equals(PrimitiveType.CHAR16))
+		{
+			return "char16_t";
+		}
+		if (type.equals(PrimitiveType.CHAR32))
+		{
+			return "char32_t";
+		}
+		if (type.equals(PrimitiveType.INT8) || type.equals(PrimitiveType.BYTE))
+		{
+			return "int8_t";
+		}
+		if (type.equals(PrimitiveType.INT16) || type.equals(PrimitiveType.SHORT))
+		{
+			return "int16_t";
+		}
+		if (type.equals(PrimitiveType.INT32) || type.equals(PrimitiveType.INT))
+		{
+			return "int32_t";
+		}
+		if (type.equals(PrimitiveType.INT64) || type.equals(PrimitiveType.LONG))
+		{
+			return "int64_t";
+		}
+		if (type.equals(PrimitiveType.UINT8) || type.equals(PrimitiveType.UBYTE))
+		{
+			return "uint8_t";
+		}
+		if (type.equals(PrimitiveType.UINT16) || type.equals(PrimitiveType.USHORT))
+		{
+			return "uint16_t";
+		}
+		if (type.equals(PrimitiveType.UINT32) || type.equals(PrimitiveType.UINT))
+		{
+			return "uint32_t";
+		}
+		if (type.equals(PrimitiveType.UINT64) || type.equals(PrimitiveType.ULONG))
+		{
+			return "uint64_t";
+		}
+		if (type.equals(PrimitiveType.FLOAT))
+		{
+			return "float";
+		}
+		if (type.equals(PrimitiveType.DOUBLE))
+		{
+			return "double";
+		}
+		if (type.equals(PrimitiveType.VOID))
+		{
+			return "void";
+		}
+		return "/* unknown_primitive */";
+	}
+
+	// ... getSimpleClassName and formatCppParameters remain unchanged ...
 	private String getSimpleClassName(String fqn)
 	{
 		int lastDot = fqn.lastIndexOf('.');
 		return lastDot == -1 ? fqn : fqn.substring(lastDot + 1);
 	}
 
-	/**
-	 * Formats a list of parameter tokens into a C++ parameter string.
-	 * Parameters are stored as a flat list of alternating type and name tokens.
-	 * E.g., [TokenType.INT, Token("x"), TokenType.STRING_KEYWORD, Token("s")]
-	 *
-	 * @param parameters A list of Token objects representing parameter types and names.
-	 * @return A string formatted for C++ method/constructor parameters.
-	 */
 	private String formatCppParameters(List<Token> parameters)
 	{
 		if (parameters.isEmpty())
@@ -413,7 +431,7 @@ public class CppGenerator implements ASTVisitor<String>
 		return sb.toString();
 	}
 
-
+	// ... visitProgram, visitImportDirective, visitNamespaceDeclaration, visitClassDeclaration, etc. remain unchanged up to the statement/expression visitors ...
 	@Override
 	public String visitProgram(Program program)
 	{
@@ -513,12 +531,28 @@ public class CppGenerator implements ASTVisitor<String>
 			}
 		}
 
-		String inheritance = "";
-		if (currentClassSymbol.getType().getSuperClassType() instanceof ClassType)
+		String inheritance = ""; // Start with no inheritance
+		String fqnForInheritance = fqn.replace(".", "::");
+
+		// ONLY add an inheritance clause if this class is NOT the base Object class.
+		if (!"nebula.core.Object".equals(fqn))
 		{
-			ClassType superClassType = (ClassType) currentClassSymbol.getType().getSuperClassType();
-			inheritance = " : public " + superClassType.getFqn().replace(".", "::");
+			// Determine the direct base class, defaulting to Object.
+			String baseClass = "nebula::core::Object";
+			if (currentClassSymbol.getType().getSuperClassType() instanceof ClassType)
+			{
+				baseClass = ((ClassType) currentClassSymbol.getType().getSuperClassType()).getFqn().replace(".", "::");
+			}
+
+			inheritance = " : public " + baseClass;
+
+			// MODIFICATION: Only inherit from enable_shared_from_this if the class is NOT stack-allocatable.
+			if (!currentClassSymbol.isNative() && !semanticAnalyzer.getStackAllocatedClasses().contains(fqn))
+			{
+				inheritance += ", public std::enable_shared_from_this<" + fqnForInheritance + ">";
+			}
 		}
+
 
 		appendHeaderLine("class " + simpleName + inheritance + " {");
 		appendHeaderLine("public:");
@@ -561,14 +595,20 @@ public class CppGenerator implements ASTVisitor<String>
 				String methodName = methodSymbol.isOperator() ? "operator" + methodSymbol.getName() : methodSymbol.getMangledName();
 				String staticQualifier = methodSymbol.isStatic() ? "static " : "";
 
-				// Only add 'const' if the method is NOT static.
-				String constQualifier = (!methodSymbol.isStatic()) ? " const" : "";
+				// --- FIX 2: Correctly determine which methods should be const ---
+				boolean isConst = !methodSymbol.isStatic();
+
+				// For non-native classes, be more selective about what is const.
+				if (!currentClassSymbol.isNative())
+				{
+					isConst = !methodSymbol.isStatic() && (methodName.startsWith("get_") || methodName.equals("toString"));
+				}
+				String constQualifier = isConst ? " const" : "";
+
 
 				appendHeaderLine(staticQualifier + returnType + " " + methodName + "(" + formatCppParameters(method.getParameters()) + ")" + constQualifier + ";");
 			}
 		}
-
-		// ================== START OF FIX ==================
 
 		// Property Getter/Setter Declarations
 		for (PropertyDeclaration prop : declaration.getProperties())
@@ -580,12 +620,14 @@ public class CppGenerator implements ASTVisitor<String>
 				{
 					MethodSymbol getter = propSymbol.getGetter();
 					String returnType = toCppType(getter.getType());
+					// Getters are always const
 					appendHeaderLine(returnType + " " + getter.getName() + "() const;");
 				}
 				if (propSymbol.getSetter() != null)
 				{
 					MethodSymbol setter = propSymbol.getSetter();
 					String paramType = toCppType(propSymbol.getType());
+					// Setters are never const
 					appendHeaderLine("void " + setter.getName() + "(const " + paramType + "& value);");
 				}
 			}
@@ -594,10 +636,14 @@ public class CppGenerator implements ASTVisitor<String>
 		// This handles the special case for the native String class's private members
 		if (currentClassSymbol.isNative() && "nebula.core.String".equals(fqn))
 		{
-			appendHeaderLine("\\n\\t// Special constructor for wrapping std::string");
-			appendHeaderLine("\\tString(const std::string& raw_str);");
-			appendHeaderLine("\\n\\t// Accessor for the raw C++ string data");
-			appendHeaderLine("\\tconst std::string& raw() const;");
+			// FIX: Pass clean strings without manual escape characters.
+			// Use an empty string for a blank line.
+			appendHeaderLine("");
+			appendHeaderLine("// Special constructor for wrapping std::string");
+			appendHeaderLine("String(const std::string& raw_str);");
+			appendHeaderLine("");
+			appendHeaderLine("// Accessor for the raw C++ string data");
+			appendHeaderLine("const std::string& raw() const;");
 		}
 
 		// Backing Fields for Auto-Properties
@@ -633,8 +679,6 @@ public class CppGenerator implements ASTVisitor<String>
 			}
 			appendHeaderLine("std::string _data;");
 		}
-
-		// =================== END OF FIX ===================
 
 		dedent();
 		appendHeaderLine("}; // class " + simpleName);
@@ -767,12 +811,28 @@ public class CppGenerator implements ASTVisitor<String>
 	@Override
 	public String visitFieldDeclaration(FieldDeclaration declaration)
 	{
+		OwnershipKind ownership = OwnershipKind.SHARED;
+
+		if (currentClassSymbol != null)
+		{
+			Symbol sym = currentClassSymbol.getClassScope().resolve(declaration.getName().getLexeme());
+			if (sym instanceof VariableSymbol)
+			{
+				ownership = getOwnership(sym);
+			}
+		}
+
 		if (declaration.getInitializer() != null)
 		{
-			return declaration.getInitializer().accept(this);
+			OwnershipKind old = this.expectedOwnership;
+			this.expectedOwnership = ownership;
+			String code = declaration.getInitializer().accept(this);
+			this.expectedOwnership = old;
+			return code;
 		}
 		return null;
 	}
+
 
 	@Override
 	public String visitCastExpression(CastExpression expression)
@@ -950,47 +1010,59 @@ public class CppGenerator implements ASTVisitor<String>
 	{
 		if (statement.getValue() != null)
 		{
-			return "return " + statement.getValue().accept(this) + ";";
+			OwnershipKind ownership = OwnershipKind.SHARED;
+			if (currentMethodSymbol != null && currentMethodSymbol.getReturnOwnership() != null)
+			{
+				ownership = currentMethodSymbol.getReturnOwnership();
+			}
+
+			OwnershipKind old = this.expectedOwnership;
+			this.expectedOwnership = ownership;
+			String value = statement.getValue().accept(this);
+			this.expectedOwnership = old;
+
+			return "return " + value + ";";
 		}
 		return "return;";
 	}
 
+	// --- MODIFIED ---
 	@Override
 	public String visitVariableDeclarationStatement(VariableDeclarationStatement statement)
 	{
-		// Use the new helper to resolve the full type, including arrays.
-		Type varType = resolveTypeFromToken(statement.getTypeToken(), statement.getArrayRank());
-		String cppType = statement.getTypeToken().getType() == TokenType.VAR ? "auto" : toCppType(varType);
+		// --- THIS IS THE FIX ---
+		// Instead of searching scopes, get the symbol directly from the AST node.
+		// The SemanticAnalyzer has already attached it for us.
+		Symbol symbol = statement.getResolvedSymbol();
+		// --- END OF FIX ---
 
+		if (symbol == null)
+		{
+			// This is a fallback/error condition. If the symbol isn't in the method scope,
+			// something went wrong in the semantic analyzer. We default to SHARED.
+			error(statement.getName(), "Internal code generation error: Could not resolve symbol for local variable '" + statement.getName().getLexeme() + "'.");
+		}
+
+		OwnershipKind ownership = getOwnership(symbol);
+		Type varType = resolveTypeFromToken(statement.getTypeToken(), statement.getArrayRank());
+		String cppType = statement.getTypeToken().getType() == TokenType.VAR ? "auto" : toCppType(varType, ownership);
 		String declaration = cppType + " " + statement.getName().getLexeme();
+
 		if (statement.getInitializer() != null)
 		{
-			// New logic: Check for empty array initializer.
-			if (statement.getInitializer() instanceof ArrayInitializerExpression)
-			{
-				ArrayInitializerExpression arrayExpr = (ArrayInitializerExpression) statement.getInitializer();
-				if (arrayExpr.getElements().isEmpty())
-				{
-					// Special case: An empty array initializer should be nullptr.
-					declaration += " = nullptr";
-				}
-				else
-				{
-					// Non-empty array initializer, visit normally.
-					declaration += " = " + statement.getInitializer().accept(this);
-				}
-			}
-			else
-			{
-				// Other initializers (e.g., new expression, null literal, etc.)
-				declaration += " = " + statement.getInitializer().accept(this);
-			}
+			OwnershipKind oldOwnership = this.expectedOwnership;
+			this.expectedOwnership = ownership;
+
+			String initializerCode = statement.getInitializer().accept(this);
+			declaration += " = " + initializerCode;
+
+			this.expectedOwnership = oldOwnership;
 		}
-		else if (varType instanceof ClassType || varType instanceof ArrayType)
+		else if (ownership != OwnershipKind.STACK)
 		{
-			// Default-initialize shared_ptrs to nullptr.
 			declaration += " = nullptr";
 		}
+
 		return declaration + ";";
 	}
 
@@ -1101,6 +1173,7 @@ public class CppGenerator implements ASTVisitor<String>
 		appendLine("");
 
 		// 2. Constructors (for both native and non-native)
+		this.inConstructor = true; // <-- SET FLAG TO TRUE
 		if (declaration.getConstructors().isEmpty())
 		{
 			// Generate default constructor definition
@@ -1111,6 +1184,19 @@ public class CppGenerator implements ASTVisitor<String>
 		{
 			for (ConstructorDeclaration ctor : declaration.getConstructors())
 			{
+				// --- ADD THIS BLOCK to set currentMethodSymbol ---
+				List<Type> paramTypes = new ArrayList<>();
+				for (int i = 0; i < ctor.getParameters().size(); i += 2)
+				{
+					paramTypes.add(resolveTypeFromToken(ctor.getParameters().get(i)));
+				}
+				Symbol resolvedCtor = currentClassSymbol.resolveMember(ctor.getName().getLexeme(), paramTypes);
+				if (resolvedCtor instanceof MethodSymbol)
+				{
+					this.currentMethodSymbol = (MethodSymbol) resolvedCtor;
+				}
+				// --- END OF ADDED BLOCK ---
+
 				String params = formatCppParameters(ctor.getParameters());
 				String ctorSignature = simpleName + "::" + simpleName + "(" + params + ")";
 
@@ -1134,8 +1220,11 @@ public class CppGenerator implements ASTVisitor<String>
 				}
 				dedent();
 				appendLine("}\n");
+
+				this.currentMethodSymbol = null; // <-- ADD THIS to reset after
 			}
 		}
+		this.inConstructor = false; // <-- SET FLAG TO FALSE
 
 		if (isNative && "nebula.core.String".equals(fqn))
 		{
@@ -1155,13 +1244,22 @@ public class CppGenerator implements ASTVisitor<String>
 			{
 				continue;
 			}
+			this.currentMethodSymbol = methodSymbol; // <-- ADD THIS to set for current method
 
 			if (method.isWrapper())
 			{
 				String returnType = toCppType(methodSymbol.getType());
 				String methodName = methodSymbol.isOperator() ? "operator" + methodSymbol.getName() : methodSymbol.getName();
 				String params = formatCppParameters(method.getParameters());
-				String constQualifier = !methodSymbol.isStatic() ? " const" : "";
+
+				boolean isConst = !methodSymbol.isStatic();
+
+				if (!currentClassSymbol.isNative())
+				{
+					isConst = !methodSymbol.isStatic() &&
+							(methodName.startsWith("get_") || methodName.equals("toString"));
+				}
+				String constQualifier = isConst ? " const" : "";
 
 				appendLine(returnType + " " + simpleName + "::" + methodName + "(" + params + ")" + constQualifier + " {");
 				indent();
@@ -1182,7 +1280,10 @@ public class CppGenerator implements ASTVisitor<String>
 				String returnType = toCppType(methodSymbol.getType());
 				String methodName = methodSymbol.isOperator() ? "operator" + methodSymbol.getName() : methodSymbol.getMangledName();
 				String params = formatCppParameters(method.getParameters());
-				String constQualifier = !methodSymbol.isStatic() ? " const" : "";
+				// --- FIX 2 (applied again for definition): Correctly determine which methods should be const ---
+				boolean isConst = !methodSymbol.isStatic() &&
+						(methodName.startsWith("get_") || methodName.equals("toString"));
+				String constQualifier = isConst ? " const" : "";
 
 				appendLine(returnType + " " + simpleName + "::" + methodName + "(" + params + ")" + constQualifier + " {");
 				indent();
@@ -1193,6 +1294,7 @@ public class CppGenerator implements ASTVisitor<String>
 				dedent();
 				appendLine("}\n");
 			}
+			this.currentMethodSymbol = null; // <-- ADD THIS to reset after
 		}
 
 		// 4. Properties (generates the bodies of get/set methods)
@@ -1347,7 +1449,12 @@ public class CppGenerator implements ASTVisitor<String>
 			// If the operand is another Nebula class, call its toString() method.
 			if (!isNebulaString(type))
 			{
-				return operand + "->toString()";
+				// --- START OF FIX ---
+				Symbol operandSymbol = expression.getResolvedSymbol();
+				OwnershipKind ownership = getOwnership(operandSymbol);
+				String accessor = (ownership == OwnershipKind.STACK) ? "." : "->";
+				return operand + accessor + "toString()";
+				// --- END OF FIX ---
 			}
 		}
 		// For other cases, just return the operand as is (e.g., if it's already a string).
@@ -1463,34 +1570,55 @@ public class CppGenerator implements ASTVisitor<String>
 				return "/* ERROR: assignment to read-only property */";
 			}
 
-			String targetObject;
-			// The target itself can be complex (e.g., array[i].prop), so we need to get the object part
+			// --- START OF FIX ---
+			String targetObjectCode;
+			String accessor;
+
+			// Determine the object on which the property is being set
 			if (expression.getTarget() instanceof DotExpression)
 			{
-				targetObject = ((DotExpression) expression.getTarget()).getLeft().accept(this);
+				DotExpression dot = (DotExpression) expression.getTarget();
+				Expression left = dot.getLeft();
+				targetObjectCode = left.accept(this);
+
+				// Determine the correct accessor based on ownership
+				OwnershipKind ownerOwnership = getOwnership(left.getResolvedSymbol());
+				accessor = (ownerOwnership == OwnershipKind.STACK) ? "." : "->";
 			}
-			else
+			else // This case is for implicit 'this' (e.g., MyProperty = value;)
 			{
-				targetObject = "this"; // Implied 'this' for direct property access
+				targetObjectCode = "this";
+				accessor = "->"; // 'this' is always a pointer in C++
 			}
+			// --- END OF FIX ---
 
 			String value = expression.getValue().accept(this);
-			return targetObject + "->" + setter.getName() + "(" + value + ")";
+			// Use the determined accessor to call the setter method
+			return targetObjectCode + accessor + setter.getName() + "(" + value + ")";
 		}
 
-		// --- Original logic for non-property assignments ---
+		// --- Original logic for non-property assignments (this part is correct) ---
 		String target = expression.getTarget().accept(this);
-		String value = expression.getValue().accept(this);
-		String op = expression.getOperator().getLexeme();
-		Type targetType = expression.getTarget().getResolvedType();
 
-		if (targetType instanceof ClassType && op.length() > 1 && op.endsWith("="))
+		OwnershipKind ownership = OwnershipKind.SHARED;
+		Symbol targetSym = expression.getTarget().getResolvedSymbol();
+		if (targetSym != null)
 		{
-			String binaryOp = op.substring(0, op.length() - 1);
-			return target + " = (*" + target + " " + binaryOp + " " + value + ")";
+			ownership = getOwnership(targetSym);
 		}
 
-		return target + " " + op + " " + value;
+		OwnershipKind old = this.expectedOwnership;
+		this.expectedOwnership = ownership;
+		String value = expression.getValue().accept(this);
+		this.expectedOwnership = old;
+
+		// Optional: move semantics for UNIQUE
+		if (ownership == OwnershipKind.UNIQUE)
+		{
+			value = "std::move(" + value + ")";
+		}
+
+		return target + " " + expression.getOperator().getLexeme() + " " + value;
 	}
 
 	@Override
@@ -1510,7 +1638,6 @@ public class CppGenerator implements ASTVisitor<String>
 		MethodSymbol resolvedMethod = (MethodSymbol) resolvedSymbol;
 		String calleeString;
 
-		// NEW: Reconstruct the call to use the mangled name
 		String methodName = resolvedMethod.getMangledName() != null
 				? resolvedMethod.getMangledName()
 				: resolvedMethod.getName();
@@ -1523,6 +1650,7 @@ public class CppGenerator implements ASTVisitor<String>
 			}
 			else
 			{
+				// Implicit 'this' calls are always on a pointer.
 				calleeString = "this->" + methodName;
 			}
 		}
@@ -1530,7 +1658,23 @@ public class CppGenerator implements ASTVisitor<String>
 		{
 			DotExpression dot = (DotExpression) expr.getCallee();
 			String left = dot.getLeft().accept(this);
-			String separator = resolvedMethod.isStatic() ? "::" : "->";
+
+			// --- START OF FIX ---
+			String separator;
+			if (resolvedMethod.isStatic())
+			{
+				separator = "::";
+			}
+			else
+			{
+				// Get the ownership of the object on the left of the dot
+				Symbol leftSymbol = dot.getLeft().getResolvedSymbol();
+				OwnershipKind leftOwnership = getOwnership(leftSymbol);
+				// Choose the correct operator based on ownership
+				separator = (leftOwnership == OwnershipKind.STACK) ? "." : "->";
+			}
+			// --- END OF FIX ---
+
 			calleeString = left + separator + methodName;
 		}
 		else
@@ -1541,12 +1685,13 @@ public class CppGenerator implements ASTVisitor<String>
 		return calleeString + "(" + args + ")";
 	}
 
+	// --- MODIFIED ---
 	@Override
 	public String visitDotExpression(DotExpression expr)
 	{
 		Symbol symbol = expr.getResolvedSymbol();
 
-		// Check if we are accessing a property
+		// Property access is handled via getter calls
 		if (symbol instanceof PropertySymbol)
 		{
 			PropertySymbol propSymbol = (PropertySymbol) symbol;
@@ -1557,10 +1702,13 @@ public class CppGenerator implements ASTVisitor<String>
 				return "/* ERROR: access to write-only property */";
 			}
 			String left = expr.getLeft().accept(this);
-			return left + "->" + getter.getName() + "()";
+			// --- NEW: Check ownership of the left side ---
+			OwnershipKind leftOwnership = getOwnership(expr.getLeft().getResolvedSymbol());
+			String accessor = (leftOwnership == OwnershipKind.STACK) ? "." : "->";
+			return left + accessor + getter.getName() + "()";
 		}
 
-		// --- Original logic for non-property access ---
+		// --- Handle wrapped static fields ---
 		if (symbol instanceof VariableSymbol)
 		{
 			VariableSymbol varSymbol = (VariableSymbol) symbol;
@@ -1574,60 +1722,78 @@ public class CppGenerator implements ASTVisitor<String>
 		String memberName = expr.getMemberName().getLexeme();
 		Type leftType = expr.getLeft().getResolvedType();
 
-		if (leftType instanceof ArrayType)
+		// Handle array.size and string.length
+		if (leftType instanceof ArrayType && memberName.equals("size"))
 		{
-			if (memberName.equals("size"))
-			{
-				return "static_cast<int>(" + left + "->size())";
-			}
+			return "static_cast<int>(" + left + "->size())";
+		}
+		if (isNebulaString(leftType) && memberName.equals("length"))
+		{
+			return left + "->length()";
 		}
 
-		if (leftType instanceof ClassType && ((ClassType) leftType).getFqn().equals("nebula.core.String"))
-		{
-			if (memberName.equals("length"))
-			{
-				return left + "->length()";
-			}
-		}
+		// --- NEW: Ownership-aware member access ---
+		Symbol leftSymbol = expr.getLeft().getResolvedSymbol();
+		OwnershipKind leftOwnership = getOwnership(leftSymbol);
 
-		if (symbol instanceof MethodSymbol && ((MethodSymbol) symbol).isStatic())
-		{
-			return left + "::" + memberName;
-		}
-		else if (symbol instanceof VariableSymbol && ((VariableSymbol) symbol).isStatic())
-		{
-			return left + "::" + memberName;
-		}
+		boolean isStaticAccess = (symbol instanceof MethodSymbol && ((MethodSymbol) symbol).isStatic()) ||
+				(symbol instanceof VariableSymbol && ((VariableSymbol) symbol).isStatic());
 
-		return left + "->" + memberName;
+		String separator = isStaticAccess ? "::" : (leftOwnership == OwnershipKind.STACK ? "." : "->");
+
+		return left + separator + memberName;
 	}
 
 	@Override
 	public String visitThisExpression(ThisExpression expression)
 	{
-		// 'this' in Nebula maps to 'this' in C++ when accessing instance members
-		return "this";
+		// If the current class has been identified as a stack-allocatable "value type",
+		// then `shared_from_this()` is illegal and we must use the raw `this` pointer.
+		if (currentClassSymbol != null && semanticAnalyzer.getStackAllocatedClasses().contains(currentClassSymbol.getFqn()))
+		{
+			return "this";
+		}
+		else
+		{
+			// Otherwise, it's a "reference type" managed by shared_ptr.
+			// Use the original logic: `this` in a constructor, `shared_from_this()` elsewhere.
+			return inConstructor ? "this" : "shared_from_this()";
+		}
 	}
 
+	// --- MODIFIED ---
 	@Override
 	public String visitNewExpression(NewExpression expression)
 	{
 		Type classType = expression.getResolvedType();
-
 		if (classType == null || !(classType instanceof ClassType))
 		{
-			error(expression.getClassName().getFirstToken(), "Could not resolve class for 'new' expression (resolved type is null or not a ClassType).");
-			return "/* ERROR: Could not resolve class for new expression */ nullptr";
+			error(expression.getClassName().getFirstToken(), "Could not resolve class for 'new' expression.");
+			return "/* ERROR */";
 		}
-		ClassType resolvedClassType = (ClassType) classType;
 
+		ClassType resolvedClassType = (ClassType) classType;
 		String cppFqn = resolvedClassType.getFqn().replace(".", "::");
 
 		List<String> argCodes = expression.getArguments().stream()
 				.map(arg -> arg.accept(this))
 				.collect(Collectors.toList());
+		String args = String.join(", ", argCodes);
 
-		return "std::make_shared<" + cppFqn + ">(" + String.join(", ", argCodes) + ")";
+		System.err.println("Generating a new statement for " + expression.getClassName() + " with the expected ownership " + this.expectedOwnership);
+		// --- NEW: Generate code based on the expected ownership context ---
+		switch (this.expectedOwnership)
+		{
+			case STACK:
+				// For stack allocation, we just call the constructor directly.
+				return cppFqn + "(" + args + ")";
+			case UNIQUE:
+				return "std::make_unique<" + cppFqn + ">(" + args + ")";
+			case SHARED:
+			default:
+				// The default, safe behavior.
+				return "std::make_shared<" + cppFqn + ">(" + args + ")";
+		}
 	}
 
 	@Override
@@ -1640,18 +1806,24 @@ public class CppGenerator implements ASTVisitor<String>
 		return operandCode + operator;
 	}
 
-	// In CppGenerator.java
-
-	/**
-	 * Visits an array access expression (e.g., `myArray[i]`) and generates
-	 * the C++ equivalent `myArray[i]`.
-	 */
+	// --- MODIFIED ---
 	@Override
 	public String visitArrayAccessExpression(ArrayAccessExpression expression)
 	{
 		String arrayExpr = expression.getArray().accept(this);
 		String indexExpr = expression.getIndex().accept(this);
-		// Handle access to the raw vector through the shared_ptr.
+
+		// --- NEW: Check ownership of the array object ---
+		Symbol arraySymbol = expression.getArray().getResolvedSymbol();
+		OwnershipKind arrayOwnership = getOwnership(arraySymbol);
+
+		// If the array is a stack-allocated std::vector, access it directly.
+		if (arrayOwnership == OwnershipKind.STACK)
+		{
+			return arrayExpr + "[" + indexExpr + "]";
+		}
+
+		// Otherwise, it's a smart pointer to a vector, so dereference it.
 		return "(*" + arrayExpr + ")[" + indexExpr + "]";
 	}
 
@@ -1713,7 +1885,7 @@ public class CppGenerator implements ASTVisitor<String>
 
 	/**
 	 * REPLACEMENT for the original collectClassDependencies method.
-	 * This version performs a full traversal of the class's AST to find all dependencies.
+	 * This version performs a full traversal of the class's AST to find all type dependencies.
 	 * It can be configured to include or exclude "core" classes.
 	 */
 	private Set<String> collectClassDependencies(ClassDeclaration classDecl, boolean includeCoreClasses)

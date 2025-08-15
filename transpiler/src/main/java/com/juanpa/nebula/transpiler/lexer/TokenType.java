@@ -1,5 +1,4 @@
 // File: src/main/java/com/juanpa/nebula/transpiler/lexer/TokenType.java
-
 package com.juanpa.nebula.transpiler.lexer;
 
 /**
@@ -9,7 +8,7 @@ package com.juanpa.nebula.transpiler.lexer;
 public enum TokenType
 {
 	// --- Keywords ---
-	// Access Modifiers & Class-related
+	// Access Modifiers & Declarations
 	CLASS, PUBLIC, PRIVATE, STATIC, EXTENDS, NAMESPACE, NATIVE, WRAPPER, SUPER, ALIAS, IMPORT,
 
 	// Control Flow
@@ -25,10 +24,8 @@ public enum TokenType
 	// Other
 	NEW, THIS, GLOBAL, OPERATOR, GET, SET, RESULT,
 
-	// --- Identifiers ---
-	IDENTIFIER,
-
 	// --- Literals ---
+	IDENTIFIER,
 	INTEGER_LITERAL,
 	STRING_LITERAL,
 	CHAR_LITERAL,
@@ -37,30 +34,54 @@ public enum TokenType
 	DOUBLE_LITERAL,
 	NULL,
 
-	// --- Operators ---
-	// Arithmetic
-	PLUS, MINUS, STAR, SLASH, MODULO,
-	PLUS_PLUS, MINUS_MINUS,
-
-	// Assignment
-	ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, STAR_ASSIGN, SLASH_ASSIGN, MODULO_ASSIGN,
-
-	// Comparison & Logical
-	EQUAL_EQUAL, BANG_EQUAL,
-	LESS, GREATER, LESS_EQUAL, GREATER_EQUAL,
-	AMPERSAND, AMPERSAND_AMPERSAND, PIPE, PIPE_PIPE, BANG,
-
-	// Other Operators
-	NULL_COALESCING, ARROW,
-
 	// --- Punctuation & Delimiters ---
-	// Grouping
-	LEFT_PAREN, RIGHT_PAREN,
-	LEFT_BRACE, RIGHT_BRACE,
-	LEFT_BRACKET, RIGHT_BRACKET,
-
-	// Separators
+	LEFT_PAREN, RIGHT_PAREN,       // ( )
+	LEFT_BRACE, RIGHT_BRACE,       // { }
+	LEFT_BRACKET, RIGHT_BRACKET,   // [ ]
 	DOT, COMMA, SEMICOLON, COLON, QUESTION,
+
+	// --- Operators ---
+	// Unary
+	PLUS_PLUS, MINUS_MINUS,         // ++ --
+	BANG, TILDE,                     // !  ~ (TILDE is new for bitwise NOT)
+
+	// Multiplicative
+	STAR, SLASH, MODULO,             // * / %
+
+	// Additive
+	PLUS, MINUS,                     // + -
+
+	// Shift
+	LEFT_SHIFT, RIGHT_SHIFT,         // << >>
+
+	// Relational & Equality
+	LESS, LESS_EQUAL,                // < <=
+	GREATER, GREATER_EQUAL,          // > >=
+	EQUAL_EQUAL, BANG_EQUAL,        // == !=
+
+	// Bitwise
+	AMPERSAND,                       // &
+	PIPE,                            // |
+	XOR,                             // ^
+
+	// Logical
+	AMPERSAND_AMPERSAND,             // &&
+	PIPE_PIPE,                       // ||
+
+	// Assignment & Compound Assignment
+	ASSIGN,                          // =
+	PLUS_ASSIGN, MINUS_ASSIGN,       // += -=
+	STAR_ASSIGN, SLASH_ASSIGN,       // *= /=
+	MODULO_ASSIGN,                   // %=
+	AMPERSAND_ASSIGN, PIPE_ASSIGN,   // &= |=
+	XOR_ASSIGN,                      // ^=
+	LEFT_SHIFT_ASSIGN, RIGHT_SHIFT_ASSIGN, // <<= >>=
+	POWER_ASSIGN,                    // **= (NEW)
+
+	// Other
+	ARROW,                           // ->
+	POWER,                           // **
+	NULL_COALESCING,                 // ?? (Reserved for future use)
 
 	// --- Special Tokens ---
 	EOF, // End Of File

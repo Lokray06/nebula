@@ -6,6 +6,7 @@ import com.juanpa.nebula.transpiler.ast.ASTVisitor;
 import com.juanpa.nebula.transpiler.ast.expressions.Expression;
 import com.juanpa.nebula.transpiler.lexer.Token;
 import com.juanpa.nebula.transpiler.lexer.TokenType; // Import TokenType
+import com.juanpa.nebula.transpiler.semantics.VariableSymbol;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -24,6 +25,7 @@ public class VariableDeclarationStatement implements Statement
 	private final int arrayRank; // NEW: To store array dimensionality (0 for non-array)
 	private final Token name;
 	private final Expression initializer;
+	private VariableSymbol resolvedSymbol; // <-- ADD THIS FIELD
 
 	/**
 	 * Constructs a VariableDeclarationStatement.
@@ -60,7 +62,8 @@ public class VariableDeclarationStatement implements Statement
 		return typeToken;
 	}
 
-	public int getArrayRank() {
+	public int getArrayRank()
+	{
 		return arrayRank;
 	}
 
@@ -72,6 +75,16 @@ public class VariableDeclarationStatement implements Statement
 	public Expression getInitializer()
 	{
 		return initializer;
+	}
+
+	public VariableSymbol getResolvedSymbol()
+	{
+		return resolvedSymbol;
+	}
+
+	public void setResolvedSymbol(VariableSymbol resolvedSymbol)
+	{
+		this.resolvedSymbol = resolvedSymbol;
 	}
 
 	@Override
@@ -90,7 +103,7 @@ public class VariableDeclarationStatement implements Statement
 		sb.append("VarDecl: ").append(mods).append(typeToken.getLexeme());
 		sb.append("[]".repeat(arrayRank)); // Append brackets for array type
 		sb.append(" ").append(name.getLexeme());
-		if(initializer != null)
+		if (initializer != null)
 		{
 			sb.append(" = ").append(initializer);
 		}

@@ -1,6 +1,7 @@
 // File: src/main/java/com/juanpa/nebula/transpiler/semantics/SemanticAnalyzer.java
 package com.juanpa.nebula.transpiler.semantics;
 
+import com.juanpa.nebula.transpiler.ast.ASTNode;
 import com.juanpa.nebula.transpiler.ast.ASTVisitor;
 import com.juanpa.nebula.transpiler.ast.Program;
 import com.juanpa.nebula.transpiler.ast.declarations.*;
@@ -8,6 +9,7 @@ import com.juanpa.nebula.transpiler.ast.expressions.*;
 import com.juanpa.nebula.transpiler.ast.statements.*;
 import com.juanpa.nebula.transpiler.lexer.Token;
 import com.juanpa.nebula.transpiler.lexer.TokenType;
+import com.juanpa.nebula.transpiler.util.CompilerConfig;
 import com.juanpa.nebula.transpiler.util.ErrorReporter;
 
 import java.util.*;
@@ -35,9 +37,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	private MethodSymbol currentConstructor;
 	private Type expectedTypeForNextExpression = null; // State for context-aware resolution
 
-	private Map<String, ClassSymbol> preloadedNdkSymbols = new HashMap<>();
+	private final CompilerConfig config; // --- NEW ---
 
-	public SemanticAnalyzer(ErrorReporter errorReporter)
+	private Map<String, ClassSymbol> preloadedNdkSymbols = new HashMap<>();
+	private final Set<String> stackAllocatedClasses = new HashSet<>(); // Add this line
+
+	public SemanticAnalyzer(ErrorReporter errorReporter, CompilerConfig config)
 	{
 		this.errorReporter = errorReporter;
 		this.declaredClasses = new LinkedHashMap<>();
@@ -45,6 +50,8 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		this.importedClasses = new HashMap<>();
 		this.importedStaticMembers = new HashMap<>();
 		this.importedStaticClasses = new ArrayList<>();
+
+		this.config = config; // --- NEW ---
 	}
 
 	public void analyze(Program program)
@@ -170,7 +177,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				// Define properties and synthesize their accessors before body analysis
 				for (PropertyDeclaration pd : cd.getProperties())
 				{
-					Type propertyType = resolveType(pd.getTypeToken(), 0);
+					Type propertyType = resolveType(pd.getTypeToken(), pd.getArrayRank());
 					if (propertyType instanceof ErrorType)
 					{
 						propertyType = ErrorType.INSTANCE;
@@ -395,9 +402,21 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 
 		// --- FINAL PASS: FULL BODY ANALYSIS ---
-		// Now that all class info and inheritance is known, analyze method bodies.
 		System.out.println("--- Semantic Analysis: Final Pass - Body Analysis ---");
 		program.accept(this);
+
+		// --- NEW: OWNERSHIP ANALYSIS PASS ---
+		if (config.isOwnershipOptimizationEnabled())
+		{
+			System.out.println("--- Semantic Analysis: Ownership/Escape Analysis Pass ---");
+			performOwnershipAnalysis(program);
+			System.out.println("--- Ownership Analysis Complete ---");
+		}
+		else
+		{
+			System.out.println("--- Ownership Analysis SKIPPED (disabled in config) ---");
+		}
+
 		exitScope();
 	}
 
@@ -630,13 +649,13 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	 */
 	private String getFullyQualifiedClassName(String simpleClassName)
 	{
-		// 1. Check if the simple name directly maps to a fully qualified class (e.g., if it's already an FQN, or if `String` is globally known)
+		// 1. Check if the simple name is a known top-level class (or a fully qualified name already)
 		if (declaredClasses.containsKey(simpleClassName))
 		{
 			return simpleClassName;
 		}
 
-		// 2. Check within the current namespace prefix
+		// 2. Check within the current namespace prefix first (most common case for resolving local classes)
 		if (!currentNamespacePrefix.isEmpty())
 		{
 			String qualifiedInCurrentNamespace = currentNamespacePrefix + "." + simpleClassName;
@@ -667,10 +686,19 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 		}
 
+		// Check if the simple name is itself a declared class in any namespace (less efficient, but a fallback)
+		for (String fullyQualifiedName : declaredClasses.keySet())
+		{
+			String[] parts = fullyQualifiedName.split("\\.");
+			if (parts.length > 0 && parts[parts.length - 1].equals(simpleClassName))
+			{
+				return fullyQualifiedName;
+			}
+		}
+
 		// Return: if not found, return the simple name.
 		return simpleClassName;
 	}
-
 
 	/**
 	 * Extracts the qualified name from a DotExpression or IdentifierExpression.
@@ -1846,6 +1874,9 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 				isConstVar,
 				false // Local variables are always implicitly private
 		);
+
+		statement.setResolvedSymbol(variableSymbol); // <-- ADD THIS LINE
+
 		try
 		{
 			currentScope.define(variableSymbol);
@@ -3426,5 +3457,516 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		// If we reach here, access is denied.
 		error(errorToken, "Member '" + member.getName() + "' is inaccessible due to its protection level.");
 		return false;
+	}
+
+	/**
+	 * NEW: Sixth and final pass of the semantic analyzer.
+	 * Performs a conservative escape analysis to identify objects that can be
+	 * safely allocated on the stack or with unique ownership.
+	 *
+	 * @param program The root AST node of the entire program.
+	 */
+	private void performOwnershipAnalysis(Program program)
+	{
+		for (NamespaceDeclaration nsDecl : program.getNamespaceDeclarations())
+		{
+			for (ClassDeclaration classDecl : nsDecl.getClassDeclarations())
+			{
+				// Step 1: Reconstruct the FQN from the ClassDeclaration
+				String fqn = classDecl.getContainingNamespace() + "." + classDecl.getName().getLexeme();
+
+				// Step 2: Use the FQN to look up the correct ClassSymbol from the central map
+				ClassSymbol classSymbol = declaredClasses.get(fqn);
+
+				if (classSymbol == null)
+				{
+					System.err.println("Error: Class symbol not found for " + fqn);
+					continue;
+				}
+
+				//System.out.println("  Class: " + classDecl.getName().getLexeme() + "  methods=" + classDecl.getMethods().size() + "  ctors=" + classDecl.getConstructors().size());
+
+				for (MethodDeclaration methodDecl : classDecl.getMethods())
+				{
+					//System.out.println("  -> Analyzing method: " + classSymbol.getName() + "::" + methodDecl.getName().getLexeme());
+					analyzeMethodBodyForOwnership(methodDecl, classSymbol);
+				}
+				for (ConstructorDeclaration ctorDecl : classDecl.getConstructors())
+				{
+					//System.out.println("  -> Analyzing constructor: " + classSymbol.getName());
+					analyzeMethodBodyForOwnership(ctorDecl, classSymbol);
+				}
+			}
+		}
+		//System.out.println("--- Ownership Analysis Complete ---");
+	}
+
+	/**
+	 * NEW: Helper to analyze a single method or constructor body for ownership.
+	 * This method is now robust and does not rely on a previous pass to set resolved symbols.
+	 *
+	 * @param declaration A MethodDeclaration or ConstructorDeclaration.
+	 * @param classSymbol The ClassSymbol of the containing class.
+	 */
+	private void analyzeMethodBodyForOwnership(ASTNode declaration, ClassSymbol classSymbol)
+	{
+		BlockStatement body = null;
+		MethodSymbol methodSymbol = null;
+
+		if (declaration instanceof MethodDeclaration)
+		{
+			MethodDeclaration methodDecl = (MethodDeclaration) declaration;
+			body = methodDecl.getBody();
+
+			// Resolve the method symbol robustly via the class' member table
+			List<Type> paramTypes = new ArrayList<>();
+			for (int i = 0; i < methodDecl.getParameters().size(); i += 2)
+			{
+				paramTypes.add(getTypeFromToken(methodDecl.getParameters().get(i)));
+			}
+			Symbol s = classSymbol.resolveMember(methodDecl.getName().getLexeme(), paramTypes);
+			if (s instanceof MethodSymbol)
+			{
+				methodSymbol = (MethodSymbol) s;
+			}
+		}
+		else if (declaration instanceof ConstructorDeclaration)
+		{
+			ConstructorDeclaration ctorDecl = (ConstructorDeclaration) declaration;
+			body = ctorDecl.getBody();
+
+			List<Type> paramTypes = new ArrayList<>();
+			for (int i = 0; i < ctorDecl.getParameters().size(); i += 2)
+			{
+				paramTypes.add(getTypeFromToken(ctorDecl.getParameters().get(i)));
+			}
+
+			Symbol s = classSymbol.resolveMember(classSymbol.getName(), paramTypes);
+			if (s instanceof MethodSymbol)
+			{
+				methodSymbol = (MethodSymbol) s;
+			}
+		}
+
+		if (body == null || methodSymbol == null)
+		{
+			System.out.println("    -> WARNING: Skipping analysis for method/constructor due to null body or symbol.");
+			return;
+		}
+
+		OwnershipVisitor ownershipVisitor = new OwnershipVisitor(methodSymbol.getMethodScope());
+		body.accept(ownershipVisitor);
+
+		for (VariableSymbol var : ownershipVisitor.getNonEscapingLocals())
+		{
+			if (var.getType() instanceof ClassType && !((ClassType) var.getType()).getClassSymbol().isNative())
+			{
+				var.setOwnership(OwnershipKind.STACK);
+				//System.out.println("    -> Marked '" + var.getName() + "' for STACK allocation.");
+
+				// Add this line to record the class FQN
+				this.stackAllocatedClasses.add(((ClassType) var.getType()).getFqn());
+			}
+		}
+	}
+
+	public Set<String> getStackAllocatedClasses()
+	{
+		return this.stackAllocatedClasses;
+	}
+
+	/**
+	 * Corrected inner visitor class.
+	 */
+	private static class OwnershipVisitor implements ASTVisitor<Void>
+	{
+		private final SymbolTable initialScope;
+		private final Map<VariableSymbol, Boolean> locals = new HashMap<>();
+
+		public OwnershipVisitor(SymbolTable initialScope)
+		{
+			this.initialScope = initialScope;
+		}
+
+		public Set<VariableSymbol> getNonEscapingLocals()
+		{
+			return locals.entrySet().stream()
+					.filter(entry -> !entry.getValue())
+					.map(Map.Entry::getKey)
+					.collect(Collectors.toSet());
+		}
+
+		@Override
+		public Void visitBlockStatement(BlockStatement s)
+		{
+			s.getStatements().forEach(stmt -> stmt.accept(this));
+			return null;
+		}
+
+		@Override
+		public Void visitVariableDeclarationStatement(VariableDeclarationStatement statement)
+		{
+			Symbol symbol = statement.getResolvedSymbol();
+			if (symbol instanceof VariableSymbol && statement.getInitializer() instanceof NewExpression)
+			{
+				// We've found a local variable with a `new` initializer.
+				// Assume it does NOT escape by default.
+				locals.put((VariableSymbol) symbol, false);
+				//System.out.println("      -> OwnershipVisitor: Found new local variable '" + symbol.getName() + "'. Tracking for escape analysis.");
+			}
+
+			if (statement.getInitializer() != null)
+			{
+				statement.getInitializer().accept(this);
+			}
+			return null;
+		}
+
+		private void markAsEscaping(Expression expr)
+		{
+			if (expr instanceof IdentifierExpression)
+			{
+				Symbol symbol = ((IdentifierExpression) expr).getResolvedSymbol();
+				if (symbol instanceof VariableSymbol && locals.containsKey(symbol))
+				{
+					locals.put((VariableSymbol) symbol, true);
+					//System.out.println("      -> OwnershipVisitor: Marked '" + symbol.getName() + "' as ESCAPING.");
+				}
+			}
+			else if (expr instanceof DotExpression)
+			{
+				markAsEscaping(((DotExpression) expr).getLeft());
+			}
+			else if (expr instanceof ArrayAccessExpression)
+			{
+				markAsEscaping(((ArrayAccessExpression) expr).getArray());
+			}
+		}
+
+		@Override
+		public Void visitReturnStatement(ReturnStatement statement)
+		{
+			if (statement.getValue() != null)
+			{
+				markAsEscaping(statement.getValue());
+				statement.getValue().accept(this);
+			}
+			return null;
+		}
+
+		@Override
+		public Void visitAssignmentExpression(AssignmentExpression expression)
+		{
+			Expression target = expression.getTarget();
+			if (target instanceof DotExpression)
+			{
+				Expression left = ((DotExpression) target).getLeft();
+				if (left instanceof ThisExpression || (left instanceof IdentifierExpression && left.getResolvedSymbol() == initialScope.resolve("this")))
+				{
+					markAsEscaping(expression.getValue());
+				}
+			}
+			else if (target instanceof ArrayAccessExpression)
+			{
+				markAsEscaping(expression.getValue());
+			}
+
+			expression.getTarget().accept(this);
+			expression.getValue().accept(this);
+			return null;
+		}
+
+		// Inside the private static class OwnershipVisitor
+
+		@Override
+		public Void visitCallExpression(CallExpression expression)
+		{
+			// Mark arguments as escaping (this is your existing, correct logic)
+			for (Expression arg : expression.getArguments())
+			{
+				markAsEscaping(arg);
+				arg.accept(this);
+			}
+
+			// --- START OF FIX ---
+			// NEW: Also mark the receiver of the method call as escaping. If a method
+			// is called on an object, we conservatively assume that the object's 'this'
+			// pointer might be stored or shared, making stack allocation unsafe.
+			if (expression.getCallee() instanceof DotExpression)
+			{
+				DotExpression dot = (DotExpression) expression.getCallee();
+				markAsEscaping(dot.getLeft()); // Mark the object to the left of the '.'
+			}
+			// --- END OF FIX ---
+
+			// Traverse the callee to visit sub-expressions (existing logic)
+			expression.getCallee().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitDotExpression(DotExpression e)
+		{
+			e.getLeft().accept(this);
+			return null;
+		}
+
+		// --- Default Traversals (to ensure we visit all nodes) ---
+		// (The rest of the generated default visit methods from your original file should be kept here)
+		// ... Default visit methods for all other nodes to ensure full traversal ...
+		@Override
+		public Void visitProgram(Program p)
+		{
+			return null;
+		}
+
+		@Override
+		public Void visitImportDirective(ImportDirective d)
+		{
+			return null;
+		}
+
+		@Override
+		public Void visitNamespaceDeclaration(NamespaceDeclaration d)
+		{
+			return null;
+		}
+
+		@Override
+		public Void visitClassDeclaration(ClassDeclaration d)
+		{
+			return null;
+		}
+
+		@Override
+		public Void visitMethodDeclaration(MethodDeclaration d)
+		{
+			if (d.getBody() != null)
+			{
+				d.getBody().accept(this);
+			}
+			return null;
+		}
+
+		@Override
+		public Void visitConstructorDeclaration(ConstructorDeclaration d)
+		{
+			if (d.getBody() != null)
+			{
+				d.getBody().accept(this);
+			}
+			return null;
+		}
+
+		@Override
+		public Void visitFieldDeclaration(FieldDeclaration d)
+		{
+			if (d.getInitializer() != null)
+			{
+				d.getInitializer().accept(this);
+			}
+			return null;
+		}
+
+		@Override
+		public Void visitPropertyDeclaration(PropertyDeclaration d)
+		{
+			return null;
+		}
+
+		@Override
+		public Void visitExpressionStatement(ExpressionStatement s)
+		{
+			s.getExpression().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitIfStatement(IfStatement s)
+		{
+			s.getCondition().accept(this);
+			s.getThenBranch().accept(this);
+			if (s.getElseBranch() != null)
+			{
+				s.getElseBranch().accept(this);
+			}
+			return null;
+		}
+
+		@Override
+		public Void visitWhileStatement(WhileStatement s)
+		{
+			s.getCondition().accept(this);
+			s.getBody().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitForStatement(ForStatement s)
+		{
+			if (s.getInitializer() != null)
+			{
+				s.getInitializer().accept(this);
+			}
+			if (s.getCondition() != null)
+			{
+				s.getCondition().accept(this);
+			}
+			if (s.getIncrement() != null)
+			{
+				s.getIncrement().accept(this);
+			}
+			s.getBody().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitForEachStatement(ForEachStatement s)
+		{
+			s.getCollection().accept(this);
+			s.getBody().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitSwitchStatement(SwitchStatement s)
+		{
+			s.getSwitchExpression().accept(this);
+			for (var c : s.getCases())
+			{
+				c.accept(this);
+			}
+			if (s.getDefaultBlock() != null)
+			{
+				s.getDefaultBlock().accept(this);
+			}
+			return null;
+		}
+
+		@Override
+		public Void visitSwitchCase(SwitchCase s)
+		{
+			s.getValue().accept(this);
+			for (var stmt : s.getBody())
+			{
+				stmt.accept(this);
+			}
+			return null;
+		}
+
+		@Override
+		public Void visitConstructorChainingCallStatement(ConstructorChainingCallStatement s)
+		{
+			for (var arg : s.getArguments())
+			{
+				arg.accept(this);
+			}
+			return null;
+		}
+
+		@Override
+		public Void visitBinaryExpression(BinaryExpression e)
+		{
+			e.getLeft().accept(this);
+			e.getRight().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitUnaryExpression(UnaryExpression e)
+		{
+			e.getRight().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitLiteralExpression(LiteralExpression e)
+		{
+			return null;
+		}
+
+		@Override
+		public Void visitIdentifierExpression(IdentifierExpression e)
+		{
+			return null;
+		}
+
+		@Override
+		public Void visitThisExpression(ThisExpression e)
+		{
+			return null;
+		}
+
+		@Override
+		public Void visitNewExpression(NewExpression e)
+		{
+			for (var arg : e.getArguments())
+			{
+				arg.accept(this);
+			}
+			return null;
+		}
+
+		@Override
+		public Void visitPostfixUnaryExpression(PostfixUnaryExpression e)
+		{
+			e.getOperand().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitArrayAccessExpression(ArrayAccessExpression e)
+		{
+			e.getArray().accept(this);
+			e.getIndex().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitGroupingExpression(GroupingExpression e)
+		{
+			e.getExpression().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitCastExpression(CastExpression e)
+		{
+			e.getExpression().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitTernaryExpression(TernaryExpression e)
+		{
+			e.getCondition().accept(this);
+			e.getThenBranch().accept(this);
+			e.getElseBranch().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitIsExpression(IsExpression e)
+		{
+			e.getLeft().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitArrayCreationExpression(ArrayCreationExpression e)
+		{
+			e.getSizeExpression().accept(this);
+			return null;
+		}
+
+		@Override
+		public Void visitArrayInitializerExpression(ArrayInitializerExpression e)
+		{
+			for (var el : e.getElements())
+			{
+				el.accept(this);
+			}
+			return null;
+		}
 	}
 }
