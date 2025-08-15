@@ -1425,7 +1425,14 @@ public class CppGenerator implements ASTVisitor<String>
 	// Add this new helper method to encapsulate the conversion logic
 	private String convertToNebulaString(Expression expression)
 	{
-		Type type = expression.getResolvedType();
+		// Unwrap any grouping expressions to get to the core expression
+		Expression innerExpression = expression;
+		while (innerExpression instanceof GroupingExpression)
+		{
+			innerExpression = ((GroupingExpression) innerExpression).getExpression();
+		}
+
+		Type type = innerExpression.getResolvedType();
 		String operand = expression.accept(this);
 
 		if (type instanceof PrimitiveType)
@@ -1443,7 +1450,7 @@ public class CppGenerator implements ASTVisitor<String>
 			}
 			else if (primitiveType.equals(PrimitiveType.FLOAT) || primitiveType.equals(PrimitiveType.DOUBLE))
 			{
-				return generateHighPrecisionString(expression);
+				return generateHighPrecisionString(innerExpression);
 			}
 			else if (primitiveType.isNumeric())
 			{
@@ -1455,12 +1462,17 @@ public class CppGenerator implements ASTVisitor<String>
 			// If the operand is another Nebula class, call its toString() method.
 			if (!isNebulaString(type))
 			{
-				// --- START OF FIX ---
-				Symbol operandSymbol = expression.getResolvedSymbol();
-				OwnershipKind ownership = getOwnership(operandSymbol);
+				Symbol operandSymbol = innerExpression.getResolvedSymbol();
+				OwnershipKind ownership = OwnershipKind.SHARED; // Default to shared ownership
+
+				// Safely retrieve the ownership from the symbol if it's a VariableSymbol
+				if (operandSymbol instanceof VariableSymbol)
+				{
+					ownership = ((VariableSymbol) operandSymbol).getOwnership();
+				}
+
 				String accessor = (ownership == OwnershipKind.STACK) ? "." : "->";
 				return operand + accessor + "toString()";
-				// --- END OF FIX ---
 			}
 		}
 		// For other cases, just return the operand as is (e.g., if it's already a string).
@@ -1792,7 +1804,7 @@ public class CppGenerator implements ASTVisitor<String>
 				.collect(Collectors.toList());
 		String args = String.join(", ", argCodes);
 
-		//System.err.println("Generating a new statement for " + expression.getClassName() + " with the expected ownership " + this.expectedOwnership);
+		System.err.println("Generating a new statement for " + expression.getClassName() + " with the expected ownership " + this.expectedOwnership + ": " + expression);
 		// --- NEW: Generate code based on the expected ownership context ---
 		switch (this.expectedOwnership)
 		{
@@ -2260,28 +2272,44 @@ public class CppGenerator implements ASTVisitor<String>
 			return "";
 		}
 		StringBuilder escaped = new StringBuilder();
-		for (char c : rawString.toCharArray())
+		for (int i = 0; i < rawString.length(); i++)
 		{
-			switch (c)
+			char c = rawString.charAt(i);
+			if (c == '\\')
 			{
-				case '\\':
-					escaped.append("\\\\");
-					break;
-				case '"':
+				// Look ahead to check if this is an escaped quote
+				if (i + 1 < rawString.length() && rawString.charAt(i + 1) == '"')
+				{
+					// It's a \" escape, so we should keep it as just \" in the C++ output
 					escaped.append("\\\"");
-					break;
-				case '\n':
-					escaped.append("\\n");
-					break;
-				case '\t':
-					escaped.append("\\t");
-					break;
-				case '\r':
-					escaped.append("\\r");
-					break;
-				default:
-					escaped.append(c);
-					break;
+					i++; // Skip the next character as it's part of this escape sequence
+				}
+				else
+				{
+					// It's a standalone backslash, so escape it
+					escaped.append("\\\\");
+				}
+			}
+			else if (c == '"')
+			{
+				// It's a literal double quote that needs to be escaped
+				escaped.append("\\\"");
+			}
+			else if (c == '\n')
+			{
+				escaped.append("\\n");
+			}
+			else if (c == '\t')
+			{
+				escaped.append("\\t");
+			}
+			else if (c == '\r')
+			{
+				escaped.append("\\r");
+			}
+			else
+			{
+				escaped.append(c);
 			}
 		}
 		return escaped.toString();

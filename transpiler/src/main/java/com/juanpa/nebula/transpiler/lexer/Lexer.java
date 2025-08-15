@@ -249,10 +249,23 @@ public class Lexer
 				line++;
 				column = 0;
 				break;
-
 			// Literals
+			case '$':
+				if (peek() == '"')
+				{
+					// It's the start of an interpolated string.
+					// Consume the opening quote and scan the content.
+					advance();
+					scanStringLiteral(true); // Pass true to indicate interpolation
+				}
+				else
+				{
+					// Handle other uses of '$' or report an error
+					error("'$' is only valid for interpolated strings and must be followed by '\"'.");
+				}
+				break;
 			case '"':
-				scanStringLiteral();
+				scanStringLiteral(false);
 				break;
 			case '\'':
 				scanCharacterLiteral();
@@ -505,7 +518,7 @@ public class Lexer
 	/**
 	 * Scans a string literal enclosed in double quotes.
 	 */
-	private void scanStringLiteral()
+	private void scanStringLiteral(boolean isInterpolated)
 	{
 		StringBuilder value = new StringBuilder();
 		while (peek() != '"' && !isAtEnd())
@@ -562,14 +575,28 @@ public class Lexer
 				value.append(c);
 			}
 		}
+
 		if (isAtEnd())
 		{
 			error("Unterminated string literal.");
 			addToken(TokenType.ERROR, null);
 			return;
 		}
+
+		// Consume the closing quote
 		advance();
-		addToken(TokenType.STRING_LITERAL, value.toString());
+
+		// Get the raw string value (without the quotes)
+		String value2 = source.substring(start + (isInterpolated ? 2 : 1), current - 1);
+
+		if (isInterpolated)
+		{
+			addToken(TokenType.INTERPOLATED_STRING_LITERAL, value2);
+		}
+		else
+		{
+			addToken(TokenType.STRING_LITERAL, value.toString());
+		}
 	}
 
 	/**

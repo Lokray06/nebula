@@ -5,6 +5,7 @@ import com.juanpa.nebula.transpiler.ast.Program;
 import com.juanpa.nebula.transpiler.ast.declarations.*;
 import com.juanpa.nebula.transpiler.ast.expressions.*;
 import com.juanpa.nebula.transpiler.ast.statements.*;
+import com.juanpa.nebula.transpiler.lexer.Lexer;
 import com.juanpa.nebula.transpiler.lexer.Token;
 import com.juanpa.nebula.transpiler.lexer.TokenType;
 import com.juanpa.nebula.transpiler.util.ErrorReporter;
@@ -1264,6 +1265,11 @@ public class NebulaParser
 	 */
 	private Expression primary() throws SyntaxError
 	{
+		if (match(TokenType.INTERPOLATED_STRING_LITERAL))
+		{
+			return parseInterpolatedString(previous());
+		}
+
 		if (match(TokenType.LEFT_BRACE))
 		{
 			Token leftBrace = previous();
@@ -1376,30 +1382,90 @@ public class NebulaParser
 	}
 
 	/**
-	 * Helper to check if a token type is a binary operator.
-	 * Used for cast vs. grouped expression disambiguation.
+	 * Parses the content of an interpolated string token and desugars it into a
+	 * chain of binary '+' expressions.
+	 * Example: $"Hello, {name}!" becomes ("" + "Hello, ") + (name) + "!"
 	 */
-	private boolean isBinaryOperator(TokenType type)
+	private Expression parseInterpolatedString(Token token) throws SyntaxError
 	{
-		switch (type)
+		String content = (String) token.getLiteral();
+		List<Expression> parts = new ArrayList<>();
+		int lastIndex = 0;
+
+		while (lastIndex < content.length())
 		{
-			case PLUS:
-			case MINUS:
-			case STAR:
-			case SLASH:
-			case MODULO:
-			case EQUAL_EQUAL:
-			case BANG_EQUAL:
-			case LESS:
-			case GREATER:
-			case LESS_EQUAL:
-			case GREATER_EQUAL:
-			case AMPERSAND_AMPERSAND:
-			case PIPE_PIPE:
-				return true;
-			default:
-				return false;
+			int openBrace = content.indexOf('{', lastIndex);
+			if (openBrace == -1)
+			{
+				// No more expressions, add the rest of the string
+				String literalPart = content.substring(lastIndex);
+				if (!literalPart.isEmpty())
+				{
+					Token partToken = new Token(TokenType.STRING_LITERAL, "\"" + literalPart + "\"", literalPart, token.getLine(), token.getColumn());
+					parts.add(new LiteralExpression(partToken));
+				}
+				break;
+			}
+
+			// Add the literal part before the brace
+			if (openBrace > lastIndex)
+			{
+				String literalPart = content.substring(lastIndex, openBrace);
+				Token partToken = new Token(TokenType.STRING_LITERAL, "\"" + literalPart + "\"", literalPart, token.getLine(), token.getColumn());
+				parts.add(new LiteralExpression(partToken));
+			}
+
+			// Find the matching closing brace
+			int closeBrace = content.indexOf('}', openBrace);
+			if (closeBrace == -1)
+			{
+				throw error(token, "Unterminated expression in interpolated string.");
+			}
+
+			// Parse the expression inside the braces
+			String exprString = content.substring(openBrace + 1, closeBrace);
+
+			// Create a new mini-lexer and parser for the expression snippet
+			ErrorReporter snippetReporter = new ErrorReporter(); // Use a temp reporter
+			Lexer snippetLexer = new Lexer(exprString, snippetReporter);
+			List<Token> snippetTokens = snippetLexer.scanTokens();
+
+			if (snippetReporter.hasErrors())
+			{
+				throw error(token, "Invalid expression inside interpolated string: " + exprString);
+			}
+
+			// The token list from the lexer includes an EOF, remove it before parsing
+			if (!snippetTokens.isEmpty() && snippetTokens.get(snippetTokens.size() - 1).getType() == TokenType.EOF)
+			{
+				snippetTokens.remove(snippetTokens.size() - 1);
+			}
+
+			NebulaParser snippetParser = new NebulaParser(snippetTokens, this.errorReporter);
+			Expression embeddedExpr = snippetParser.expression();
+
+			// We need to wrap the result in a GroupingExpression to preserve precedence
+			parts.add(new GroupingExpression(new Token(TokenType.LEFT_PAREN, "(", null, -1, -1), embeddedExpr));
+
+			lastIndex = closeBrace + 1;
 		}
+
+		// If there are no parts, it's an empty string.
+		if (parts.isEmpty())
+		{
+			Token emptyToken = new Token(TokenType.STRING_LITERAL, "\"\"", "", token.getLine(), token.getColumn());
+			return new LiteralExpression(emptyToken);
+		}
+
+		// Chain all the parts together with the '+' operator
+		Expression result = parts.get(0);
+		for (int i = 1; i < parts.size(); i++)
+		{
+			Token plusToken = new Token(TokenType.PLUS, "+", null, token.getLine(), token.getColumn());
+			result = new BinaryExpression(result, plusToken, parts.get(i));
+		}
+
+		return result;
 	}
 
 	/**
