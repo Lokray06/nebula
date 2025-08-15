@@ -16,7 +16,7 @@ import java.util.List;
  */
 public class ClassDeclaration implements ASTNode
 {
-	private final Token name;
+	private final IdentifierExpression nameExpression;
 	private final List<Token> modifiers; // e.g., PUBLIC, PRIVATE, STATIC, etc.
 	private final Token classKeyword; // The 'class' keyword token itself
 	private final Token extendsKeyword; // The 'extends' keyword token, null if no extends clause
@@ -37,7 +37,7 @@ public class ClassDeclaration implements ASTNode
 	 *
 	 * @param modifiers           The list of modifiers (public, private, static, etc.) for the class.
 	 * @param classKeyword        The 'class' keyword token.
-	 * @param name                The identifier token for the class name.
+	 * @param nameExpression      The identifier expression for the class name.
 	 * @param extendsKeyword      The 'extends' keyword token (can be null if not present).
 	 * @param superClassName      The identifier token for the superclass name (can be null if not present).
 	 * @param leftBrace           The '{' token opening the class body.
@@ -47,7 +47,7 @@ public class ClassDeclaration implements ASTNode
 	 * @param rightBrace          The '}' token closing the class body.
 	 * @param containingNamespace The fully qualified name of the namespace this class belongs to.
 	 */
-	public ClassDeclaration(List<Token> modifiers, Token classKeyword, Token name,
+	public ClassDeclaration(List<Token> modifiers, Token classKeyword, IdentifierExpression nameExpression,
 	                        Token extendsKeyword, Token superClassName,
 	                        Token leftBrace, List<FieldDeclaration> fields, List<PropertyDeclaration> properties,
 	                        List<MethodDeclaration> methods, List<ConstructorDeclaration> constructors,
@@ -55,7 +55,7 @@ public class ClassDeclaration implements ASTNode
 	{
 		this.modifiers = modifiers;
 		this.classKeyword = classKeyword;
-		this.name = name;
+		this.nameExpression = nameExpression; // <-- CHANGED
 		this.extendsKeyword = extendsKeyword;
 		this.superClassName = superClassName;
 		this.leftBrace = leftBrace;
@@ -70,7 +70,7 @@ public class ClassDeclaration implements ASTNode
 
 	public Token getName()
 	{
-		return name;
+		return nameExpression.getName(); // Get the token from the expression
 	}
 
 	public Token getExtendsKeyword()
@@ -89,7 +89,7 @@ public class ClassDeclaration implements ASTNode
 	 */
 	public IdentifierExpression getNameExpression()
 	{
-		return new IdentifierExpression(name);
+		return nameExpression; // Return the stored expression directly
 	}
 
 	public List<Token> getModifiers()
@@ -128,7 +128,7 @@ public class ClassDeclaration implements ASTNode
 	{
 		StringBuilder sb = new StringBuilder();
 		modifiers.forEach(mod -> sb.append(mod.getLexeme()).append(" "));
-		sb.append("class ").append(name.getLexeme());
+		sb.append("class ").append(nameExpression.getName());
 		if (superClassName != null)
 		{
 			sb.append(" extends ").append(superClassName.getLexeme());

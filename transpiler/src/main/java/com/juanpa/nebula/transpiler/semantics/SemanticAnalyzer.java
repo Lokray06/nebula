@@ -113,7 +113,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			for (ClassDeclaration cd : nsDecl.getClassDeclarations())
 			{
 				boolean isNative = cd.getModifiers().stream().anyMatch(m -> m.getType() == TokenType.NATIVE); // ADD this
-				String simpleName = cd.getName().getLexeme();
+				String simpleName = cd.getNameExpression().getName().getLexeme();
 				String fullName = currentNamespacePrefix.isEmpty() ? simpleName : currentNamespacePrefix + "." + simpleName;
 				// MODIFY constructor call
 				ClassSymbol cs = new ClassSymbol(simpleName, new ClassType(fullName, null, null), cd.getName(), new SymbolTable(globalScope, "Class:" + simpleName), isNative); // PASS isNative
@@ -358,7 +358,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 			for (ClassDeclaration cd : nsDecl.getClassDeclarations())
 			{
-				String fqn = this.currentNamespacePrefix + "." + cd.getName().getLexeme();
+				String fqn = this.currentNamespacePrefix + "." + cd.getNameExpression().getName().getLexeme();
 				ClassSymbol classSymbol = declaredClasses.get(fqn);
 				if (classSymbol == null)
 				{
@@ -454,6 +454,20 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	private void enterScope(SymbolTable newScope)
 	{
 		currentScope = newScope;
+	}
+
+	private String getNamespaceFromFqn(String fqn)
+	{
+		if (fqn == null)
+		{
+			return "";
+		}
+		int lastDot = fqn.lastIndexOf('.');
+		if (lastDot == -1)
+		{
+			return ""; // Belongs to the default (top-level) namespace
+		}
+		return fqn.substring(0, lastDot);
 	}
 
 	/**
@@ -3495,9 +3509,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	 */
 	private boolean checkAccess(Symbol member, Token errorToken)
 	{
+		// 1. Public members are always accessible.
 		if (member.isPublic())
 		{
-			return true; // Public members are always accessible.
+			return true;
 		}
 
 		// Determine the class that owns the member
@@ -3510,19 +3525,36 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		{
 			ownerClass = ((VariableSymbol) member).getOwnerClass();
 		}
-
-		if (ownerClass == null)
+		else if (member instanceof PropertySymbol)
 		{
-			return true; // Not a class member (e.g., local variable), so access is fine.
+			ownerClass = ((PropertySymbol) member).getOwnerClass();
 		}
 
-		// Private members are only accessible from within their own class.
+
+		// 2. Not a class member (e.g., local variable), so access is fine.
+		if (ownerClass == null)
+		{
+			return true;
+		}
+
+		// 3. Private members are only accessible from within their own class.
 		if (currentClass != null && currentClass.equals(ownerClass))
 		{
 			return true;
 		}
 
-		// If we reach here, access is denied.
+		// 4. NEW: Internal/Namespace-level Access Check.
+		// If the member is not public, it has internal access by default.
+		// It's accessible if the current class is in the same namespace.
+		String ownerNamespace = getNamespaceFromFqn(ownerClass.getFqn());
+		String currentNamespace = (currentClass != null) ? getNamespaceFromFqn(currentClass.getFqn()) : "";
+
+		if (ownerNamespace.equals(currentNamespace))
+		{
+			return true;
+		}
+
+		// 5. If we reach here, access is denied.
 		error(errorToken, "Member '" + member.getName() + "' is inaccessible due to its protection level.");
 		return false;
 	}
@@ -3541,7 +3573,8 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			for (ClassDeclaration classDecl : nsDecl.getClassDeclarations())
 			{
 				// Step 1: Reconstruct the FQN from the ClassDeclaration
-				String fqn = classDecl.getContainingNamespace() + "." + classDecl.getName().getLexeme();
+				String namespace = classDecl.getContainingNamespace();
+				String fqn = namespace.isEmpty() ? classDecl.getName().getLexeme() : namespace + "." + classDecl.getName().getLexeme();
 
 				// Step 2: Use the FQN to look up the correct ClassSymbol from the central map
 				ClassSymbol classSymbol = declaredClasses.get(fqn);

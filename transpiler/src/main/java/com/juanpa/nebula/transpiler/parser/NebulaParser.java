@@ -166,36 +166,53 @@ public class NebulaParser
 		{
 			try
 			{
-				if (check(TokenType.IMPORT) || check(TokenType.GLOBAL) || check(TokenType.STATIC))
+				// First, parse any modifiers that might exist
+				List<Token> modifiers = new ArrayList<>();
+				while (check(TokenType.PUBLIC) || check(TokenType.PRIVATE) ||
+						check(TokenType.STATIC) || check(TokenType.NATIVE) ||
+						check(TokenType.GLOBAL)) // Add GLOBAL for imports
 				{
-					int tempCurrent = current;
-					boolean hasImport = false;
-					while (tempCurrent < tokens.size())
-					{
-						if (tokens.get(tempCurrent).getType() == TokenType.IMPORT)
-						{
-							hasImport = true;
-							break;
-						}
-						if (!(tokens.get(tempCurrent).getType() == TokenType.GLOBAL || tokens.get(tempCurrent).getType() == TokenType.STATIC))
-						{
-							break;
-						}
-						tempCurrent++;
-					}
-					if (hasImport)
-					{
-						program.addImportDirective(importDirective());
-						continue;
-					}
+					modifiers.add(advance());
 				}
-				if (check(TokenType.NAMESPACE))
+
+				// Now, decide the declaration type based on the NEXT token
+				if (check(TokenType.IMPORT))
 				{
+					// It's an import directive
+					program.addImportDirective(importDirective(modifiers)); // Pass modifiers
+				}
+				else if (check(TokenType.NAMESPACE))
+				{
+					// It's a namespace declaration
+					// Note: Modifiers on namespaces are not standard, but you can add this logic if needed.
+					if (!modifiers.isEmpty())
+					{
+						error(modifiers.get(0), "Modifiers are not allowed on namespace declarations.");
+					}
 					program.addNamespace(namespaceDeclaration());
+				}
+				else if (check(TokenType.CLASS))
+				{
+					// It's a top-level class. Create a default namespace for it.
+					Token defaultNameToken = new Token(TokenType.IDENTIFIER, "", null, peek().getLine(), peek().getColumn());
+					Expression defaultNameExpr = new IdentifierExpression(defaultNameToken);
+					NamespaceDeclaration defaultNamespace = new NamespaceDeclaration(defaultNameExpr);
+
+					// Add the class (with its modifiers) to the default namespace
+					defaultNamespace.addClass(classDeclaration(modifiers, ""));
+					program.addNamespace(defaultNamespace);
 				}
 				else
 				{
-					error(peek(), "Expected an 'import' directive or a namespace declaration at the top level.");
+					// If we found modifiers but nothing valid followed
+					if (!modifiers.isEmpty())
+					{
+						error(peek(), "Unexpected token after modifiers. Expected 'class', 'import', or 'namespace'.");
+					}
+					else
+					{
+						error(peek(), "Expected an 'import' directive, a namespace declaration, or a class declaration at the top level.");
+					}
 					synchronize();
 				}
 			}
@@ -214,13 +231,8 @@ public class NebulaParser
 	 * @return An ImportDirective AST node.
 	 * @throws SyntaxError if a syntax error occurs.
 	 */
-	private ImportDirective importDirective() throws SyntaxError
+	private ImportDirective importDirective(List<Token> modifiers) throws SyntaxError
 	{
-		List<Token> modifiers = new ArrayList<>();
-		while (check(TokenType.GLOBAL) || check(TokenType.STATIC))
-		{
-			modifiers.add(advance());
-		}
 		Token importKeyword = consume(TokenType.IMPORT, "Expected 'import' keyword.");
 		Expression qualifiedNameExpr = qualifiedName();
 		consume(TokenType.SEMICOLON, "Expected ';' after 'import' directive.");
@@ -344,6 +356,7 @@ public class NebulaParser
 		boolean isNative = modifiers.stream().anyMatch(m -> m.getType() == TokenType.NATIVE);
 		Token classKeyword = consume(TokenType.CLASS, "Expected 'class' keyword.");
 		Token className = consume(TokenType.IDENTIFIER, "Expected class name.");
+		IdentifierExpression classNameExpr = new IdentifierExpression(className);
 		Token extendsKeyword = null;
 		Token superClassName = null;
 		if (check(TokenType.EXTENDS))
@@ -397,7 +410,7 @@ public class NebulaParser
 			synchronizeClassBody();
 		}
 		Token rightBrace = consume(TokenType.RIGHT_BRACE, "Expected '}' after class body.");
-		return new ClassDeclaration(modifiers, classKeyword, className, extendsKeyword, superClassName, leftBrace, fields, properties, methods, constructors, rightBrace, containingNamespace, isNative);
+		return new ClassDeclaration(modifiers, classKeyword, classNameExpr, extendsKeyword, superClassName, leftBrace, fields, properties, methods, constructors, rightBrace, containingNamespace, isNative);
 	}
 
 	/**
