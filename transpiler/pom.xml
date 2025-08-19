@@ -12,6 +12,16 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <javacpp.version>1.5.12</javacpp.version>
+        <llvm.version>20.1.7</llvm.version>
     </properties>
 
+    <dependencies>
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>llvm-platform</artifactId>
+            <version>${llvm.version}-${javacpp.version}</version>
+        </dependency>
+    </dependencies>
 </project>

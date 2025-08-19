@@ -9,6 +9,7 @@ import java.util.Properties;
 public class CompilerConfig
 {
 	private final String cppCompilerPath;
+	private final String llvmCompilerPath;
 	private final String ndkHeaderPath;
 	private final String ndkLibraryPath;
 	private final boolean ownershipOptimizationEnabled; // --- NEW ---
@@ -16,6 +17,7 @@ public class CompilerConfig
 	public CompilerConfig(Properties props)
 	{
 		this.cppCompilerPath = props.getProperty("compiler.cpp_path", "c++");
+		this.llvmCompilerPath = props.getProperty("compiler.llvm_path", "clang");
 		this.ndkHeaderPath = props.getProperty("ndk.header_path", "ndk_cpp");
 		this.ndkLibraryPath = props.getProperty("ndk.library_path", "libs/libndk.so");
 		// --- NEW: Load the optimization flag, defaulting to true ---
@@ -25,6 +27,10 @@ public class CompilerConfig
 	public String getCppCompilerPath()
 	{
 		return cppCompilerPath;
+	}
+	public String getLlvmCompilerPath()
+	{
+		return llvmCompilerPath;
 	}
 
 	public String getNdkHeaderPath()

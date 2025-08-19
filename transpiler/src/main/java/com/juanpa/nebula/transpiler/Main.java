@@ -4,6 +4,7 @@ package com.juanpa.nebula.transpiler;
 
 import com.juanpa.nebula.transpiler.ast.Program;
 import com.juanpa.nebula.transpiler.codegen.CppGenerator;
+import com.juanpa.nebula.transpiler.codegen.LLVMIRGenerator;
 import com.juanpa.nebula.transpiler.semantics.ClassSymbol;
 import com.juanpa.nebula.transpiler.semantics.SemanticAnalyzer;
 import com.juanpa.nebula.transpiler.serialization.SymbolSerializer;
@@ -31,36 +32,49 @@ public class Main
 		// 1. Load Compiler Configuration
 		CompilerConfig config = loadConfiguration();
 
-		// --- Argument parsing for different compiler modes ---
-		if (args.length > 0)
+		// 2. Argument parsing for flags like --use-llvm
+		boolean useLLVM = false;
+		List<String> filteredArgs = new ArrayList<>();
+		for (String arg : args)
 		{
-			if (args[0].equals("--compile-ndk"))
+			if (arg.equals("--use-llvm"))
 			{
-				// Update the usage message to include the new argument
-				if (args.length < 7 || !args[1].equals("--ndk-source") || !args[3].equals("--output-symbols") || !args[5].equals("--output-cpp"))
+				useLLVM = true;
+			}
+			else
+			{
+				filteredArgs.add(arg);
+			}
+		}
+		String[] mainArgs = filteredArgs.toArray(new String[0]);
+
+		// 3. Check for different compiler modes using the filtered arguments
+		if (mainArgs.length > 0)
+		{
+			if (mainArgs[0].equals("--compile-ndk"))
+			{
+				if (mainArgs.length < 7 || !mainArgs[1].equals("--ndk-source") || !mainArgs[3].equals("--output-symbols") || !mainArgs[5].equals("--output-cpp"))
 				{
 					System.err.println("Usage: nbcc --compile-ndk --ndk-source <ndk_src_dir> --output-symbols <file.nsf> --output-cpp <dir>");
 					return;
 				}
-				Path ndkSourceDir = Paths.get(args[2]);
-				Path nsfFile = Paths.get(args[4]);
-				Path cppDir = Paths.get(args[6]);
-
-				// Pass the new NDK source path to the compilation method
+				Path ndkSourceDir = Paths.get(mainArgs[2]);
+				Path nsfFile = Paths.get(mainArgs[4]);
+				Path cppDir = Paths.get(mainArgs[6]);
 				compileNdk(ndkSourceDir, nsfFile, cppDir, config);
 				return;
 			}
 		}
 
-		if (args.length == 0)
+		if (mainArgs.length == 0)
 		{
-			System.err.println("Usage: nbcc <entrypoint.neb>");
+			System.err.println("Usage: nbcc [--use-llvm] <entrypoint.neb>");
 			System.err.println("   or: nbcc --compile-ndk --ndk-source <ndk_src_dir> --output-symbols <file.nsf> --output-cpp <dir>");
 			return;
 		}
 
 		// --- Standard Compilation Flow ---
-		Path entryPointFile = Paths.get(args[0]);
+		Path entryPointFile = Paths.get(mainArgs[0]);
 		if (!Files.exists(entryPointFile))
 		{
 			System.err.println("Error: Entry point file not found: " + entryPointFile);
@@ -124,24 +138,55 @@ public class Main
 
 		System.out.println("\n--- Code Generation Phase ---");
 		Path projectRoot = entryPointFile.getParent();
-		CppGenerator cppGenerator = new CppGenerator(semanticAnalyzer.getDeclaredClasses(), semanticAnalyzer);
-		Map<String, String> generatedCode = cppGenerator.generate(fullProgramAST);
-
-		if (errorReporter.hasErrors())
-		{
-			System.out.println("Code generation finished with errors.");
-		}
-		else
-		{
-			System.out.println("Code generation completed successfully.");
-		}
-
 		Path outputDirPath = projectRoot.resolve("out");
 		try
 		{
 			Files.createDirectories(outputDirPath);
-			System.out.println("\n--- Saving Generated C++ Files to: " + outputDirPath.toAbsolutePath() + " ---");
+		}
+		catch (IOException e)
+		{
+			System.err.println("Error creating output directory: " + e.getMessage());
+			return;
+		}
 
+		// --- DIVERGE BASED ON THE --use-llvm FLAG ---
+		if (useLLVM)
+		{
+			System.out.println("Using LLVM backend.");
+			LLVMIRGenerator llvmGenerator = new LLVMIRGenerator(semanticAnalyzer);
+			String outputName = entryPointFile.getFileName().toString().replace(".neb", ".ll");
+			Path llvmIrFile = outputDirPath.resolve(outputName);
+
+			// Generate the .ll file
+			llvmGenerator.generate(fullProgramAST, llvmIrFile.toString());
+
+			if (errorReporter.hasErrors())
+			{
+				System.out.println("LLVM IR generation finished with errors.");
+			}
+			else
+			{
+				System.out.println("\n--- Compiling and Running Generated LLVM IR ---");
+				compileAndRunLLVM(outputDirPath, llvmIrFile, config);
+			}
+		}
+		else
+		{
+			// --- ORIGINAL C++ FLOW ---
+			System.out.println("Using C++ backend.");
+			CppGenerator cppGenerator = new CppGenerator(semanticAnalyzer.getDeclaredClasses(), semanticAnalyzer);
+			Map<String, String> generatedCode = cppGenerator.generate(fullProgramAST);
+
+			if (errorReporter.hasErrors())
+			{
+				System.out.println("Code generation finished with errors.");
+			}
+			else
+			{
+				System.out.println("Code generation completed successfully.");
+			}
+
+			System.out.println("\n--- Saving Generated C++ Files to: " + outputDirPath.toAbsolutePath() + " ---");
 			for (Map.Entry<String, String> entry : generatedCode.entrySet())
 			{
 				saveToFile(outputDirPath.resolve(entry.getKey()), entry.getValue());
@@ -152,10 +197,6 @@ public class Main
 				System.out.println("\n--- Compiling and Running Generated C++ Code ---");
 				compileAndRunCpp(outputDirPath, generatedCode, config);
 			}
-		}
-		catch (IOException e)
-		{
-			System.err.println("Error creating output directory or saving files: " + e.getMessage());
 		}
 
 		System.out.println("\nTranspilation process finished.");
@@ -405,6 +446,88 @@ public class Main
 		catch (IOException | InterruptedException e)
 		{
 			System.err.println("Error during C++ compilation or execution: " + e.getMessage());
+			Thread.currentThread().interrupt();
+		}
+	}
+
+	/**
+	 * NEW: Compiles the generated LLVM IR file into an executable and runs it.
+	 *
+	 * @param outputDirPath The directory where the executable will be placed.
+	 * @param llvmIrFile    The path to the generated .ll file.
+	 * @param config        The compiler configuration.
+	 */
+	private static void compileAndRunLLVM(Path outputDirPath, Path llvmIrFile, CompilerConfig config)
+	{
+		// 1. Parse NDK Library Path Information (same as C++ version)
+		Path fullLibraryPath = Paths.get(config.getNdkLibraryPath());
+		Path libraryDir = fullLibraryPath.getParent();
+		String libraryName = fullLibraryPath.getFileName().toString();
+		if (libraryName.startsWith("lib"))
+		{
+			libraryName = libraryName.substring(3);
+		}
+		if (libraryName.endsWith(".so") || libraryName.endsWith(".dylib"))
+		{
+			libraryName = libraryName.substring(0, libraryName.lastIndexOf('.'));
+		}
+
+		// 2. Build the Compile Command
+		List<String> compileCommand = new ArrayList<>();
+		// Use the same configured compiler. It should be a modern compiler
+		// like clang++ or g++ that can handle LLVM IR files.
+		compileCommand.add(config.getLlvmCompilerPath()); // NEW
+		compileCommand.add("-O3"); // Add optimization flag
+
+		// Add the LLVM IR file as the main input
+		compileCommand.add(llvmIrFile.toAbsolutePath().toString());
+
+		// Link against the NDK library
+		compileCommand.add("-L" + libraryDir.toAbsolutePath());
+		compileCommand.add("-l" + libraryName);
+
+		// Embed the runtime path to the library directory in the executable
+		compileCommand.add("-Wl,-rpath," + libraryDir.toAbsolutePath());
+
+		// Define the output executable
+		compileCommand.add("-o");
+		compileCommand.add(outputDirPath.resolve("main").toAbsolutePath().toString());
+
+		System.out.println("Compiling with command: " + String.join(" ", compileCommand));
+
+		// 3. Execute the Command and Run the Program (logic is identical to the C++ version)
+		try
+		{
+			ProcessBuilder compileProcessBuilder = new ProcessBuilder(compileCommand);
+			compileProcessBuilder.directory(outputDirPath.toFile());
+			Process compileProcess = compileProcessBuilder.start();
+
+			new Thread(new StreamGobbler(compileProcess.getInputStream(), "[Compiler stdout]: ")).start();
+			new Thread(new StreamGobbler(compileProcess.getErrorStream(), "[Compiler stderr]: ")).start();
+
+			int compileExitCode = compileProcess.waitFor();
+
+			if (compileExitCode == 0)
+			{
+				System.out.println("LLVM IR compilation successful.");
+				System.out.println("Running executable...");
+				ProcessBuilder runProcessBuilder = new ProcessBuilder(outputDirPath.resolve("main").toAbsolutePath().toString());
+				runProcessBuilder.directory(outputDirPath.toFile());
+				Process runProcess = runProcessBuilder.start();
+
+				new Thread(new StreamGobbler(runProcess.getInputStream(), "[App stdout]: ")).start();
+				new Thread(new StreamGobbler(runProcess.getErrorStream(), "[App stderr]: ")).start();
+
+				runProcess.waitFor();
+			}
+			else
+			{
+				System.err.println("LLVM IR compilation failed with exit code: " + compileExitCode);
+			}
+		}
+		catch (IOException | InterruptedException e)
+		{
+			System.err.println("Error during LLVM compilation or execution: " + e.getMessage());
 			Thread.currentThread().interrupt();
 		}
 	}
