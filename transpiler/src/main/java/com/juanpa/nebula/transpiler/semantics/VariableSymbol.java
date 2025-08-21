@@ -14,6 +14,7 @@ public class VariableSymbol extends Symbol
 	private final boolean isWrapper;
 	private final String cppTarget;
 	private ClassSymbol ownerClass;
+	private final Object constantValue;
 
 	// --- NEW ---
 	// Holds the inferred ownership kind. Defaults to SHARED for safety.
@@ -32,7 +33,7 @@ public class VariableSymbol extends Symbol
 	 * @param isWrapper        Whether this is a wrapper for native C++ code.
 	 * @param cppTarget        The native C++ code to generate if it's a wrapper.
 	 */
-	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized, boolean isStatic, boolean isConst, boolean isPublic, boolean isWrapper, String cppTarget)
+	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized, boolean isStatic, boolean isConst, boolean isPublic, boolean isWrapper, String cppTarget, Object constantValue)
 	{
 		super(name, type, declarationToken, isPublic);
 		this.isInitialized = isInitialized;
@@ -40,22 +41,34 @@ public class VariableSymbol extends Symbol
 		this.isConst = isConst;
 		this.isWrapper = isWrapper;
 		this.cppTarget = cppTarget;
+		this.constantValue = constantValue;
 	}
 
-	// Constructor chains for compatibility
+	// Add a new getter for this field
+	public Object getConstantValue()
+	{
+		return constantValue;
+	}
+
+	// --- CORRECTED CONSTRUCTOR CHAINS ---
+	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized, boolean isStatic, boolean isConst, boolean isPublic, boolean isWrapper, String cppTarget)
+	{
+		this(name, type, declarationToken, isInitialized, isStatic, isConst, isPublic, isWrapper, cppTarget, null);
+	}
+
 	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized, boolean isStatic, boolean isConst, boolean isPublic)
 	{
-		this(name, type, declarationToken, isInitialized, isStatic, isConst, isPublic, false, null);
+		this(name, type, declarationToken, isInitialized, isStatic, isConst, isPublic, false, null, null);
 	}
 
 	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized)
 	{
-		this(name, type, declarationToken, isInitialized, false, false, false, false, null);
+		this(name, type, declarationToken, isInitialized, false, false, false, false, null, null);
 	}
 
 	public VariableSymbol(String name, Type type, Token declarationToken, boolean isInitialized, boolean isStatic, boolean isConst)
 	{
-		this(name, type, declarationToken, isInitialized, isStatic, isConst, false, false, null);
+		this(name, type, declarationToken, isInitialized, isStatic, isConst, false, false, null, null);
 	}
 
 	public boolean isInitialized()

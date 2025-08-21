@@ -66,64 +66,66 @@ public class PrimitiveType extends Type
 
 		// --- INT8 / BYTE ---
 		Map<String, Symbol> int8Props = new HashMap<>();
-		int8Props.put("max", new VariableSymbol("max", INT8, null, true, true, true, true, true, "std::numeric_limits<int8_t>::max()"));
-		int8Props.put("min", new VariableSymbol("min", INT8, null, true, true, true, true, true, "std::numeric_limits<int8_t>::min()"));
+		// The key change is replacing the C++ string with the actual Java constant value.
+		int8Props.put("max", new VariableSymbol("max", INT8, null, true, true, true, true, false, null, Byte.MAX_VALUE));
+		int8Props.put("min", new VariableSymbol("min", INT8, null, true, true, true, true, false, null, Byte.MIN_VALUE));
 		INT8.staticProperties = Collections.unmodifiableMap(int8Props);
 
 		// --- INT16 / SHORT ---
 		Map<String, Symbol> int16Props = new HashMap<>();
-		int16Props.put("max", new VariableSymbol("max", INT16, null, true, true, true, true, true, "std::numeric_limits<int16_t>::max()"));
-		int16Props.put("min", new VariableSymbol("min", INT16, null, true, true, true, true, true, "std::numeric_limits<int16_t>::min()"));
+		int16Props.put("max", new VariableSymbol("max", INT16, null, true, true, true, true, false, null, Short.MAX_VALUE));
+		int16Props.put("min", new VariableSymbol("min", INT16, null, true, true, true, true, false, null, Short.MIN_VALUE));
 		INT16.staticProperties = Collections.unmodifiableMap(int16Props);
 
 		// --- INT32 / INT ---
 		Map<String, Symbol> int32Props = new HashMap<>();
-		int32Props.put("max", new VariableSymbol("max", INT32, null, true, true, true, true, true, "std::numeric_limits<int32_t>::max()"));
-		int32Props.put("min", new VariableSymbol("min", INT32, null, true, true, true, true, true, "std::numeric_limits<int32_t>::min()"));
+		int32Props.put("max", new VariableSymbol("max", INT32, null, true, true, true, true, false, null, Integer.MAX_VALUE));
+		int32Props.put("min", new VariableSymbol("min", INT32, null, true, true, true, true, false, null, Integer.MIN_VALUE));
 		INT32.staticProperties = Collections.unmodifiableMap(int32Props);
 
 		// --- INT64 / LONG ---
 		Map<String, Symbol> int64Props = new HashMap<>();
-		int64Props.put("max", new VariableSymbol("max", INT64, null, true, true, true, true, true, "std::numeric_limits<int64_t>::max()"));
-		int64Props.put("min", new VariableSymbol("min", INT64, null, true, true, true, true, true, "std::numeric_limits<int64_t>::min()"));
+		int64Props.put("max", new VariableSymbol("max", INT64, null, true, true, true, true, false, null, Long.MAX_VALUE));
+		int64Props.put("min", new VariableSymbol("min", INT64, null, true, true, true, true, false, null, Long.MIN_VALUE));
 		INT64.staticProperties = Collections.unmodifiableMap(int64Props);
 
 		// --- UINT8 / UBYTE ---
 		Map<String, Symbol> uint8Props = new HashMap<>();
-		uint8Props.put("max", new VariableSymbol("max", UINT8, null, true, true, true, true, true, "std::numeric_limits<uint8_t>::max()"));
-		uint8Props.put("min", new VariableSymbol("min", UINT8, null, true, true, true, true, true, "std::numeric_limits<uint8_t>::min()"));
+		uint8Props.put("max", new VariableSymbol("max", UINT8, null, true, true, true, true, false, null, 255));
+		uint8Props.put("min", new VariableSymbol("min", UINT8, null, true, true, true, true, false, null, 0));
 		UINT8.staticProperties = Collections.unmodifiableMap(uint8Props);
 
 		// --- UINT16 / USHORT ---
 		Map<String, Symbol> uint16Props = new HashMap<>();
-		uint16Props.put("max", new VariableSymbol("max", UINT16, null, true, true, true, true, true, "std::numeric_limits<uint16_t>::max()"));
-		uint16Props.put("min", new VariableSymbol("min", UINT16, null, true, true, true, true, true, "std::numeric_limits<uint16_t>::min()"));
+		uint16Props.put("max", new VariableSymbol("max", UINT16, null, true, true, true, true, false, null, 65535));
+		uint16Props.put("min", new VariableSymbol("min", UINT16, null, true, true, true, true, false, null, 0));
 		UINT16.staticProperties = Collections.unmodifiableMap(uint16Props);
 
 		// --- UINT32 / UINT ---
 		Map<String, Symbol> uint32Props = new HashMap<>();
-		uint32Props.put("max", new VariableSymbol("max", UINT32, null, true, true, true, true, true, "std::numeric_limits<uint32_t>::max()"));
-		uint32Props.put("min", new VariableSymbol("min", UINT32, null, true, true, true, true, true, "std::numeric_limits<uint32_t>::min()"));
+		uint32Props.put("max", new VariableSymbol("max", UINT32, null, true, true, true, true, false, null, 0xFFFFFFFFL));
+		uint32Props.put("min", new VariableSymbol("min", UINT32, null, true, true, true, true, false, null, 0L));
 		UINT32.staticProperties = Collections.unmodifiableMap(uint32Props);
 
 		// --- UINT64 / ULONG ---
 		Map<String, Symbol> uint64Props = new HashMap<>();
-		uint64Props.put("max", new VariableSymbol("max", UINT64, null, true, true, true, true, true, "std::numeric_limits<uint64_t>::max()"));
-		uint64Props.put("min", new VariableSymbol("min", UINT64, null, true, true, true, true, true, "std::numeric_limits<uint64_t>::min()"));
+		// In two's complement, -1L represents the bit pattern for the maximum unsigned 64-bit integer.
+		uint64Props.put("max", new VariableSymbol("max", UINT64, null, true, true, true, true, false, null, -1L));
+		uint64Props.put("min", new VariableSymbol("min", UINT64, null, true, true, true, true, false, null, 0L));
 		UINT64.staticProperties = Collections.unmodifiableMap(uint64Props);
 
 		// --- FLOAT ---
 		Map<String, Symbol> floatProps = new HashMap<>();
-		floatProps.put("max", new VariableSymbol("max", FLOAT, null, true, true, true, true, true, "std::numeric_limits<float>::max()"));
-		floatProps.put("min", new VariableSymbol("min", FLOAT, null, true, true, true, true, true, "std::numeric_limits<float>::lowest()"));
-		floatProps.put("epsilon", new VariableSymbol("epsilon", FLOAT, null, true, true, true, true, true, "std::numeric_limits<float>::epsilon()"));
+		floatProps.put("max", new VariableSymbol("max", FLOAT, null, true, true, true, true, false, null, Float.MAX_VALUE));
+		floatProps.put("min", new VariableSymbol("min", FLOAT, null, true, true, true, true, false, null, -Float.MAX_VALUE));
+		floatProps.put("epsilon", new VariableSymbol("epsilon", FLOAT, null, true, true, true, true, false, null, Float.MIN_NORMAL));
 		FLOAT.staticProperties = Collections.unmodifiableMap(floatProps);
 
 		// --- DOUBLE ---
 		Map<String, Symbol> doubleProps = new HashMap<>();
-		doubleProps.put("max", new VariableSymbol("max", DOUBLE, null, true, true, true, true, true, "std::numeric_limits<double>::max()"));
-		doubleProps.put("min", new VariableSymbol("min", DOUBLE, null, true, true, true, true, true, "std::numeric_limits<double>::lowest()"));
-		doubleProps.put("epsilon", new VariableSymbol("epsilon", DOUBLE, null, true, true, true, true, true, "std::numeric_limits<double>::epsilon()"));
+		doubleProps.put("max", new VariableSymbol("max", DOUBLE, null, true, true, true, true, false, null, Double.MAX_VALUE));
+		doubleProps.put("min", new VariableSymbol("min", DOUBLE, null, true, true, true, true, false, null, -Double.MAX_VALUE));
+		doubleProps.put("epsilon", new VariableSymbol("epsilon", DOUBLE, null, true, true, true, true, false, null, Double.MIN_NORMAL));
 		DOUBLE.staticProperties = Collections.unmodifiableMap(doubleProps);
 
 		staticPropertiesInitialized = true;
@@ -262,8 +264,10 @@ public class PrimitiveType extends Type
 			return false;
 		}
 
-		// Check if this type can be implicitly converted to the other type
-		return this.isAssignableTo(other);
+		// --- START OF FIX ---
+		// For a binary operation, types are compatible if EITHER can be assigned to the other.
+		return this.isAssignableTo(other) || other.isAssignableTo(this);
+		// --- END OF FIX ---
 	}
 
 	@Override
@@ -297,6 +301,11 @@ public class PrimitiveType extends Type
 	{
 		return this.equals(INT8) || this.equals(INT16) || this.equals(INT32) || this.equals(INT64)
 				|| this.equals(UINT8) || this.equals(UINT16) || this.equals(UINT32) || this.equals(UINT64);
+	}
+
+	public boolean isFloatingPoint()
+	{
+		return this.equals(FLOAT) || this.equals(DOUBLE);
 	}
 
 	public static boolean fitsInRange(Type targetType, long value)

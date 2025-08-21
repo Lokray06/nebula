@@ -122,7 +122,13 @@ public class MethodSymbol extends Symbol
 
 	public String getMangledName()
 	{
-		return mangledName;
+		// If a specific mangled name exists, return it.
+		if (this.mangledName != null)
+		{
+			return this.mangledName;
+		}
+		// Otherwise, always fall back to the simple name. This prevents returning null.
+		return this.getName();
 	}
 
 	public void setMangledName(String mangledName)

@@ -7,6 +7,7 @@ import com.juanpa.nebula.transpiler.ast.ASTVisitor;
 import com.juanpa.nebula.transpiler.ast.statements.BlockStatement;
 import com.juanpa.nebula.transpiler.ast.statements.ConstructorChainingCallStatement; // Import this
 import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.semantics.MethodSymbol;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +23,7 @@ public class ConstructorDeclaration implements ASTNode
 	private final Token name;
 	private final List<Token> parameters;
 	private final BlockStatement body;
+	private MethodSymbol resolvedSymbol; // <-- ADD THIS FIELD
 
 	// --- NEW FIELD ---
 	// This will hold the 'this(...)' or 'super(...)' call if it exists.
@@ -34,6 +36,7 @@ public class ConstructorDeclaration implements ASTNode
 		this.parameters = new ArrayList<>(parameters);
 		this.body = body;
 		this.chainingCall = null; // Initialize to null
+		this.resolvedSymbol = null; // <-- ADD THIS LINE
 	}
 
 	public List<Token> getModifiers()
@@ -54,6 +57,16 @@ public class ConstructorDeclaration implements ASTNode
 	public BlockStatement getBody()
 	{
 		return body;
+	}
+
+	public MethodSymbol getResolvedSymbol()
+	{
+		return resolvedSymbol;
+	}
+
+	public void setResolvedSymbol(MethodSymbol resolvedSymbol)
+	{
+		this.resolvedSymbol = resolvedSymbol;
 	}
 
 	// --- NEW GETTER ---
@@ -91,13 +104,15 @@ public class ConstructorDeclaration implements ASTNode
 
 	private String formatParameters(List<Token> params)
 	{
-		if(params.isEmpty())
+		if (params.isEmpty())
+		{
 			return "";
+		}
 		StringBuilder sb = new StringBuilder();
-		for(int i = 0; i < params.size(); i += 2)
+		for (int i = 0; i < params.size(); i += 2)
 		{ // Assuming pairs of (type, name)
 			sb.append(params.get(i).getLexeme()).append(" ").append(params.get(i + 1).getLexeme());
-			if(i + 2 < params.size())
+			if (i + 2 < params.size())
 			{
 				sb.append(", ");
 			}
@@ -109,7 +124,7 @@ public class ConstructorDeclaration implements ASTNode
 	{
 		StringBuilder indentedText = new StringBuilder();
 		String prefix = "  ".repeat(level);
-		for(String line : text.split("\n"))
+		for (String line : text.split("\n"))
 		{
 			indentedText.append(prefix).append(line).append("\n");
 		}

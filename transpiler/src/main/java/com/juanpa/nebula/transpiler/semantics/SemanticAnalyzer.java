@@ -169,7 +169,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 					String cppTarget = isWrapper && fd.getCppTarget() != null ? (String) fd.getCppTarget().getLiteral() : null; // ADD this
 
 					// MODIFY constructor call
-					VariableSymbol vs = new VariableSymbol(fd.getName().getLexeme(), t, fd.getName(), fd.getInitializer() != null, isStatic, false, isPublic, isWrapper, cppTarget);
+					VariableSymbol vs = new VariableSymbol(fd.getName().getLexeme(), t, fd.getName(), fd.getInitializer() != null, isStatic, false, isPublic, isWrapper, cppTarget, null);
 					vs.setOwnerClass(cs);
 					cs.getClassScope().define(vs);
 				}
@@ -197,9 +197,11 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 					{
 						// 1. Synthesize a backing field
 						String backingFieldName = "_" + ps.getName();
-						VariableSymbol backingField = new VariableSymbol(backingFieldName, propertyType, pd.getName(), true, isStatic, false, false, false, null);
+						VariableSymbol backingField = new VariableSymbol(backingFieldName, propertyType, pd.getName(), true, isStatic, false, false, false, null, null);
 						backingField.setOwnerClass(cs);
 						cs.getClassScope().define(backingField);
+
+						ps.setBackingField(backingField);
 
 						// 2. Synthesize getter and setter methods
 						if (pd.getGetAccessor() != null)
@@ -314,34 +316,52 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		}
 		System.out.println("--- Second Pass Complete ---");
 
-		// NEW: Phase 3 - Mangle names for methods overloaded by return type
+		// --- REVISED: Phase 3 - Name Mangling ---
 		System.out.println("--- Semantic Analysis: Third Pass - Name Mangling ---");
 		for (ClassSymbol cs : declaredClasses.values())
 		{
-			// Group methods by signature (name + param types)
-			Map<String, List<MethodSymbol>> signatureMap = new HashMap<>();
+			// cs.methodsByName groups all methods (and constructors) by their simple name.
 			for (List<MethodSymbol> overloads : cs.methodsByName.values())
 			{
-				for (MethodSymbol ms : overloads)
+				// We need to mangle names if there is more than one method with the same simple name,
+				// which indicates any kind of overloading (by parameter or return type).
+				if (overloads.size() > 1)
 				{
-					// Create a unique signature string based on name and parameter types
-					String signature = ms.getName() + "(" + ms.getParameterTypes().stream().map(Type::getName).collect(Collectors.joining(",")) + ")";
-					signatureMap.computeIfAbsent(signature, k -> new ArrayList<>()).add(ms);
-				}
-			}
-
-			// For each signature with more than one method, mangle their names
-			for (List<MethodSymbol> returnOverloads : signatureMap.values())
-			{
-				if (returnOverloads.size() > 1)
-				{
-					for (MethodSymbol ms : returnOverloads)
+					for (MethodSymbol ms : overloads)
 					{
-						String baseName = ms.getName();
-						String returnTypeName = ms.getType().getName();
-						// Capitalize first letter of type for camelCase: int -> Int, double -> Double
-						String capitalizedReturn = Character.toUpperCase(returnTypeName.charAt(0)) + returnTypeName.substring(1);
-						ms.setMangledName(baseName + capitalizedReturn);
+						StringBuilder mangledName = new StringBuilder(ms.getName());
+
+						// Append sanitized parameter type names to the mangled name.
+						for (Type paramType : ms.getParameterTypes())
+						{
+							String sanitizedParamName = paramType.getName().replace('.', '_').replace("[]", "Arr");
+							mangledName.append("_").append(sanitizedParamName);
+						}
+
+						// For non-constructors, append the return type to uniquely handle
+						// return-type overloading. We use a distinct separator.
+						if (!ms.isConstructor())
+						{
+							String sanitizedReturnName = ms.getType().getName().replace('.', '_').replace("[]", "Arr");
+							mangledName.append("__").append(sanitizedReturnName);
+						}
+
+						ms.setMangledName(mangledName.toString());
+					}
+				}
+				// Also, separately handle single constructors that have parameters, so they get a unique name.
+				else if (overloads.size() == 1)
+				{
+					MethodSymbol ms = overloads.get(0);
+					if (ms.isConstructor() && !ms.getParameterTypes().isEmpty())
+					{
+						StringBuilder mangledName = new StringBuilder(ms.getName());
+						for (Type paramType : ms.getParameterTypes())
+						{
+							String sanitizedParamName = paramType.getName().replace('.', '_').replace("[]", "Arr");
+							mangledName.append("_").append(sanitizedParamName);
+						}
+						ms.setMangledName(mangledName.toString());
 					}
 				}
 			}
@@ -1093,6 +1113,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 			if (resolvedConstructor != null)
 			{
+				constructorDecl.setResolvedSymbol(resolvedConstructor); // <-- ADD THIS LINE
 				MethodSymbol oldCurrentMethod = currentMethod;
 				MethodSymbol oldCurrentConstructor = currentConstructor; // Save current constructor state
 				this.currentMethod = resolvedConstructor;
@@ -2221,6 +2242,7 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			resolvedTargetSymbol = ((DotExpression) expression.getTarget()).getResolvedSymbol();
 		}
 
+		// This block must be BEFORE the check for VariableSymbol
 		if (resolvedTargetSymbol instanceof PropertySymbol)
 		{
 			PropertySymbol propSymbol = (PropertySymbol) resolvedTargetSymbol;
@@ -2235,6 +2257,10 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			{
 				return ErrorType.INSTANCE;
 			}
+
+			// THIS IS THE KEY: Set the resolved symbol for the whole assignment
+			// to be the SETTER METHOD. The code generator will now see this.
+			expression.setResolvedSymbol(setter);
 		}
 		else if (resolvedTargetSymbol instanceof VariableSymbol)
 		{
@@ -2468,15 +2494,13 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 		}
 
-		//Handle array.length
 		if (leftType instanceof ArrayType)
 		{
 			String memberName = expression.getMemberName().getLexeme();
 			if (memberName.equals("size"))
 			{
-				// Create a synthetic symbol for 'length' for consistency
-				VariableSymbol lengthSymbol = new VariableSymbol("size", PrimitiveType.INT, expression.getMemberName(), true, true, true, true);
-				expression.setResolvedSymbol(lengthSymbol);
+				MethodSymbol sizeMethod = new MethodSymbol("size", PrimitiveType.INT, Collections.emptyList(), expression.getMemberName(), new SymbolTable(currentScope, "SyntheticSize"), false, true);
+				expression.setResolvedSymbol(sizeMethod);
 				expression.setResolvedType(PrimitiveType.INT);
 				return PrimitiveType.INT;
 			}
@@ -2488,21 +2512,32 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 		}
 
-		// NEW: Handle instance property 'size' for strings
+		// --- START OF FIX ---
+		// Restore the special-case block, but create the correct MethodSymbol for 'length'.
 		ClassSymbol stringClass = declaredClasses.get("nebula.core.String");
 		if (stringClass != null && leftType.equals(stringClass.getType()))
 		{
 			String memberName = expression.getMemberName().getLexeme();
 			if (memberName.equals("length"))
 			{
-				// The native String class has a length() method. We can create a synthetic property
-				// 'size' that will be mapped to length() in the CppGenerator.
-				VariableSymbol sizeSymbol = new VariableSymbol("size", PrimitiveType.INT, expression.getMemberName(), true, false, true, true);
-				expression.setResolvedSymbol(sizeSymbol);
+				// This is the correct fix: Manually create the MethodSymbol for string.length
+				// because it's missing from the preloaded NDK symbol cache.
+				MethodSymbol lengthMethod = new MethodSymbol(
+						"length",                                  // Method name
+						PrimitiveType.INT,                         // Return type
+						Collections.emptyList(),                   // Parameter types
+						expression.getMemberName(),                // Token for error reporting
+						new SymbolTable(stringClass.getClassScope(), "SyntheticLength"), // Scope
+						false,                                     // isStatic
+						true                                       // isPublic
+				);
+				lengthMethod.setOwnerClass(stringClass);
+				expression.setResolvedSymbol(lengthMethod); // Attach the CORRECT symbol to the AST node
 				expression.setResolvedType(PrimitiveType.INT);
 				return PrimitiveType.INT;
 			}
 		}
+		// --- END OF FIX ---
 
 		ClassSymbol containerClassSymbol = null;
 		Symbol resolvedMemberSymbol = null; // The symbol representing the member (field, method, nested class)

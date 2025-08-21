@@ -165,4 +165,56 @@ public class ClassSymbol extends Symbol
 	{
 		return isNative;
 	}
+
+	/**
+	 * Gets the 0-based index of a non-static field for LLVM GEP instructions.
+	 * The order is determined by the order of symbols in the class scope.
+	 *
+	 * @param fieldName The name of the instance field.
+	 * @return The index of the field, or -1 if not found or if it's static.
+	 */
+	public int getFieldIndex(String fieldName)
+	{
+		// Get a deterministically ordered list of instance fields.
+		List<VariableSymbol> instanceFields = this.classScope.getSymbols().values().stream()
+				.filter(s -> s instanceof VariableSymbol && !s.isStatic())
+				.map(s -> (VariableSymbol) s)
+				.collect(Collectors.toList());
+
+		for (int i = 0; i < instanceFields.size(); i++)
+		{
+			if (instanceFields.get(i).getName().equals(fieldName))
+			{
+				return i;
+			}
+		}
+		return -1; // Not found
+	}
+
+	/**
+	 * Gets the 0-based index of a property's hidden backing field.
+	 * This is crucial for LLVM GEP instructions on properties.
+	 *
+	 * @param propertyName The name of the public property (e.g., "Name").
+	 * @return The index of the backing field (e.g., "_Name"), or -1 if not found.
+	 */
+	public int getBackingFieldIndexForProperty(String propertyName)
+	{
+		// 1. Find the property symbol by its public name.
+		PropertySymbol ps = this.propertiesByName.get(propertyName);
+		if (ps == null)
+		{
+			return -1; // Not a known property.
+		}
+
+		// 2. Get the linked backing field symbol.
+		VariableSymbol backingField = ps.getBackingField();
+		if (backingField == null)
+		{
+			return -1; // Property exists but has no backing field (e.g., a full property).
+		}
+
+		// 3. Use the existing getFieldIndex method with the backing field's name.
+		return this.getFieldIndex(backingField.getName());
+	}
 }

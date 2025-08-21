@@ -182,7 +182,7 @@ public class SymbolSerializer
 				boolean isWrapper = in.readBoolean();
 				String cppTarget = readString(in);
 
-				VariableSymbol vs = new VariableSymbol(name, new PrimitiveType(typeName), new Token(TokenType.IDENTIFIER, name, null, 0, 0), true, isStatic, isConst, isPublic, isWrapper, cppTarget);
+				VariableSymbol vs = new VariableSymbol(name, new PrimitiveType(typeName), new Token(TokenType.IDENTIFIER, name, null, 0, 0), true, isStatic, isConst, isPublic, isWrapper, cppTarget, null);
 				vs.setOwnerClass(cs);
 				cs.getClassScope().define(vs);
 			}

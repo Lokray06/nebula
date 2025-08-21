@@ -459,75 +459,113 @@ public class Main
 	 */
 	private static void compileAndRunLLVM(Path outputDirPath, Path llvmIrFile, CompilerConfig config)
 	{
-		// 1. Parse NDK Library Path Information (same as C++ version)
-		Path fullLibraryPath = Paths.get(config.getNdkLibraryPath());
-		Path libraryDir = fullLibraryPath.getParent();
-		String libraryName = fullLibraryPath.getFileName().toString();
-		if (libraryName.startsWith("lib"))
+		// 1. Define all necessary file paths
+		Path runtimeCppFile = Paths.get("transpiler/src/main/cpp/nebula_runtime.cpp"); // Assumes it's in the project root
+		if (!Files.exists(runtimeCppFile))
 		{
-			libraryName = libraryName.substring(3);
+			System.err.println("FATAL: C++ runtime file not found at: " + runtimeCppFile.toAbsolutePath());
+			return;
 		}
-		if (libraryName.endsWith(".so") || libraryName.endsWith(".dylib"))
-		{
-			libraryName = libraryName.substring(0, libraryName.lastIndexOf('.'));
-		}
+		Path runtimeObjectFile = outputDirPath.resolve("nebula_runtime.o");
+		Path mainObjectFile = outputDirPath.resolve(llvmIrFile.getFileName().toString().replace(".ll", ".o"));
+		Path executableFile = outputDirPath.resolve("main");
 
-		// 2. Build the Compile Command
-		List<String> compileCommand = new ArrayList<>();
-		// Use the same configured compiler. It should be a modern compiler
-		// like clang++ or g++ that can handle LLVM IR files.
-		compileCommand.add(config.getLlvmCompilerPath()); // NEW
-		compileCommand.add("-O3"); // Add optimization flag
-
-		// Add the LLVM IR file as the main input
-		compileCommand.add(llvmIrFile.toAbsolutePath().toString());
-
-		// Link against the NDK library
-		compileCommand.add("-L" + libraryDir.toAbsolutePath());
-		compileCommand.add("-l" + libraryName);
-
-		// Embed the runtime path to the library directory in the executable
-		compileCommand.add("-Wl,-rpath," + libraryDir.toAbsolutePath());
-
-		// Define the output executable
-		compileCommand.add("-o");
-		compileCommand.add(outputDirPath.resolve("main").toAbsolutePath().toString());
-
-		System.out.println("Compiling with command: " + String.join(" ", compileCommand));
-
-		// 3. Execute the Command and Run the Program (logic is identical to the C++ version)
+		// 2. Compile your C++ runtime into an object file
+		System.out.println("\n--- Compiling C++ Runtime ---");
 		try
 		{
-			ProcessBuilder compileProcessBuilder = new ProcessBuilder(compileCommand);
-			compileProcessBuilder.directory(outputDirPath.toFile());
-			Process compileProcess = compileProcessBuilder.start();
+			List<String> runtimeCompileCommand = List.of(
+					config.getCppCompilerPath(),
+					"-c", "-fPIC", "-O3",
+					runtimeCppFile.toAbsolutePath().toString(),
+					"-o",
+					runtimeObjectFile.toAbsolutePath().toString()
+			);
 
-			new Thread(new StreamGobbler(compileProcess.getInputStream(), "[Compiler stdout]: ")).start();
-			new Thread(new StreamGobbler(compileProcess.getErrorStream(), "[Compiler stderr]: ")).start();
-
-			int compileExitCode = compileProcess.waitFor();
-
-			if (compileExitCode == 0)
+			System.out.println("Executing: " + String.join(" ", runtimeCompileCommand));
+			Process p = new ProcessBuilder(runtimeCompileCommand).inheritIO().start();
+			if (p.waitFor() != 0)
 			{
-				System.out.println("LLVM IR compilation successful.");
-				System.out.println("Running executable...");
-				ProcessBuilder runProcessBuilder = new ProcessBuilder(outputDirPath.resolve("main").toAbsolutePath().toString());
-				runProcessBuilder.directory(outputDirPath.toFile());
-				Process runProcess = runProcessBuilder.start();
+				System.err.println("Failed to compile C++ runtime. Aborting.");
+				return;
+			}
+			System.out.println("C++ runtime compiled successfully.");
 
-				new Thread(new StreamGobbler(runProcess.getInputStream(), "[App stdout]: ")).start();
-				new Thread(new StreamGobbler(runProcess.getErrorStream(), "[App stderr]: ")).start();
+		}
+		catch (IOException | InterruptedException e)
+		{
+			System.err.println("Error compiling C++ runtime: " + e.getMessage());
+			Thread.currentThread().interrupt();
+			return;
+		}
 
+		// 3. Compile your generated LLVM IR into an object file
+		System.out.println("\n--- Compiling Generated LLVM IR ---");
+		try
+		{
+			List<String> llvmCompileCommand = List.of(
+					config.getLlvmCompilerPath(), // Should be 'clang'
+					"-c", "-O3",
+					llvmIrFile.toAbsolutePath().toString(),
+					"-o",
+					mainObjectFile.toAbsolutePath().toString()
+			);
+
+			System.out.println("Executing: " + String.join(" ", llvmCompileCommand));
+			Process p = new ProcessBuilder(llvmCompileCommand).inheritIO().start();
+			if (p.waitFor() != 0)
+			{
+				System.err.println("Failed to compile LLVM IR. Aborting.");
+				return;
+			}
+			System.out.println("LLVM IR compiled successfully.");
+
+		}
+		catch (IOException | InterruptedException e)
+		{
+			System.err.println("Error compiling LLVM IR: " + e.getMessage());
+			Thread.currentThread().interrupt();
+			return;
+		}
+
+		// 4. Link everything together into the final executable
+		System.out.println("\n--- Linking Executable ---");
+		Path fullLibraryPath = Paths.get(config.getNdkLibraryPath());
+		Path libraryDir = fullLibraryPath.getParent();
+		String libraryName = fullLibraryPath.getFileName().toString().replaceAll("^lib|\\.(so|dylib)$", "");
+
+		try
+		{
+			List<String> linkCommand = new ArrayList<>();
+			linkCommand.add(config.getCppCompilerPath()); // Use C++ compiler for linking
+			linkCommand.add(mainObjectFile.toAbsolutePath().toString());
+			linkCommand.add(runtimeObjectFile.toAbsolutePath().toString());
+			linkCommand.add("-L" + libraryDir.toAbsolutePath());
+			linkCommand.add("-l" + libraryName);
+			linkCommand.add("-Wl,-rpath," + libraryDir.toAbsolutePath());
+			linkCommand.add("-o");
+			linkCommand.add(executableFile.toAbsolutePath().toString());
+
+			System.out.println("Executing: " + String.join(" ", linkCommand));
+			Process p = new ProcessBuilder(linkCommand).inheritIO().start();
+			if (p.waitFor() == 0)
+			{
+				System.out.println("Linking successful. Executable created.");
+
+				// 5. Run the final program
+				System.out.println("\n--- Running Program ---");
+				Process runProcess = new ProcessBuilder(executableFile.toAbsolutePath().toString()).inheritIO().start();
 				runProcess.waitFor();
+				System.out.println("\n--- Program Finished ---");
 			}
 			else
 			{
-				System.err.println("LLVM IR compilation failed with exit code: " + compileExitCode);
+				System.err.println("Linking failed.");
 			}
 		}
 		catch (IOException | InterruptedException e)
 		{
-			System.err.println("Error during LLVM compilation or execution: " + e.getMessage());
+			System.err.println("Error during linking or execution: " + e.getMessage());
 			Thread.currentThread().interrupt();
 		}
 	}

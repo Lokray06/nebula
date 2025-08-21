@@ -9,6 +9,7 @@ public class PropertySymbol extends Symbol
 	private MethodSymbol getter;
 	private MethodSymbol setter;
 	private ClassSymbol ownerClass; // <-- ADD THIS LINE
+	private VariableSymbol backingField;
 
 	public PropertySymbol(String name, Type type, Token declarationToken, boolean isStatic, boolean isPublic)
 	{
@@ -50,5 +51,15 @@ public class PropertySymbol extends Symbol
 	public void setOwnerClass(ClassSymbol ownerClass)
 	{
 		this.ownerClass = ownerClass;
+	}
+
+	public void setBackingField(VariableSymbol backingField)
+	{
+		this.backingField = backingField;
+	}
+
+	public VariableSymbol getBackingField()
+	{
+		return this.backingField;
 	}
 }
