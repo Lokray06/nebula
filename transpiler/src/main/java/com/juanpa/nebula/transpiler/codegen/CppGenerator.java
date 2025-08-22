@@ -1088,6 +1088,12 @@ public class CppGenerator implements ASTVisitor<String>
 		return null;
 	}
 
+	@Override
+	public String visitBreakStatement(BreakStatement statement)
+	{
+		return "";
+	}
+
 	/**
 	 * Visits an array creation expression (e.g., `new int[10]`) and generates
 	 * the C++ equivalent for a std::vector, like `std::vector<int>(10)`.

@@ -683,6 +683,10 @@ public class NebulaParser
 		{
 			return switchStatement();
 		}
+		if (match(TokenType.BREAK))
+		{ // <-- ADD THIS BLOCK
+			return breakStatement();
+		}
 		if (!modifiers.isEmpty())
 		{
 			errorReporter.report(peek().getLine(), peek().getColumn(), "Modifiers are only allowed on declarations (variables, fields, methods).");
@@ -1778,6 +1782,17 @@ public class NebulaParser
 		}
 		consume(TokenType.RIGHT_BRACE, "Expected '}' to close the switch statement.");
 		return new SwitchStatement(switchKeyword, switchExpr, cases, defaultBlock);
+	}
+
+	/**
+	 * Parses a break statement.
+	 * Grammar: `BREAK ;`
+	 */
+	private BreakStatement breakStatement() throws SyntaxError
+	{
+		Token breakKeyword = previous();
+		consume(TokenType.SEMICOLON, "Expected ';' after 'break'.");
+		return new BreakStatement(breakKeyword);
 	}
 
 	/**

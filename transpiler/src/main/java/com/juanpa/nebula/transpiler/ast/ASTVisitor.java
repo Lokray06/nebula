@@ -53,6 +53,8 @@ public interface ASTVisitor<R>
 
 	R visitSwitchStatement(SwitchStatement statement); // Added for SwitchStatement
 
+	R visitBreakStatement(BreakStatement statement); // <-- ADD THIS LINE
+
 	R visitArrayCreationExpression(ArrayCreationExpression expression);
 
 	R visitArrayInitializerExpression(ArrayInitializerExpression expression);

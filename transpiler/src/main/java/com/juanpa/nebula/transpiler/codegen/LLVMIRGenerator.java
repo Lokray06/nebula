@@ -16,11 +16,7 @@ import org.bytedeco.javacpp.Pointer;
 import org.bytedeco.javacpp.PointerPointer;
 import org.bytedeco.llvm.LLVM.*;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Stack;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import static org.bytedeco.llvm.global.LLVM.*;
@@ -37,6 +33,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 
 	// --- State Management ---
 	private final Stack<ScopeContext> scopes = new Stack<>();
+	private final Stack<LLVMBasicBlockRef> breakTargets = new Stack<>(); // <-- ADD THIS
 	private final Map<String, LLVMTypeRef> definedStructs = new HashMap<>();
 	private LLVMValueRef currentFunction;
 	private MethodSymbol currentMethodSymbol;
@@ -274,37 +271,39 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			{
 				result = LLVMInt1TypeInContext(context);
 			}
-			else if (nebulaType.equals(PrimitiveType.INT) || nebulaType.equals(PrimitiveType.INT32))
+			else if (nebulaType.equals(PrimitiveType.CHAR) || nebulaType.equals(PrimitiveType.CHAR32))
 			{
+				// Char is often widened to i32 for easier handling in C functions.
 				result = LLVMInt32TypeInContext(context);
 			}
-			// --- ADD THIS BLOCK ---
-			else if (nebulaType.equals(PrimitiveType.INT64) || nebulaType.equals(PrimitiveType.LONG))
+			else if (nebulaType.equals(PrimitiveType.CHAR16))
 			{
-				result = LLVMInt64TypeInContext(context);
+				result = LLVMInt16TypeInContext(context);
 			}
-			else if (nebulaType.equals(PrimitiveType.UINT64) || nebulaType.equals(PrimitiveType.ULONG))
-			{
-				result = LLVMInt64TypeInContext(context); // LLVM uses i64 for both signed and unsigned
-			}
-			// --- END OF FIX ---
-			else if (nebulaType.equals(PrimitiveType.BYTE))
+			else if (nebulaType.equals(PrimitiveType.INT8) || nebulaType.equals(PrimitiveType.BYTE) || nebulaType.equals(PrimitiveType.UINT8) || nebulaType.equals(PrimitiveType.UBYTE))
 			{
 				result = LLVMInt8TypeInContext(context);
 			}
-			else if (nebulaType.equals(PrimitiveType.DOUBLE))
+			else if (nebulaType.equals(PrimitiveType.INT16) || nebulaType.equals(PrimitiveType.SHORT) || nebulaType.equals(PrimitiveType.UINT16) || nebulaType.equals(PrimitiveType.USHORT))
 			{
-				result = LLVMDoubleTypeInContext(context);
+				result = LLVMInt16TypeInContext(context);
+			}
+			else if (nebulaType.equals(PrimitiveType.INT32) || nebulaType.equals(PrimitiveType.INT) || nebulaType.equals(PrimitiveType.UINT32) || nebulaType.equals(PrimitiveType.UINT))
+			{
+				result = LLVMInt32TypeInContext(context);
+			}
+			else if (nebulaType.equals(PrimitiveType.INT64) || nebulaType.equals(PrimitiveType.LONG) || nebulaType.equals(PrimitiveType.UINT64) || nebulaType.equals(PrimitiveType.ULONG))
+			{
+				result = LLVMInt64TypeInContext(context);
 			}
 			else if (nebulaType.equals(PrimitiveType.FLOAT))
 			{
 				result = LLVMFloatTypeInContext(context);
 			}
-			else
+			else if (nebulaType.equals(PrimitiveType.DOUBLE))
 			{
-				result = LLVMInt32TypeInContext(context); // Default fallback
+				result = LLVMDoubleTypeInContext(context);
 			}
-
 		}
 		else if (nebulaType instanceof ClassType)
 		{
@@ -322,11 +321,9 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			}
 			else
 			{
-				// THIS IS THE CORRECT DEFAULT FOR ALL HEAP-ALLOCATED CLASSES, INCLUDING STRING
 				Debug.log("-> Type '%s' is heap allocated. Using pointer type.", fqn);
 				result = LLVMPointerType(structType, 0); // Return a pointer to the struct
 			}
-
 		}
 		else if (nebulaType instanceof ArrayType)
 		{
@@ -585,14 +582,44 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		Type type = expression.getResolvedType();
 		Object value = expression.getValue();
 
-		if (type.equals(PrimitiveType.INT) || type.equals(PrimitiveType.INT32))
+		// --- Integer and Character Types ---
+		// Note: LLVM uses the same integer types (e.g., i8, i16, i32, i64) for both
+		// signed and unsigned values. The distinction comes from the instructions
+		// used to operate on them (e.g., sdiv vs. udiv). For constants, we just
+		// need to provide the correct bit pattern.
+
+		if (type.equals(PrimitiveType.INT8) || type.equals(PrimitiveType.BYTE) ||
+				type.equals(PrimitiveType.UINT8) || type.equals(PrimitiveType.UBYTE))
 		{
-			return LLVMConstInt(LLVMInt32TypeInContext(context), ((Number) value).longValue(), 1);
+			return LLVMConstInt(LLVMInt8TypeInContext(context), ((Number) value).longValue(), 1);
 		}
+		if (type.equals(PrimitiveType.INT16) || type.equals(PrimitiveType.SHORT) ||
+				type.equals(PrimitiveType.UINT16) || type.equals(PrimitiveType.USHORT) ||
+				type.equals(PrimitiveType.CHAR16))
+		{
+			return LLVMConstInt(LLVMInt16TypeInContext(context), ((Number) value).longValue(), 1);
+		}
+		if (type.equals(PrimitiveType.INT32) || type.equals(PrimitiveType.INT) ||
+				type.equals(PrimitiveType.UINT32) || type.equals(PrimitiveType.UINT) ||
+				type.equals(PrimitiveType.CHAR) || type.equals(PrimitiveType.CHAR32))
+		{
+			// Your existing logic treats 'char' as i32, so we'll keep that consistency.
+			long longVal = (value instanceof Character) ? (Character) value : ((Number) value).longValue();
+			return LLVMConstInt(LLVMInt32TypeInContext(context), longVal, 1);
+		}
+		if (type.equals(PrimitiveType.INT64) || type.equals(PrimitiveType.LONG) ||
+				type.equals(PrimitiveType.UINT64) || type.equals(PrimitiveType.ULONG))
+		{
+			return LLVMConstInt(LLVMInt64TypeInContext(context), ((Number) value).longValue(), 1);
+		}
+
+		// --- Boolean Type ---
 		if (type.equals(PrimitiveType.BOOL))
 		{
 			return LLVMConstInt(LLVMInt1TypeInContext(context), (Boolean) value ? 1 : 0, 0);
 		}
+
+		// --- Floating-Point Types ---
 		if (type.equals(PrimitiveType.DOUBLE))
 		{
 			return LLVMConstReal(LLVMDoubleTypeInContext(context), ((Number) value).doubleValue());
@@ -602,36 +629,27 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			return LLVMConstReal(LLVMFloatTypeInContext(context), ((Number) value).doubleValue());
 		}
 
+		// --- String Type ---
 		if (type instanceof ClassType && ((ClassType) type).getFqn().equals("nebula.core.String"))
 		{
 			String strValue = (String) value;
-
-			// --- START OF FIX ---
-			// Create a global C-string constant.
 			LLVMValueRef cString = LLVMBuildGlobalStringPtr(builder, strValue, ".str_literal");
-
-			// Find our runtime factory function.
 			LLVMValueRef factoryFunc = LLVMGetNamedFunction(module, "create_nebula_string");
-
-			// Call the factory to create a new NebulaString object on the heap.
 			PointerPointer<LLVMValueRef> args = new PointerPointer<>(1);
 			args.put(0, cString);
 			LLVMTypeRef factoryFuncType = LLVMGlobalGetValueType(factoryFunc);
-
-			// The factory returns a new object with a +1 reference count.
 			return LLVMBuildCall2(builder, factoryFuncType, factoryFunc, args, 1, "str_obj");
-			// --- END OF FIX ---
 		}
 
+		// --- Null Type ---
 		if (type.equals(NullType.INSTANCE))
 		{
-			LLVMTypeRef objectStructType = definedStructs.get("nebula.core.Object");
-			if (objectStructType != null)
-			{
-				return LLVMConstPointerNull(LLVMPointerType(objectStructType, 0));
-			}
+			// Return a generic i8* null pointer, which can be bitcast as needed.
 			return LLVMConstPointerNull(LLVMPointerType(LLVMInt8TypeInContext(context), 0));
 		}
+
+		// Fallback if no type matches
+		Debug.log("-> WARNING: Unhandled literal type in code generation: %s", type.getName());
 		return null;
 	}
 
@@ -996,38 +1014,12 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		String op = expression.getOperator().getLexeme();
 		Debug.log("Visiting AssignmentExpression: %s", op);
 		Debug.indent();
-
 		try
 		{
-			// --- FIX 1: Handle Stack Object Reassignment ---
-			Type targetType = expression.getTarget().getResolvedType();
-			if (op.equals("=") && isStackAllocated(targetType) && expression.getValue() instanceof NewExpression)
-			{
-				Debug.log("-> Detected reassignment of stack-allocated object.");
-
-				// 1. Get pointer to the existing stack object.
-				this.isLValueContext = true;
-				LLVMValueRef targetPtr = expression.getTarget().accept(this);
-				this.isLValueContext = false;
-
-				// 2. Destruct the old object's contents before overwriting it.
-				Symbol targetSymbol = ((IdentifierExpression) expression.getTarget()).getResolvedSymbol();
-				if (targetSymbol instanceof VariableSymbol)
-				{
-					destructStackObject((VariableSymbol) targetSymbol);
-				}
-
-				// 3. Re-use the existing stack allocation for the new object.
-				this.currentAllocaForStackObject = targetPtr;
-				LLVMValueRef result = expression.getValue().accept(this);
-				this.currentAllocaForStackObject = null;
-				return result;
-			}
-			// --- END OF FIX ---
-
 			Symbol resolvedSymbol = expression.getResolvedSymbol();
+			Type targetType = expression.getTarget().getResolvedType();
 
-			// --- FIX START: Handle Property Setters ---
+			// CASE 1: Property Setter (e.g., p.Health = 10) - This is a method call in disguise.
 			if (op.equals("=") && resolvedSymbol instanceof MethodSymbol)
 			{
 				MethodSymbol setterSymbol = (MethodSymbol) resolvedSymbol;
@@ -1039,10 +1031,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 					return null;
 				}
 				DotExpression targetDotExpr = (DotExpression) expression.getTarget();
-
-				// Get the object instance (e.g., 'p' in 'p.Health = value')
 				LLVMValueRef objectPtr = targetDotExpr.getLeft().accept(this);
-				// Get the value to assign
 				LLVMValueRef valueToAssign = expression.getValue().accept(this);
 
 				if (objectPtr == null || valueToAssign == null)
@@ -1051,28 +1040,52 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				}
 
 				LLVMValueRef setterFunc = LLVMGetNamedFunction(module, setterSymbol.getMangledName());
-				if (setterFunc.isNull())
-				{
-					Debug.log("-> FATAL: Could not find LLVM function for setter '%s'.", setterSymbol.getMangledName());
-					return null;
-				}
-				Type setterFuncNebType = setterSymbol.getType();
-				LLVMTypeRef setterFuncType = getLLVMType(setterFuncNebType);
-
-				// Build the argument list: (this, value)
+				LLVMTypeRef setterFuncType = LLVMGlobalGetValueType(setterFunc);
 				PointerPointer<LLVMValueRef> args = new PointerPointer<>(objectPtr, valueToAssign);
-
 				LLVMBuildCall2(builder, setterFuncType, setterFunc, args, 2, "");
 				return valueToAssign;
 			}
-			// --- FIX END ---
 
-			// CASE 2: This is a standard variable/field assignment.
-			Debug.log("-> Performing standard variable/field assignment.");
+			// CASE 2: Re-assignment to a stack-allocated VARIABLE (e.g., p = new Player())
+			// This requires destructing the old object before re-initializing.
+			if (op.equals("=") && expression.getTarget() instanceof IdentifierExpression && isStackAllocated(targetType) && expression.getValue() instanceof NewExpression)
+			{
+				Debug.log("-> Detected reassignment of stack-allocated object variable.");
+				this.isLValueContext = true;
+				LLVMValueRef targetPtr = expression.getTarget().accept(this);
+				this.isLValueContext = false;
+
+				Symbol targetSymbol = ((IdentifierExpression) expression.getTarget()).getResolvedSymbol();
+				if (targetSymbol instanceof VariableSymbol)
+				{
+					destructStackObject((VariableSymbol) targetSymbol);
+				}
+
+				this.currentAllocaForStackObject = targetPtr;
+				LLVMValueRef result = expression.getValue().accept(this);
+				this.currentAllocaForStackObject = null;
+				return result;
+			}
+
+			// CASE 3: Assignment to a stack-allocated ARRAY ELEMENT (e.g., users[i] = new Person())
+			// This is an in-place construction; we overwrite the memory.
+			if (op.equals("=") && expression.getTarget() instanceof ArrayAccessExpression && isStackAllocated(targetType) && expression.getValue() instanceof NewExpression)
+			{
+				Debug.log("-> Detected in-place construction for stack-allocated array element.");
+				this.isLValueContext = true;
+				LLVMValueRef targetPtr = expression.getTarget().accept(this); // Gets pointer to the array element
+				this.isLValueContext = false;
+
+				this.currentAllocaForStackObject = targetPtr;
+				LLVMValueRef result = expression.getValue().accept(this); // visitNewExpression will use the pointer
+				this.currentAllocaForStackObject = null;
+				return result; // The 'new' expression returns the pointer, which is what an assignment should return.
+			}
+
+			// CASE 4: All other assignments (primitives, heap pointers, compound assignments)
 			this.isLValueContext = true;
 			LLVMValueRef targetPtr = expression.getTarget().accept(this);
 			this.isLValueContext = false;
-
 			if (targetPtr == null)
 			{
 				return null;
@@ -1084,60 +1097,28 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				return null;
 			}
 
-			LLVMValueRef finalValue;
-
 			if (op.equals("="))
 			{
-				// --- START OF FIX: Evaluate value only once ---
-				LLVMValueRef newValue = expression.getValue().accept(this); // Evaluate the new value *once*
-
-				if (isHeapAllocated(expression.getTarget().getResolvedType()))
+				if (isHeapAllocated(targetType))
 				{
 					buildRetain(valueToAssign);
-
-					// --- THE CRITICAL FIX ---
-					// If we are inside a constructor, we are initializing, not re-assigning.
-					// There is no "old value" to release because the memory is uninitialized.
-					if (currentMethodSymbol != null && currentMethodSymbol.isConstructor())
+					if (currentMethodSymbol == null || !currentMethodSymbol.isConstructor())
 					{
-						LLVMBuildStore(builder, valueToAssign, targetPtr);
-					}
-					else
-					{
-						// This is a regular assignment, so we must release the old value.
-						LLVMTypeRef valueType = getLLVMType(expression.getTarget().getResolvedType());
-						LLVMValueRef oldValue = LLVMBuildLoad2(builder, valueType, targetPtr, "old_val");
-						LLVMBuildStore(builder, valueToAssign, targetPtr);
+						LLVMTypeRef valueLLVMType = getLLVMType(targetType);
+						LLVMValueRef oldValue = LLVMBuildLoad2(builder, valueLLVMType, targetPtr, "old_val");
 						buildRelease(oldValue);
 					}
-					// --- END OF FIX ---
-
-					return valueToAssign;
 				}
-				else
-				{
-					LLVMBuildStore(builder, newValue, targetPtr);
-					return newValue;
-				}
-				// --- END OF FIX ---
+				LLVMBuildStore(builder, valueToAssign, targetPtr);
+				return valueToAssign;
 			}
 			else
 			{
-				// Logic for compound assignments (+=, -=, etc.)
-				// --- FIX START ---
-				// The targetPtr is the address of the variable (e.g., i32*).
-				// The valueType is the type stored at that address (e.g., i32).
-				LLVMTypeRef valueType = getLLVMType(expression.getTarget().getResolvedType());
-				if (expression.getResolvedType().isReferenceType())
-				{
-					// For pointers (like strings), we should be loading the pointer value.
-					valueType = LLVMGetElementType(LLVMTypeOf(targetPtr));
-				}
-				// --- FIX END ---
-
+				// Compound assignment logic
+				LLVMTypeRef valueType = getLLVMType(targetType);
 				LLVMValueRef currentValue = LLVMBuildLoad2(builder, valueType, targetPtr, "loadtmp");
 				String baseOp = op.substring(0, op.length() - 1);
-				boolean isFloat = expression.getTarget().getResolvedType().isFloatingPoint();
+				boolean isFloat = targetType.isFloatingPoint();
 
 				// --- START OF FIX: NUMERIC PROMOTION ---
 				LLVMTypeRef leftLLVMType = LLVMTypeOf(currentValue);
@@ -1149,7 +1130,6 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 					Debug.log("-> Performing integer promotion for compound assignment.");
 					int leftWidth = LLVMGetIntTypeWidth(leftLLVMType);
 					int rightWidth = LLVMGetIntTypeWidth(rightLLVMType);
-
 					if (leftWidth > rightWidth)
 					{
 						Debug.log("--> Promoting right operand from i%d to i%d.", rightWidth, leftWidth);
@@ -1161,9 +1141,8 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 						currentValue = LLVMBuildSExt(builder, currentValue, rightLLVMType, "promoted_lhs");
 					}
 				}
-				// --- END OF FIX ---
 
-				finalValue = switch (baseOp)
+				LLVMValueRef finalValue = switch (baseOp)
 				{
 					case "+" ->
 							isFloat ? LLVMBuildFAdd(builder, currentValue, valueToAssign, "faddtmp") : LLVMBuildAdd(builder, currentValue, valueToAssign, "addtmp");
@@ -1179,17 +1158,16 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 					case "^" -> LLVMBuildXor(builder, currentValue, valueToAssign, "xortmp");
 					case "<<" -> LLVMBuildShl(builder, currentValue, valueToAssign, "shltmp");
 					case ">>" -> LLVMBuildAShr(builder, currentValue, valueToAssign, "ashrtmp");
-					// Power operator (**) needs special handling if you support it for compound assignment
 					default -> null;
 				};
+
+				if (finalValue != null)
+				{
+					LLVMBuildStore(builder, finalValue, targetPtr);
+				}
+				return finalValue;
 			}
 
-			if (finalValue != null)
-			{
-				LLVMBuildStore(builder, finalValue, targetPtr);
-			}
-
-			return finalValue;
 		}
 		finally
 		{
@@ -1419,11 +1397,73 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		Debug.indent();
 		try
 		{
-			// Step 1: Get a pointer to the object on the left of the '.'
+			Symbol resolvedSymbol = expression.getResolvedSymbol();
+			if (resolvedSymbol == null)
+			{
+				Debug.log("-> ERROR: DotExpression has no resolved symbol for member '%s'.", memberName);
+				return null;
+			}
+
+			if (resolvedSymbol instanceof VariableSymbol && resolvedSymbol.isStatic())
+			{
+				Debug.log("-> Detected static field access: %s", memberName);
+				VariableSymbol staticField = (VariableSymbol) resolvedSymbol;
+				Object value = staticField.getConstantValue();
+				Type type = staticField.getType();
+
+				if (value == null)
+				{
+					Debug.log("-> Unhandled non-constant static field.");
+					return null;
+				}
+
+				if (type.equals(PrimitiveType.INT) || type.equals(PrimitiveType.INT32))
+				{
+					return LLVMConstInt(LLVMInt32TypeInContext(context), ((Number) value).longValue(), 1);
+				}
+				if (type.equals(PrimitiveType.ULONG) || type.equals(PrimitiveType.UINT64) || type.equals(PrimitiveType.LONG) || type.equals(PrimitiveType.INT64))
+				{
+					return LLVMConstInt(LLVMInt64TypeInContext(context), ((Number) value).longValue(), 0);
+				}
+				if (type.equals(PrimitiveType.DOUBLE))
+				{
+					return LLVMConstReal(LLVMDoubleTypeInContext(context), ((Number) value).doubleValue());
+				}
+
+				Debug.log("-> Unhandled static primitive type for constant generation.");
+				return null;
+			}
+
 			LLVMValueRef objectRef = expression.getLeft().accept(this);
 			if (objectRef == null)
 			{
+				Debug.log("-> ERROR: objectRef is null for instance member access '%s'", memberName);
 				return null;
+			}
+
+			Type leftType = expression.getLeft().getResolvedType();
+			if (leftType instanceof ArrayType)
+			{
+				if (memberName.equals("size"))
+				{
+					Debug.log("-> Detected array .size property access.");
+					LLVMTypeRef i32PtrType = LLVMPointerType(LLVMInt32TypeInContext(context), 0);
+					LLVMValueRef castedPtr = LLVMBuildBitCast(builder, objectRef, i32PtrType, "size_ptr_cast");
+
+					// --- START OF FIX ---
+					LLVMValueRef index = LLVMConstInt(LLVMInt32TypeInContext(context), -1, 1);
+					PointerPointer<LLVMValueRef> indices = new PointerPointer<>(1);
+					indices.put(0, index);
+					// --- END OF FIX ---
+
+					LLVMValueRef sizePtr = LLVMBuildGEP2(builder, LLVMInt32TypeInContext(context), castedPtr, indices, 1, "size_addr");
+					return LLVMBuildLoad2(builder, LLVMInt32TypeInContext(context), sizePtr, "array_size");
+				}
+				else
+				{
+					Debug.log("-> ERROR: Member '%s' not found for array type. Only '.size' is supported.", memberName);
+					return null;
+				}
 			}
 
 			LLVMValueRef objectPtr;
@@ -1433,12 +1473,11 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			}
 			else
 			{
-				objectPtr = LLVMBuildAlloca(builder, LLVMTypeOf(objectRef), "dot_lhs_temp");
+				objectPtr = LLVMBuildAlloca(builder, LLVMTypeOf(objectRef), "dot_lhs_temp_ptr");
 				LLVMBuildStore(builder, objectRef, objectPtr);
 			}
 
-			Symbol resolvedSymbol = expression.getResolvedSymbol();
-			ClassType classType = (ClassType) expression.getLeft().getResolvedType();
+			ClassType classType = (ClassType) leftType;
 			ClassSymbol classSymbol = classType.classSymbol;
 			LLVMTypeRef structType = definedStructs.get(classSymbol.getFqn());
 
@@ -1457,6 +1496,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				}
 				if (fieldIndex == -1)
 				{
+					Debug.log("-> ERROR: Could not find field index for l-value '%s'", memberName);
 					return null;
 				}
 				return LLVMBuildStructGEP2(builder, structType, objectPtr, fieldIndex, memberName + "_ptr");
@@ -1465,18 +1505,9 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			{
 				// R-VALUE CONTEXT: We are reading a value.
 				Debug.log("-> In r-value context, generating a read operation.");
-				Symbol memberSymbol = expression.getResolvedSymbol();
-				ClassType ownerType = (ClassType) expression.getLeft().getResolvedType();
-
-				// --- START OF FIX ---
-
-				// CASE 1: The member is a method, like .length
-				if (memberSymbol instanceof MethodSymbol method)
+				if (resolvedSymbol instanceof MethodSymbol method)
 				{
-					String mangledName = method.getMangledName();
-
-					// Subcase 1.1: Special handling for string.length
-					if (mangledName.equals("length") && ownerType.getFqn().equals("nebula.core.String"))
+					if (method.getName().equals("length") && classType.getFqn().equals("nebula.core.String"))
 					{
 						Debug.log("--> Special case: redirecting to runtime function @string_length");
 						LLVMValueRef func = LLVMGetNamedFunction(module, "string_length");
@@ -1493,16 +1524,11 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 
 						return LLVMBuildCall2(builder, funcType, func, args, 1, "length_val");
 					}
-
-					// Subcase 1.2: A regular method is being accessed for a later call (e.g., in `obj.myMethod()`)
-					// We don't generate a call here. The CallExpression visitor will handle it.
-					// We just need to return the object pointer ('this') for that future call.
 					Debug.log("--> Member is a standard method. Returning object pointer for call context.");
 					return objectPtr;
 				}
 
-				// CASE 2: The member is a property with a getter
-				if (memberSymbol instanceof PropertySymbol property)
+				if (resolvedSymbol instanceof PropertySymbol property)
 				{
 					Debug.log("--> Member is a property: %s", property.getName());
 					MethodSymbol getter = property.getGetter();
@@ -1518,33 +1544,26 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 						}
 
 						LLVMTypeRef funcType = LLVMGlobalGetValueType(func);
-						// Use the safe, two-step PointerPointer creation
 						PointerPointer<LLVMValueRef> args = new PointerPointer<>(1);
-						args.put(0, objectPtr);
-
+						args.put(objectPtr);
 						return LLVMBuildCall2(builder, funcType, func, args, 1, property.getName() + "_val");
 					}
 				}
 
-				// CASE 3: The member is a simple field
-				if (memberSymbol instanceof VariableSymbol)
+				if (resolvedSymbol instanceof VariableSymbol)
 				{
 					Debug.log("--> Member is a field: %s", memberName);
-					classSymbol = ownerType.classSymbol;
 					int fieldIndex = classSymbol.getFieldIndex(memberName);
 					if (fieldIndex == -1)
 					{
 						return null;
 					}
 					LLVMValueRef fieldPtr = LLVMBuildStructGEP2(builder, structType, objectPtr, fieldIndex, memberName + "_ptr");
-					LLVMTypeRef fieldLLVMType = getLLVMType(memberSymbol.getType());
+					LLVMTypeRef fieldLLVMType = getLLVMType(resolvedSymbol.getType());
 					return LLVMBuildLoad2(builder, fieldLLVMType, fieldPtr, memberName + "_val");
 				}
-
-				Debug.log("-> Unhandled r-value member access for '%s'. Returning object pointer.", memberName);
+				Debug.log("-> Unhandled r-value member access for '%s'.", memberName);
 				return objectPtr;
-
-				// --- END OF FIX ---
 			}
 		}
 		finally
@@ -1698,8 +1717,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		Debug.indent();
 		try
 		{
-			// 1. Get the pointer to the stack variable that holds the array pointer (e.g., address of 'resourcePool').
-			// This is a pointer-to-a-pointer, like %SharedResource***.
+			// 1. Get the pointer to the stack variable that holds the array pointer (e.g., address of 'words').
 			this.isLValueContext = true; // Ensure we get the pointer to the variable itself
 			LLVMValueRef arrayAlloca = expression.getArray().accept(this);
 			this.isLValueContext = false; // Reset context
@@ -1709,10 +1727,14 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				return null;
 			}
 
+			// --- START OF FIX ---
 			// 2. Load the actual array pointer from the stack variable.
-			// This gives us the pointer to the array data on the heap (e.g., %SharedResource**).
-			LLVMTypeRef arrayPtrType = LLVMGetElementType(LLVMTypeOf(arrayAlloca));
+			// We robustly get the array's type from the AST instead of inferring it.
+			ArrayType arrayNebulaType = (ArrayType) expression.getArray().getResolvedType();
+			LLVMTypeRef arrayPtrType = getLLVMType(arrayNebulaType);
 			LLVMValueRef arrayPtr = LLVMBuildLoad2(builder, arrayPtrType, arrayAlloca, "array_ptr");
+			// --- END OF FIX ---
+
 
 			// 3. Get the index value.
 			LLVMValueRef indexVal = expression.getIndex().accept(this);
@@ -1722,28 +1744,16 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				return null;
 			}
 
-			// 4. Create the GEP instruction.
-			// Explicitly create the PointerPointer for the GEP indices to avoid ambiguity.
+			// 4. Create the GEP instruction to find the element's address.
 			PointerPointer<LLVMValueRef> indices = new PointerPointer<>(1);
 			indices.put(0, indexVal);
 
-			// --- START OF FIX ---
-			// Robustly determine the element type from the Nebula AST's resolved type information
-			// instead of relying on LLVMTypeOf on an intermediate value.
-			ArrayType arrayNebulaType = (ArrayType) expression.getArray().getResolvedType();
+			// The GEP instruction needs the type of the *elements* to calculate the offset.
 			Type elementNebulaType = arrayNebulaType.getElementType();
-
-			// getLLVMType will correctly return the LLVM type for an element in the array.
-			// For an array of heap-allocated objects like SharedResource[], this will correctly
-			// resolve to a pointer type (%SharedResource*). For an array of primitives like int[],
-			// it will resolve to a value type (i32).
 			LLVMTypeRef elementLLVMType = getLLVMType(elementNebulaType);
-			// --- END OF FIX ---
 
-			// Now, build the GEP with the reliably-determined element type.
 			LLVMValueRef elementPtr = LLVMBuildGEP2(builder, elementLLVMType, arrayPtr, indices, 1, "elem_ptr");
 			Debug.log("-> Generated GEP instruction to find element pointer.");
-
 
 			// 5. Return either the pointer (for assignments) or the loaded value.
 			if (isLValueContext)
@@ -1754,7 +1764,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			else
 			{
 				Debug.log("-> In r-value context. Loading value from array element pointer.");
-				// Note: The type of the value we load is the same as the element type of the array.
+				// The type of the value we load is the element type of the array.
 				return LLVMBuildLoad2(builder, elementLLVMType, elementPtr, "elem_val");
 			}
 		}
@@ -1943,21 +1953,109 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		return null;
 	}
 
-	//TODO: Implement
 	@Override
 	public LLVMValueRef visitIfStatement(IfStatement statement)
 	{
-		return null;
+		Debug.log("Visiting IfStatement");
+		Debug.indent();
+
+		// 1. Evaluate the condition expression.
+		LLVMValueRef conditionValue = statement.getCondition().accept(this);
+		if (conditionValue == null)
+		{
+			Debug.log("-> ERROR: Condition expression is null.");
+			Debug.dedent();
+			return null;
+		}
+
+		// Ensure the condition is a boolean (i1) by comparing it to zero if it's an integer.
+		LLVMValueRef zero = LLVMConstInt(LLVMTypeOf(conditionValue), 0, 0);
+		LLVMValueRef condition = LLVMBuildICmp(builder, LLVMIntNE, conditionValue, zero, "if_cond");
+
+		// 2. Create the basic blocks for the branches.
+		LLVMBasicBlockRef thenBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "if_then");
+		LLVMBasicBlockRef mergeBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "if_merge");
+		LLVMBasicBlockRef elseBlock = statement.getElseBranch() != null ? LLVMAppendBasicBlockInContext(context, currentFunction, "if_else") : mergeBlock;
+
+		// 3. Create the conditional branch instruction.
+		LLVMBuildCondBr(builder, condition, thenBlock, elseBlock);
+
+		// 4. Populate the "then" block.
+		LLVMPositionBuilderAtEnd(builder, thenBlock);
+		statement.getThenBranch().accept(this);
+		// After the 'then' block, unconditionally jump to the merge block.
+		if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)) == null)
+		{
+			LLVMBuildBr(builder, mergeBlock);
+		}
+
+		// 5. Populate the "else" block, if it exists.
+		if (statement.getElseBranch() != null)
+		{
+			LLVMPositionBuilderAtEnd(builder, elseBlock);
+			statement.getElseBranch().accept(this);
+			// After the 'else' block, also jump to the merge block.
+			if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)) == null)
+			{
+				LLVMBuildBr(builder, mergeBlock);
+			}
+		}
+
+		// 6. Position the builder at the merge block for subsequent code.
+		LLVMPositionBuilderAtEnd(builder, mergeBlock);
+
+		Debug.dedent();
+		return null; // Statements do not return a value.
 	}
 
-	//TODO: Implement
 	@Override
 	public LLVMValueRef visitWhileStatement(WhileStatement statement)
 	{
-		return null;
+		Debug.log("Visiting WhileStatement");
+		Debug.indent();
+
+		// 1. Create the basic blocks for the loop.
+		LLVMBasicBlockRef conditionBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "while_cond");
+		LLVMBasicBlockRef bodyBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "while_body");
+		LLVMBasicBlockRef afterBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "while_after");
+
+		breakTargets.push(afterBlock); // <-- ADD THIS: Register the exit block for 'break'
+
+		// 2. From the current block, jump to the condition check to start the loop.
+		LLVMBuildBr(builder, conditionBlock);
+
+		// 3. Populate the condition block.
+		LLVMPositionBuilderAtEnd(builder, conditionBlock);
+		LLVMValueRef conditionValue = statement.getCondition().accept(this);
+		if (conditionValue == null)
+		{
+			Debug.log("-> ERROR: Condition expression is null.");
+			Debug.dedent();
+			return null;
+		}
+		// Convert condition to a boolean (i1).
+		LLVMValueRef zero = LLVMConstInt(LLVMTypeOf(conditionValue), 0, 0);
+		LLVMValueRef condition = LLVMBuildICmp(builder, LLVMIntNE, conditionValue, zero, "while_cond_bool");
+
+		// Branch to the body if true, or exit the loop if false.
+		LLVMBuildCondBr(builder, condition, bodyBlock, afterBlock);
+
+		// 4. Populate the loop body block.
+		LLVMPositionBuilderAtEnd(builder, bodyBlock);
+		statement.getBody().accept(this);
+
+		// After the body, unconditionally jump back to the condition check.
+		LLVMBuildBr(builder, conditionBlock);
+
+		// 5. Position the builder at the after block for subsequent code.
+		LLVMPositionBuilderAtEnd(builder, afterBlock);
+
+		breakTargets.pop(); // <-- ADD THIS: Unregister the exit block
+
+		Debug.dedent();
+		return null; // Statements do not return a value.
 	}
 
-	//TODO: Implement
 	@Override
 	public LLVMValueRef visitForStatement(ForStatement statement)
 	{
@@ -1970,6 +2068,8 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		LLVMBasicBlockRef loopConditionBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "loop_condition");
 		LLVMBasicBlockRef loopBodyBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "loop_body");
 		LLVMBasicBlockRef loopAfterBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "loop_after");
+
+		breakTargets.push(loopAfterBlock); // <-- ADD THIS: Register the exit block
 
 		// Branch from the current block to the loop entry block
 		LLVMBuildBr(builder, loopEntryBlock);
@@ -2003,24 +2103,231 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		// --- Loop Exit ---
 		LLVMPositionBuilderAtEnd(builder, loopAfterBlock);
 
+		breakTargets.pop(); // <-- ADD THIS: Unregister the exit block
+
 		exitScope();
 		Debug.dedent();
 		Debug.log("LLVM IR for 'for' loop generated.");
 		return null; // For a statement, we don't return a value
 	}
 
-	//TODO: Implement
 	@Override
 	public LLVMValueRef visitForEachStatement(ForEachStatement statement)
 	{
-		return null;
+		Debug.log("Visiting ForEachStatement");
+		Debug.indent();
+
+		// A foreach loop is compiled as a standard index-based for loop.
+		// foreach (T item in collection) { ... }
+		// becomes:
+		// for (int i = 0; i < collection.size; i++) { T item = collection[i]; ... }
+
+		enterScope();
+
+		// 1. Create the basic blocks for the loop structure.
+		LLVMBasicBlockRef preheaderBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "foreach_preheader");
+		LLVMBasicBlockRef conditionBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "foreach_cond");
+		LLVMBasicBlockRef bodyBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "foreach_body");
+		LLVMBasicBlockRef afterBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "foreach_after");
+
+		breakTargets.push(afterBlock); // <-- ADD THIS: Register the exit block
+
+		// Branch from the current block into the loop's preheader.
+		LLVMBuildBr(builder, preheaderBlock);
+
+		// 2. Preheader Block: This runs once to set up the loop.
+		LLVMPositionBuilderAtEnd(builder, preheaderBlock);
+
+		LLVMValueRef collectionPtr = statement.getCollection().accept(this);
+		LLVMTypeRef i32Type = LLVMInt32TypeInContext(context);
+
+		// Get the array's size, which is stored in the header right before the data pointer.
+		LLVMTypeRef i32PtrType = LLVMPointerType(i32Type, 0);
+		LLVMValueRef castedPtr = LLVMBuildBitCast(builder, collectionPtr, i32PtrType, "size_ptr_cast");
+		LLVMValueRef negOne = LLVMConstInt(i32Type, -1, 1); // Signed -1 for the GEP offset
+		PointerPointer<LLVMValueRef> sizeIndices = new PointerPointer<>(1);
+		sizeIndices.put(0, negOne);
+		LLVMValueRef sizePtr = LLVMBuildGEP2(builder, i32Type, castedPtr, sizeIndices, 1, "size_addr");
+		LLVMValueRef arraySize = LLVMBuildLoad2(builder, i32Type, sizePtr, "array_size");
+
+		// Create the index variable 'i' on the stack and initialize it to 0.
+		LLVMValueRef indexAlloca = LLVMBuildAlloca(builder, i32Type, "foreach_idx");
+		LLVMBuildStore(builder, LLVMConstInt(i32Type, 0, 0), indexAlloca);
+		LLVMBuildBr(builder, conditionBlock);
+
+		// 3. Condition Block: Checks 'i < arraySize' before each iteration.
+		LLVMPositionBuilderAtEnd(builder, conditionBlock);
+		LLVMValueRef currentIndex = LLVMBuildLoad2(builder, i32Type, indexAlloca, "current_idx");
+		LLVMValueRef condition = LLVMBuildICmp(builder, LLVMIntSLT, currentIndex, arraySize, "loop_cond"); // SLT = Signed Less Than
+		LLVMBuildCondBr(builder, condition, bodyBlock, afterBlock);
+
+		// 4. Loop Body Block: Executes the user's code.
+		LLVMPositionBuilderAtEnd(builder, bodyBlock);
+
+		// Get the pre-resolved symbol for the loop variable using our new method.
+		VariableSymbol loopVarSymbol = statement.getResolvedLoopVariable();
+		if (loopVarSymbol == null)
+		{
+			Debug.log("-> FATAL: No resolved symbol for foreach loop variable. Semantic analysis may have failed.");
+			exitScope();
+			Debug.dedent();
+			return null;
+		}
+
+		// Get the element type from the collection's resolved type.
+		ArrayType collectionNebulaType = (ArrayType) statement.getCollection().getResolvedType();
+		Type elementNebulaType = collectionNebulaType.getElementType();
+		LLVMTypeRef elementLLVMType = getLLVMType(elementNebulaType);
+
+		// Get the element at the current index: collection[i].
+		PointerPointer<LLVMValueRef> elementIndices = new PointerPointer<>(1);
+		elementIndices.put(0, currentIndex);
+		LLVMValueRef elementPtr = LLVMBuildGEP2(builder, elementLLVMType, collectionPtr, elementIndices, 1, "elem_ptr");
+		LLVMValueRef elementVal = LLVMBuildLoad2(builder, elementLLVMType, elementPtr, "elem_val");
+
+		// Create the loop variable (e.g., 'p') and store the retrieved element in it.
+		LLVMTypeRef loopVarLLVMType = getLLVMType(loopVarSymbol.getType());
+		LLVMValueRef loopVarAlloca = LLVMBuildAlloca(builder, loopVarLLVMType, loopVarSymbol.getName());
+		scopes.peek().variables.put(loopVarSymbol.getName(), loopVarAlloca);
+		LLVMBuildStore(builder, elementVal, loopVarAlloca);
+
+		// Generate the code for the user-defined loop body.
+		statement.getBody().accept(this);
+
+		// Increment the index: i = i + 1.
+		LLVMValueRef one = LLVMConstInt(i32Type, 1, 0);
+		LLVMValueRef nextIndex = LLVMBuildAdd(builder, currentIndex, one, "next_idx");
+		LLVMBuildStore(builder, nextIndex, indexAlloca);
+		LLVMBuildBr(builder, conditionBlock);
+
+		// 5. After Loop Block: Execution continues here when the loop is done.
+		LLVMPositionBuilderAtEnd(builder, afterBlock);
+
+		breakTargets.pop(); // <-- ADD THIS: Unregister the exit block
+
+		exitScope();
+		Debug.dedent();
+		return null; // Statements do not return a value.
 	}
 
 	//TODO: Implement
 	@Override
 	public LLVMValueRef visitSwitchStatement(SwitchStatement statement)
 	{
+		Debug.log("Visiting SwitchStatement");
+		Debug.indent();
+
+		// 1. Evaluate the expression to switch on.
+		LLVMValueRef switchValue = statement.getSwitchExpression().accept(this);
+
+		// 2. Create the essential basic blocks.
+		LLVMBasicBlockRef defaultBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "switch_default");
+		LLVMBasicBlockRef postSwitchBlock = LLVMAppendBasicBlockInContext(context, currentFunction, "switch_after");
+
+		// Add the post-switch block as the target for any 'break' statements.
+		breakTargets.push(postSwitchBlock);
+
+		// Create a map to link AST case nodes to their LLVM basic blocks.
+		Map<SwitchCase, LLVMBasicBlockRef> caseBlocks = new LinkedHashMap<>(); // Use LinkedHashMap to preserve order for fall-through
+		for (SwitchCase caseNode : statement.getCases())
+		{
+			caseBlocks.put(caseNode, LLVMAppendBasicBlockInContext(context, currentFunction, "switch_case"));
+		}
+
+		// 3. Create the main 'switch' instruction.
+		LLVMValueRef switchInst = LLVMBuildSwitch(builder, switchValue, defaultBlock, statement.getCases().size());
+
+		// 4. Add each case value and its destination block to the instruction.
+		for (SwitchCase caseNode : statement.getCases())
+		{
+			LLVMValueRef caseValue = caseNode.getValue().accept(this); // Assumes case values are constant literals
+			LLVMBasicBlockRef caseDestinationBlock = caseBlocks.get(caseNode);
+			LLVMAddCase(switchInst, caseValue, caseDestinationBlock);
+		}
+
+		// 5. Populate the case blocks with their code and handle fall-through.
+		List<SwitchCase> caseList = statement.getCases();
+		for (int i = 0; i < caseList.size(); i++)
+		{
+			SwitchCase currentCase = caseList.get(i);
+			LLVMBasicBlockRef currentBlock = caseBlocks.get(currentCase);
+
+			LLVMPositionBuilderAtEnd(builder, currentBlock);
+
+			// This will visit all statements, including our new BreakStatement
+			currentCase.accept(this);
+
+			// Check for fall-through. If the block doesn't already have a terminator
+			// (from a 'break' or 'return'), branch to the next case or the default.
+			if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)) == null)
+			{
+				if (i + 1 < caseList.size())
+				{
+					// Fall through to the next case.
+					LLVMBasicBlockRef nextBlock = caseBlocks.get(caseList.get(i + 1));
+					LLVMBuildBr(builder, nextBlock);
+				}
+				else
+				{
+					// Last case falls through to the default block.
+					LLVMBuildBr(builder, defaultBlock);
+				}
+			}
+		}
+
+		// 6. Populate the default block.
+		LLVMPositionBuilderAtEnd(builder, defaultBlock);
+		if (statement.getDefaultBlock() != null)
+		{
+			statement.getDefaultBlock().accept(this);
+		}
+		// The default block always falls through to the end of the switch if not terminated.
+		if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)) == null)
+		{
+			LLVMBuildBr(builder, postSwitchBlock);
+		}
+
+		// 7. Cleanup and continue.
+		LLVMPositionBuilderAtEnd(builder, postSwitchBlock);
+		breakTargets.pop(); // Remove the break target for this switch.
+
+		Debug.dedent();
+		return null; // Statements do not return a value.
+	}
+
+	//TODO: Implement
+	@Override
+	public LLVMValueRef visitSwitchCase(SwitchCase switchCase)
+	{
+		// This visitor's job is simply to generate the code for the statements
+		// inside the case body. The branching logic is handled by visitSwitchStatement.
+		for (Statement stmt : switchCase.getBody())
+		{
+			stmt.accept(this);
+
+			// If a statement creates a terminator (like break or return), stop processing
+			// further statements in this block as they are unreachable.
+			if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)) != null)
+			{
+				break;
+			}
+		}
 		return null;
+	}
+
+	// And finally, the implementation for the new BreakStatement visitor
+	@Override
+	public LLVMValueRef visitBreakStatement(BreakStatement statement)
+	{
+		Debug.log("Visiting BreakStatement");
+		if (breakTargets.isEmpty())
+		{
+			// This is a semantic error that the analyzer should have caught.
+			Debug.log("-> FATAL: 'break' statement outside of a loop or switch.");
+			return null;
+		}
+		// Generate an unconditional branch to the current break target.
+		return LLVMBuildBr(builder, breakTargets.peek());
 	}
 
 	@Override
@@ -2030,45 +2337,43 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		Debug.indent();
 		try
 		{
-			ArrayType arrayType = (ArrayType) expression.getResolvedType();
-			Type nebulaElementType = arrayType.getElementType();
-			LLVMTypeRef llvmElementType;
-
-			// Determine the type of elements the array will hold.
-			// For objects, the array holds POINTERS. For primitives, it holds VALUES.
-			if (nebulaElementType instanceof ClassType)
-			{
-				LLVMTypeRef structType = definedStructs.get(((ClassType) nebulaElementType).getFqn());
-				llvmElementType = LLVMPointerType(structType, 0);
-			}
-			else
-			{
-				llvmElementType = getLLVMType(nebulaElementType);
-			}
-
+			Type nebulaElementType = ((ArrayType) expression.getResolvedType()).getElementType();
+			LLVMTypeRef llvmElementType = getLLVMType(nebulaElementType);
 			LLVMValueRef sizeValue = expression.getSizeExpression().accept(this);
 
-			// --- START OF FIX ---
-			// 1. Get the size of a single element using the correct LLVMSizeOf function.
-			// It takes only the type and returns an LLVM constant value (an i64).
-			LLVMValueRef elementSizeVal = LLVMSizeOf(llvmElementType);
+			// 1. Calculate total size: sizeof(int32_t for size) + (num_elements * sizeof(element))
+			LLVMValueRef elementSize = LLVMSizeOf(llvmElementType);
+			LLVMValueRef sizeValue64 = LLVMBuildSExt(builder, sizeValue, LLVMInt64TypeInContext(context), "size_as_i64");
+			LLVMValueRef dataSize = LLVMBuildMul(builder, sizeValue64, elementSize, "data_size");
+			LLVMValueRef headerSize = LLVMSizeOf(LLVMInt32TypeInContext(context));
+			LLVMValueRef totalSize = LLVMBuildAdd(builder, headerSize, dataSize, "total_array_size");
 
-			// 2. Multiply the element size by the number of elements to get the total allocation size.
-			// We may need to cast the sizeValue (which is likely i32) to i64 to match the malloc parameter.
-			LLVMValueRef sizeValue64 = LLVMBuildSExt(builder, sizeValue, LLVMInt64TypeInContext(context), "size_to_i64");
-			LLVMValueRef totalSize = LLVMBuildMul(builder, sizeValue64, elementSizeVal, "total_array_size");
-			// --- END OF FIX ---
-
-			// 3. Allocate memory on the heap
+			// 2. Allocate memory for the header and the data.
+			// --- START OF FIX: Correctly construct the argument list for malloc ---
 			PointerPointer<LLVMValueRef> mallocArgs = new PointerPointer<>(1);
 			mallocArgs.put(0, totalSize);
-
+			// --- END OF FIX ---
 			LLVMTypeRef mallocFuncType = LLVMGlobalGetValueType(mallocFunc);
-			LLVMValueRef rawPtr = LLVMBuildCall2(builder, mallocFuncType, mallocFunc, mallocArgs, 1, "raw_array_ptr");
+			LLVMValueRef rawPtr = LLVMBuildCall2(builder, mallocFuncType, mallocFunc, mallocArgs, 1, "raw_array_mem");
 
-			// 4. Cast the raw pointer to the correct typed pointer (e.g., ptr to i32, ptr to %Person*, etc.)
+
+			// 3. Store the size at the beginning of the allocated block.
+			LLVMTypeRef i32PtrType = LLVMPointerType(LLVMInt32TypeInContext(context), 0);
+			LLVMValueRef sizePtr = LLVMBuildBitCast(builder, rawPtr, i32PtrType, "size_ptr");
+			LLVMBuildStore(builder, sizeValue, sizePtr);
+
+			// 4. Get a pointer to the data section (right after the size).
+			// Explicitly create the PointerPointer to avoid constructor ambiguity.
+			LLVMValueRef index = LLVMConstInt(LLVMInt32TypeInContext(context), 1, 0);
+			PointerPointer<LLVMValueRef> indices = new PointerPointer<>(1);
+			indices.put(0, index);
+			LLVMValueRef dataPtr = LLVMBuildGEP2(builder, LLVMInt32TypeInContext(context), sizePtr, indices, 1, "data_section_ptr");
+
+			// 5. Cast the data pointer to the correct array type and return it.
+			// This is the pointer the Nebula program will use.
 			LLVMTypeRef arrayPtrType = LLVMPointerType(llvmElementType, 0);
-			return LLVMBuildBitCast(builder, rawPtr, arrayPtrType, "typed_array_ptr");
+			return LLVMBuildBitCast(builder, dataPtr, arrayPtrType, "typed_array_ptr");
+
 		}
 		finally
 		{
@@ -2090,6 +2395,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				return null;
 			}
 
+			// Figure out the LLVM element type (primitive, pointer-to-class, or by-value struct).
 			Type nebulaElementType = arrayType.getElementType();
 			LLVMTypeRef llvmElementType;
 			boolean elementsAreStackAllocated = false;
@@ -2100,77 +2406,82 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				LLVMTypeRef structType = definedStructs.get(fqn);
 				if (semanticAnalyzer.getStackAllocatedClasses().contains(fqn))
 				{
-					llvmElementType = structType; // Array holds structs: %Person
+					// Array of by-value structs
+					llvmElementType = structType;
 					elementsAreStackAllocated = true;
 				}
 				else
 				{
-					llvmElementType = LLVMPointerType(structType, 0); // Array holds pointers: %OtherClass*
+					// Array of pointers to heap objects
+					llvmElementType = LLVMPointerType(structType, 0);
 				}
 			}
 			else
 			{
-				llvmElementType = getLLVMType(nebulaElementType); // Array of primitives
+				// Primitive element type
+				llvmElementType = getLLVMType(nebulaElementType);
 			}
 
+			// Number of elements is known from the initializer (may be zero!)
 			int numElements = expression.getElements().size();
-			long elementSize = LLVMSizeOfTypeInBits(targetData, llvmElementType) / 8;
-			long totalSize = elementSize * numElements;
-			LLVMValueRef sizeVal = LLVMConstInt(LLVMInt64TypeInContext(context), totalSize, 0);
+
+			// --- Allocate header + data (just like ArrayCreationExpression) ---
+			LLVMValueRef elementSize = LLVMSizeOf(llvmElementType);
+			LLVMValueRef numAsI64 = LLVMConstInt(LLVMInt64TypeInContext(context), numElements, 0);
+			LLVMValueRef dataSize = LLVMBuildMul(builder, numAsI64, elementSize, "data_size");
+			LLVMValueRef headerSize = LLVMSizeOf(LLVMInt32TypeInContext(context));
+			LLVMValueRef totalSize = LLVMBuildAdd(builder, headerSize, dataSize, "total_array_size");
 
 			PointerPointer<LLVMValueRef> mallocArgs = new PointerPointer<>(1);
-			mallocArgs.put(0, sizeVal);
-
+			mallocArgs.put(0, totalSize);
 			LLVMTypeRef mallocFuncType = LLVMGlobalGetValueType(mallocFunc);
-			LLVMValueRef rawPtr = LLVMBuildCall2(builder, mallocFuncType, mallocFunc, mallocArgs, 1, "raw_array_ptr");
+			LLVMValueRef rawPtr = LLVMBuildCall2(builder, mallocFuncType, mallocFunc, mallocArgs, 1, "raw_array_mem");
 
+			// Store length in the header
+			LLVMTypeRef i32PtrType = LLVMPointerType(LLVMInt32TypeInContext(context), 0);
+			LLVMValueRef sizePtr = LLVMBuildBitCast(builder, rawPtr, i32PtrType, "size_ptr");
+			LLVMValueRef lenI32 = LLVMConstInt(LLVMInt32TypeInContext(context), numElements, 0);
+			LLVMBuildStore(builder, lenI32, sizePtr);
+
+			// Compute data pointer = (i32*)raw + 1, then cast to T*
+			LLVMValueRef index1 = LLVMConstInt(LLVMInt32TypeInContext(context), 1, 0);
+			PointerPointer<LLVMValueRef> indices = new PointerPointer<>(1);
+			indices.put(0, index1);
+			LLVMValueRef dataPtrI32 = LLVMBuildGEP2(builder, LLVMInt32TypeInContext(context), sizePtr, indices, 1, "data_section_ptr");
 			LLVMTypeRef arrayPtrType = LLVMPointerType(llvmElementType, 0);
-			LLVMValueRef typedArrayPtr = LLVMBuildBitCast(builder, rawPtr, arrayPtrType, "typed_array_ptr");
+			LLVMValueRef typedArrayPtr = LLVMBuildBitCast(builder, dataPtrI32, arrayPtrType, "typed_array_ptr");
 
+			// Fill elements (skip loop entirely if numElements == 0)
 			for (int i = 0; i < numElements; i++)
 			{
-				LLVMValueRef index = LLVMConstInt(LLVMInt32TypeInContext(context), i, 0);
+				LLVMValueRef idx = LLVMConstInt(LLVMInt32TypeInContext(context), i, 0);
+				PointerPointer<LLVMValueRef> gepIdx = new PointerPointer<>(1);
+				gepIdx.put(0, idx);
 
-				// --- START OF FIX ---
-				// Explicitly create the PointerPointer for the GEP indices to avoid ambiguity.
-				PointerPointer<LLVMValueRef> indices = new PointerPointer<>(1);
-				indices.put(0, index);
-
-				// The second argument to GEP2 must be the element type of the array,
-				// which is what the pointer `typedArrayPtr` points to.
-
-				LLVMTypeRef pointeeType = LLVMGetElementType(getLLVMType(nebulaElementType));
-				LLVMValueRef elementPtr = LLVMBuildGEP2(builder, pointeeType, typedArrayPtr, indices, 1, "elem_ptr");
-				// --- END OF FIX ---
+				// GEP from the data pointer using the element type
+				LLVMValueRef elementPtr = LLVMBuildGEP2(builder, llvmElementType, typedArrayPtr, gepIdx, 1, "elem_ptr");
 
 				if (elementsAreStackAllocated)
 				{
-					// For stack types, we construct the object directly into the array slot.
+					// Construct struct in-place
 					this.currentAllocaForStackObject = elementPtr;
-					expression.getElements().get(i).accept(this); // Constructor is called inside
-					this.currentAllocaForStackObject = null; // Reset flag
+					expression.getElements().get(i).accept(this);
+					this.currentAllocaForStackObject = null;
 				}
 				else
 				{
-					// For heap types, we get the pointer from 'new' and store it in the array.
 					LLVMValueRef elementValue = expression.getElements().get(i).accept(this);
 					LLVMBuildStore(builder, elementValue, elementPtr);
 				}
 			}
 
+			// Return T* (data pointer). Header with length lives right before it.
 			return typedArrayPtr;
 		}
 		finally
 		{
 			Debug.dedent();
 		}
-	}
-
-	//TODO: Implement
-	@Override
-	public LLVMValueRef visitSwitchCase(SwitchCase switchCase)
-	{
-		return null;
 	}
 
 	//TODO: Implement
@@ -2227,15 +2538,27 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 
 				if (initializerValue != null)
 				{
+					// --- START OF FIX ---
+					// Promote the initializer's type to match the variable's type if necessary.
+					LLVMTypeRef varType = LLVMGetAllocatedType(alloca);
+					LLVMTypeRef initType = LLVMTypeOf(initializerValue);
+
+					if (!varType.equals(initType) && LLVMGetTypeKind(varType) == LLVMIntegerTypeKind && LLVMGetTypeKind(initType) == LLVMIntegerTypeKind)
+					{
+						Debug.log("-> Coercing initializer from %s to %s", LLVMPrintTypeToString(initType).getString(), LLVMPrintTypeToString(varType).getString());
+						// Use sign-extension (SExt) to promote smaller integers to larger ones.
+						initializerValue = LLVMBuildSExt(builder, initializerValue, varType, "init_promoted");
+					}
+					// --- END OF FIX ---
+
 					if (isStackObj)
 					{
-						// --- FIX 2: Store the returned struct value ---
+						// If it wasn't a struct, it was a 'new' expression, which already
+						// constructed in-place via currentAllocaForStackObject.
 						if (LLVMGetTypeKind(LLVMTypeOf(initializerValue)) == LLVMStructTypeKind)
 						{
 							LLVMBuildStore(builder, initializerValue, alloca);
 						}
-						// If it wasn't a struct, it was a 'new' expression, which already
-						// constructed in-place via currentAllocaForStackObject.
 					}
 					else
 					{
@@ -2665,6 +2988,12 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 
 		@Override
 		public Void visitSwitchStatement(SwitchStatement statement)
+		{
+			return null;
+		}
+
+		@Override
+		public Void visitBreakStatement(BreakStatement statement)
 		{
 			return null;
 		}

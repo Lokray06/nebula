@@ -36,6 +36,9 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	private final List<ClassSymbol> importedStaticClasses;
 	private MethodSymbol currentConstructor;
 	private Type expectedTypeForNextExpression = null; // State for context-aware resolution
+	private int breakableScopeDepth = 0; // <-- ADD THIS
+	private Type currentSwitchExprType = null; // <-- ADD THIS
+	private Set<Object> seenSwitchCases = null; // <-- ADD THIS
 
 	private final CompilerConfig config; // --- NEW ---
 
@@ -1613,120 +1616,133 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	@Override
 	public Type visitWhileStatement(WhileStatement statement)
 	{
-		Type conditionType = statement.getCondition().accept(this);
-		if (conditionType instanceof ErrorType)
+		breakableScopeDepth++; // Enter a breakable context
+		try
 		{
-			return ErrorType.INSTANCE;
-		}
+			Type conditionType = statement.getCondition().accept(this);
+			if (conditionType instanceof ErrorType)
+			{
+				return ErrorType.INSTANCE;
+			}
 
-		if (!conditionType.equals(PrimitiveType.BOOL))
-		{
-			error(statement.getCondition().getFirstToken(), "While condition must be a boolean expression.");
+			if (!conditionType.equals(PrimitiveType.BOOL))
+			{
+				error(statement.getCondition().getFirstToken(), "While condition must be a boolean expression.");
+			}
+			statement.getBody().accept(this);
 		}
-		statement.getBody().accept(this);
+		finally
+		{
+			breakableScopeDepth--; // Exit breakable context
+		}
 		return PrimitiveType.VOID;
 	}
 
 	@Override
 	public Type visitForStatement(ForStatement statement)
 	{
-		// Check for the simplified syntax pattern: no initializer, no increment, but a condition.
-		// This assumes the parser produces this AST shape for semicolon-less for loops.
-		if (statement.getInitializer() == null && statement.getCondition() != null && statement.getIncrement() == null)
+		breakableScopeDepth++; // Enter a breakable context
+		try
 		{
-			desugarSimplifiedForLoop(statement);
-			// After this call, the `statement` object is mutated to be a standard for loop.
-			// The rest of this method will then analyze it as a normal loop.
-		}
-
-		// Standard analysis for a (possibly now desugared) for loop.
-		SymbolTable forScope = new SymbolTable(currentScope, "ForLoop");
-		enterScope(forScope);
-
-		if (statement.getInitializer() != null)
-		{
-			statement.getInitializer().accept(this);
-		}
-
-		if (statement.getCondition() != null)
-		{
-			Type conditionType = statement.getCondition().accept(this);
-			if (conditionType instanceof ErrorType)
+			if (statement.getInitializer() == null && statement.getCondition() != null && statement.getIncrement() == null)
 			{
-				exitScope(); // Clean up scope
-				return ErrorType.INSTANCE;
+				desugarSimplifiedForLoop(statement);
 			}
 
-			if (!conditionType.equals(PrimitiveType.BOOL))
+			SymbolTable forScope = new SymbolTable(currentScope, "ForLoop");
+			enterScope(forScope);
+
+			if (statement.getInitializer() != null)
 			{
-				error(statement.getCondition().getFirstToken(), "For loop condition must be a boolean expression.");
+				statement.getInitializer().accept(this);
 			}
-		}
 
-		if (statement.getIncrement() != null)
+			if (statement.getCondition() != null)
+			{
+				Type conditionType = statement.getCondition().accept(this);
+				if (conditionType instanceof ErrorType)
+				{
+					exitScope();
+					return ErrorType.INSTANCE;
+				}
+				if (!conditionType.equals(PrimitiveType.BOOL))
+				{
+					error(statement.getCondition().getFirstToken(), "For loop condition must be a boolean expression.");
+				}
+			}
+
+			if (statement.getIncrement() != null)
+			{
+				statement.getIncrement().accept(this);
+			}
+
+			statement.getBody().accept(this);
+
+			exitScope();
+		}
+		finally
 		{
-			statement.getIncrement().accept(this);
+			breakableScopeDepth--; // Exit breakable context
 		}
-
-		statement.getBody().accept(this);
-
-		exitScope();
 		return PrimitiveType.VOID;
 	}
 
 	@Override
 	public Type visitForEachStatement(ForEachStatement statement)
 	{
-		Type collectionType = statement.getCollection().accept(this);
-		if (collectionType instanceof ErrorType)
+		breakableScopeDepth++; // Enter a breakable context
+		try
 		{
-			return ErrorType.INSTANCE;
-		}
+			Type collectionType = statement.getCollection().accept(this);
+			if (collectionType instanceof ErrorType)
+			{
+				return ErrorType.INSTANCE;
+			}
 
-		Type elementType;
-		ClassSymbol stringClass = declaredClasses.get("nebula.core.String");
+			Type elementType;
+			ClassSymbol stringClass = declaredClasses.get("nebula.core.String");
 
-		// Check if the collection is an array or a string
-		if (collectionType instanceof ArrayType)
-		{
-			elementType = ((ArrayType) collectionType).getElementType();
-		}
-		else if (stringClass != null && collectionType.equals(stringClass.getType()))
-		{
-			elementType = PrimitiveType.CHAR; // Iterating over a string yields characters
-		}
-		else
-		{
-			error(statement.getCollection().getFirstToken(), "foreach loop can only iterate over an array or a string.");
-			return ErrorType.INSTANCE;
-		}
+			if (collectionType instanceof ArrayType)
+			{
+				elementType = ((ArrayType) collectionType).getElementType();
+			}
+			else if (stringClass != null && collectionType.equals(stringClass.getType()))
+			{
+				elementType = PrimitiveType.CHAR;
+			}
+			else
+			{
+				error(statement.getCollection().getFirstToken(), "foreach loop can only iterate over an array or a string.");
+				return ErrorType.INSTANCE;
+			}
 
-		// Enter a new scope for the loop body
-		SymbolTable loopScope = new SymbolTable(currentScope, "ForEachLoop");
-		enterScope(loopScope);
+			SymbolTable loopScope = new SymbolTable(currentScope, "ForEachLoop");
+			enterScope(loopScope);
 
-		// Resolve the declared type of the loop variable
-		Type declaredVarType = resolveType(statement.getTypeToken(), statement.getArrayRank());
-		if (declaredVarType instanceof ErrorType)
-		{
+			Type declaredVarType = resolveType(statement.getTypeToken(), statement.getArrayRank());
+			if (declaredVarType instanceof ErrorType)
+			{
+				exitScope();
+				return ErrorType.INSTANCE;
+			}
+
+			if (!elementType.isAssignableTo(declaredVarType))
+			{
+				error(statement.getVariableName(), "Cannot convert from element type '" + elementType.getName() + "' to loop variable type '" + declaredVarType.getName() + "'.");
+			}
+
+			VariableSymbol loopVar = new VariableSymbol(statement.getVariableName().getLexeme(), declaredVarType, statement.getVariableName(), true, false, false, false);
+			currentScope.define(loopVar);
+			statement.setResolvedLoopVariable(loopVar);
+
+			statement.getBody().accept(this);
+
 			exitScope();
-			return ErrorType.INSTANCE;
 		}
-
-		// Check if the element type is assignable to the loop variable type
-		if (!elementType.isAssignableTo(declaredVarType))
+		finally
 		{
-			error(statement.getVariableName(), "Cannot convert from element type '" + elementType.getName() + "' to loop variable type '" + declaredVarType.getName() + "'.");
+			breakableScopeDepth--; // Exit breakable context
 		}
-
-		// Define the loop variable in the new scope. It's considered initialized.
-		VariableSymbol loopVar = new VariableSymbol(statement.getVariableName().getLexeme(), declaredVarType, statement.getVariableName(), true, false, false, false);
-		currentScope.define(loopVar);
-
-		// Visit the loop body
-		statement.getBody().accept(this);
-
-		exitScope();
 		return PrimitiveType.VOID;
 	}
 
@@ -2798,31 +2814,41 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	@Override
 	public Type visitSwitchStatement(SwitchStatement statement)
 	{
-		Type switchExprType = statement.getSwitchExpression().accept(this);
-		if (switchExprType instanceof ErrorType)
+		breakableScopeDepth++; // Enter a breakable context
+		try
 		{
-			return ErrorType.INSTANCE;
-		}
+			Type switchExprType = statement.getSwitchExpression().accept(this);
+			if (switchExprType instanceof ErrorType)
+			{
+				return ErrorType.INSTANCE;
+			}
 
-		if (switchExprType != null &&
-				!(switchExprType.equals(PrimitiveType.INT) ||
-						switchExprType.equals(PrimitiveType.CHAR) ||
-						switchExprType.equals(PrimitiveType.BYTE) ||
-						switchExprType.equals(PrimitiveType.BOOL)))
-		{
-			error(statement.getSwitchKeyword(),
-					"Switch expression must be of an integral type (int, char, byte, bool). Found '" + switchExprType.getName() + "'.");
-			return PrimitiveType.VOID;
-		}
+			// Check if the switch expression type is valid (integral, char, or bool)
+			if (!switchExprType.isInteger() && !switchExprType.equals(PrimitiveType.CHAR) && !switchExprType.equals(PrimitiveType.BOOL))
+			{
+				error(statement.getSwitchKeyword(), "Switch expression must be of an integral, character, or boolean type. Found '" + switchExprType.getName() + "'.");
+			}
 
-		for (SwitchCase switchCase : statement.getCases())
-		{
-			switchCase.accept(this);
-		}
+			// Set context for the child 'case' nodes
+			this.currentSwitchExprType = switchExprType;
+			this.seenSwitchCases = new HashSet<>();
 
-		if (statement.getDefaultBlock() != null)
+			for (SwitchCase switchCase : statement.getCases())
+			{
+				switchCase.accept(this);
+			}
+
+			if (statement.getDefaultBlock() != null)
+			{
+				statement.getDefaultBlock().accept(this);
+			}
+		}
+		finally
 		{
-			statement.getDefaultBlock().accept(this);
+			breakableScopeDepth--; // Exit breakable context
+			// Clean up context
+			this.currentSwitchExprType = null;
+			this.seenSwitchCases = null;
 		}
 		return PrimitiveType.VOID;
 	}
@@ -2836,15 +2862,41 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			return ErrorType.INSTANCE;
 		}
 
-		if (!(switchCase.getValue() instanceof LiteralExpression)) // Or a const variable/expression
+		// 1. Check for constant value
+		if (!(switchCase.getValue() instanceof LiteralExpression))
 		{
-			error(switchCase.getCaseKeyword(), "Switch case value must be a constant expression.");
+			error(switchCase.getCaseKeyword(), "Switch case value must be a constant literal.");
 		}
-		// Further checks for type compatibility with the switch expression happen in visitSwitchStatement
+		else
+		{
+			// 2. Check for type compatibility with the parent switch expression
+			if (currentSwitchExprType != null && !caseValueType.isAssignableTo(currentSwitchExprType))
+			{
+				error(switchCase.getValue().getFirstToken(), "Case value type '" + caseValueType.getName() + "' is not compatible with switch expression type '" + currentSwitchExprType.getName() + "'.");
+			}
 
-		for (com.juanpa.nebula.transpiler.ast.statements.Statement stmt : switchCase.getBody())
+			// 3. Check for duplicate cases
+			Object literalValue = ((LiteralExpression) switchCase.getValue()).getValue();
+			if (seenSwitchCases != null && !seenSwitchCases.add(literalValue))
+			{
+				error(switchCase.getValue().getFirstToken(), "Duplicate case value: " + literalValue);
+			}
+		}
+
+		// Analyze the body of the case
+		for (Statement stmt : switchCase.getBody())
 		{
 			stmt.accept(this);
+		}
+		return PrimitiveType.VOID;
+	}
+
+	@Override
+	public Type visitBreakStatement(BreakStatement statement)
+	{
+		if (breakableScopeDepth == 0)
+		{
+			error(statement.getBreakKeyword(), "'break' statement can only be used inside a loop or a switch statement.");
 		}
 		return PrimitiveType.VOID;
 	}
@@ -3976,6 +4028,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			{
 				s.getDefaultBlock().accept(this);
 			}
+			return null;
+		}
+
+		@Override
+		public Void visitBreakStatement(BreakStatement statement)
+		{
 			return null;
 		}
 

@@ -74,6 +74,7 @@ public class Lexer
 		keywords.put("global", TokenType.GLOBAL);
 		keywords.put("switch", TokenType.SWITCH);
 		keywords.put("case", TokenType.CASE);
+		keywords.put("break", TokenType.BREAK);
 		keywords.put("default", TokenType.DEFAULT);
 		keywords.put("is", TokenType.IS);
 		keywords.put("alias", TokenType.ALIAS);

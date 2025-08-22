@@ -4,6 +4,7 @@ package com.juanpa.nebula.transpiler.ast.statements;
 import com.juanpa.nebula.transpiler.ast.ASTVisitor;
 import com.juanpa.nebula.transpiler.ast.expressions.Expression;
 import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.semantics.VariableSymbol;
 
 /**
  * AST node for a 'foreach' loop statement.
@@ -18,6 +19,7 @@ public class ForEachStatement implements Statement
 	private final Token variableName;
 	private final Expression collection;
 	private final BlockStatement body;
+	private VariableSymbol resolvedLoopVariable; // <-- ADD THIS FIELD
 
 	public ForEachStatement(Token foreachKeyword, Token typeToken, int arrayRank, Token variableName, Expression collection, BlockStatement body)
 	{
@@ -57,6 +59,16 @@ public class ForEachStatement implements Statement
 	public BlockStatement getBody()
 	{
 		return body;
+	}
+
+	public VariableSymbol getResolvedLoopVariable()
+	{
+		return resolvedLoopVariable;
+	}
+
+	public void setResolvedLoopVariable(VariableSymbol resolvedLoopVariable)
+	{
+		this.resolvedLoopVariable = resolvedLoopVariable;
 	}
 
 	@Override

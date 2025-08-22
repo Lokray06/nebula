@@ -1,4 +1,3 @@
-// File: nebula_runtime.cpp
 #include <string>
 #include <vector>
 #include <sstream>
@@ -17,7 +16,7 @@ struct NebulaObjectHeader {
 
 /**
  * The NebulaString struct, now with a reference-counting header.
- * This MUST match the layout in the LLVMIRGenerator.
+ * This MUST match the layout in the LLVMIRGenerator: { i32, i8* }
  */
 struct NebulaString {
     NebulaObjectHeader header;
@@ -65,6 +64,9 @@ extern "C" {
      * The caller "owns" this new reference.
      */
     NebulaString* create_nebula_string(const char* initial_value) {
+        if (initial_value == nullptr) {
+            initial_value = "";
+        }
         NebulaString* str_obj = new NebulaString();
         str_obj->header.ref_count = 1; // Start with one reference
 
@@ -87,15 +89,11 @@ extern "C" {
 
     // --- toString Implementations (all now return owned references) ---
 
-    NebulaString* int32_toString(int value) {
+    NebulaString* int32_toString(int32_t value) {
         return create_nebula_string(std::to_string(value).c_str());
     }
 
-    NebulaString* int64_toString(long long value) {
-        return create_nebula_string(std::to_string(value).c_str());
-    }
-
-    NebulaString* uint64_toString(unsigned long long value) {
+    NebulaString* int64_toString(int64_t value) {
         return create_nebula_string(std::to_string(value).c_str());
     }
 
@@ -107,7 +105,7 @@ extern "C" {
         return create_nebula_string(value ? "true" : "false");
     }
 
-    NebulaString* char_toString(int value) {
+    NebulaString* char_toString(int32_t value) {
         char str[2] = { static_cast<char>(value), '\0' };
         return create_nebula_string(str);
     }
