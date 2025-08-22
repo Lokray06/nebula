@@ -5,39 +5,78 @@
 #include <memory>
 #include <cstring> // For strlen, strcpy
 #include <cstdio>  // For snprintf
+#include <atomic>  // For atomic reference counting
 
 /**
- * This struct MUST match the layout of your 'nebula.core.String' class
- * as defined in the LLVMIRGenerator's DeclarationVisitor.
- * For now, it's a simple wrapper around a C-style string.
+ * A header that will be the first member of any heap-allocated,
+ * reference-counted Nebula object.
+ */
+struct NebulaObjectHeader {
+    std::atomic<int32_t> ref_count;
+};
+
+/**
+ * The NebulaString struct, now with a reference-counting header.
+ * This MUST match the layout in the LLVMIRGenerator.
  */
 struct NebulaString {
+    NebulaObjectHeader header;
     const char* c_str;
 };
 
-// 'extern "C"' is crucial. It prevents C++ from changing the function names,
-// so that our LLVM code can find them using the simple names we define.
+// 'extern "C"' is crucial for linking with LLVM IR.
 extern "C" {
 
+    // --- Core Memory Management Functions ---
+
     /**
-     * A helper to create a new NebulaString on the heap from a C-style string.
-     * This is the central factory for all toString methods.
+     * Increments the reference count of an object.
+     * This should be called whenever a reference is copied.
+     */
+    void nebula_retain(void* obj_ptr) {
+        if (obj_ptr == nullptr) return;
+        auto* header = static_cast<NebulaObjectHeader*>(obj_ptr);
+        header->ref_count.fetch_add(1);
+    }
+
+    /**
+     * Decrements the reference count of an object.
+     * If the count reaches zero, it deallocates the object.
+     */
+    void nebula_release(void* obj_ptr) {
+        if (obj_ptr == nullptr) return;
+
+        auto* header = static_cast<NebulaObjectHeader*>(obj_ptr);
+        // If this was the last reference, proceed to delete.
+        if (header->ref_count.fetch_sub(1) == 1) {
+            // For now, we only have NebulaString, so we can cast directly.
+            // In the future, this would involve a vtable or type tag
+            // to call the correct destructor.
+            NebulaString* str_obj = static_cast<NebulaString*>(obj_ptr);
+            delete[] str_obj->c_str; // Free the character data
+            delete str_obj;          // Free the struct itself
+        }
+    }
+
+    // --- String Factory and Operations ---
+
+    /**
+     * Creates a new NebulaString on the heap with a reference count of 1.
+     * The caller "owns" this new reference.
      */
     NebulaString* create_nebula_string(const char* initial_value) {
-        // Allocate memory for the NebulaString struct itself
         NebulaString* str_obj = new NebulaString();
+        str_obj->header.ref_count = 1; // Start with one reference
 
-        // Allocate memory for the character data and copy it
         char* str_data = new char[strlen(initial_value) + 1];
         strcpy(str_data, initial_value);
 
-        // Point the struct's member to the newly allocated character data
         str_obj->c_str = str_data;
         return str_obj;
     }
 
     /**
-     * Calculates the length of a NebulaString's underlying C-string.
+     * Calculates the length of a NebulaString's C-string.
      */
     int string_length(NebulaString* str_obj) {
         if (str_obj == nullptr || str_obj->c_str == nullptr) {
@@ -46,26 +85,22 @@ extern "C" {
         return strlen(str_obj->c_str);
     }
 
-    // --- toString Implementations for Primitive Types ---
+    // --- toString Implementations (all now return owned references) ---
 
     NebulaString* int32_toString(int value) {
-        std::string str = std::to_string(value);
-        return create_nebula_string(str.c_str());
+        return create_nebula_string(std::to_string(value).c_str());
     }
 
     NebulaString* int64_toString(long long value) {
-        std::string str = std::to_string(value);
-        return create_nebula_string(str.c_str());
+        return create_nebula_string(std::to_string(value).c_str());
     }
 
     NebulaString* uint64_toString(unsigned long long value) {
-        std::string str = std::to_string(value);
-        return create_nebula_string(str.c_str());
+        return create_nebula_string(std::to_string(value).c_str());
     }
 
     NebulaString* double_toString(double value) {
-        std::string str = std::to_string(value);
-        return create_nebula_string(str.c_str());
+        return create_nebula_string(std::to_string(value).c_str());
     }
 
     NebulaString* bool_toString(bool value) {
@@ -73,23 +108,32 @@ extern "C" {
     }
 
     NebulaString* char_toString(int value) {
-        // Nebula 'char' is i32, so we handle it as a single character string
-        char str[2] = { (char)value, '\0' };
+        char str[2] = { static_cast<char>(value), '\0' };
         return create_nebula_string(str);
     }
 
-    // --- toString for Objects (returns memory address) ---
     NebulaString* object_toString(void* obj_ptr) {
         char buffer[20];
         snprintf(buffer, sizeof(buffer), "%p", obj_ptr);
         return create_nebula_string(buffer);
     }
 
-    // --- String Concatenation ---
+    /**
+     * Concatenates two strings.
+     * IMPORTANT: This function "consumes" its arguments, meaning it takes
+     * ownership of the references passed to it. It calls nebula_release on them.
+     * It returns a new string with a reference count of 1.
+     */
     NebulaString* string_concat(NebulaString* left, NebulaString* right) {
         std::string s1 = left ? left->c_str : "";
         std::string s2 = right ? right->c_str : "";
         std::string result = s1 + s2;
+
+        // Release the input strings as they have been consumed.
+        nebula_release(left);
+        nebula_release(right);
+
+        // Return a new string with its own +1 reference count.
         return create_nebula_string(result.c_str());
     }
 }

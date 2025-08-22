@@ -46,13 +46,17 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 	private LLVMValueRef mallocFunc;
 	private LLVMValueRef freeFunc;
 	private LLVMValueRef printfFunc;
+	private LLVMValueRef retainFunc;
+	private LLVMValueRef releaseFunc;
 
 	private LLVMValueRef currentAllocaForStackObject = null; // <-- ADD THIS LINE
+	private Symbol returnedSymbol = null;
 
 	private static class ScopeContext
 	{
 		final Map<String, LLVMValueRef> variables = new HashMap<>();
-		final List<LLVMValueRef> heapAllocations = new ArrayList<>();
+		final List<LLVMValueRef> rcVariables = new ArrayList<>(); // For heap pointers like 'string c'
+		final List<VariableSymbol> stackAllocatedObjects = new ArrayList<>(); // For stack objects like 'Person obj'
 	}
 
 	public LLVMIRGenerator(SemanticAnalyzer semanticAnalyzer)
@@ -215,6 +219,19 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		printfFunc = LLVMAddFunction(module, "printf", printfFuncType);
 		Debug.log("Declared: i32 @printf(i8*, ...)");
 
+		// NEW: Add retain and release
+		LLVMTypeRef voidPtrType = LLVMPointerType(LLVMInt8TypeInContext(context), 0);
+
+		// void @nebula_retain(i8*)
+		LLVMTypeRef retainFuncType = LLVMFunctionType(LLVMVoidTypeInContext(context), voidPtrType, 1, 0);
+		retainFunc = LLVMAddFunction(module, "nebula_retain", retainFuncType);
+		Debug.log("Declared: void @nebula_retain(i8*)");
+
+		// void @nebula_release(i8*)
+		LLVMTypeRef releaseFuncType = LLVMFunctionType(LLVMVoidTypeInContext(context), voidPtrType, 1, 0);
+		releaseFunc = LLVMAddFunction(module, "nebula_release", releaseFuncType);
+		Debug.log("Declared: void @nebula_release(i8*)");
+
 		// C++ String Factory: %nebula.core.String* @from_c_string(i8*)
 		LLVMTypeRef stringStructType = definedStructs.get("nebula.core.String");
 		if (stringStructType == null)
@@ -336,22 +353,56 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 	{
 		Debug.log("Exiting scope (level %d)", scopes.size());
 		ScopeContext currentScope = scopes.peek();
-		if (!currentScope.heapAllocations.isEmpty())
+
+		if (!currentScope.rcVariables.isEmpty())
 		{
 			Debug.indent();
-			Debug.log("Cleaning up %d heap allocation(s) in this scope.", currentScope.heapAllocations.size());
-			for (LLVMValueRef heapPtr : currentScope.heapAllocations)
+			Debug.log("Releasing %d reference-counted variable(s) in this scope.", currentScope.rcVariables.size());
+			for (LLVMValueRef varAlloca : currentScope.rcVariables)
 			{
-				Debug.log("-> Generating call to @free for a heap pointer.");
-				LLVMValueRef ptrToFree = LLVMBuildBitCast(builder, heapPtr, LLVMPointerType(LLVMInt8TypeInContext(context), 0), "tmp_cast_free");
-				LLVMTypeRef freeFuncType = LLVMGetElementType(LLVMTypeOf(freeFunc));
-				PointerPointer<LLVMValueRef> args = new PointerPointer<>(ptrToFree);
-				LLVMBuildCall2(builder, freeFuncType, freeFunc, args, 1, "");
+				LLVMTypeRef allocatedType = LLVMGetAllocatedType(varAlloca);
+				LLVMValueRef objPtr = LLVMBuildLoad2(builder, allocatedType, varAlloca, "obj_to_release");
+				buildRelease(objPtr);
 			}
 			Debug.dedent();
 		}
+
+		if (!currentScope.stackAllocatedObjects.isEmpty())
+		{
+			Debug.indent();
+			Debug.log("Destructing %d stack-allocated object(s)...", currentScope.stackAllocatedObjects.size());
+			for (VariableSymbol stackObjSymbol : currentScope.stackAllocatedObjects)
+			{
+				// --- FIX 2.2: Check if this object was returned. If so, DO NOT destruct it. ---
+				if (stackObjSymbol == this.returnedSymbol)
+				{
+					Debug.log("-> Skipping destruction for returned stack object '%s'", stackObjSymbol.getName());
+					continue; // Skip destruction, ownership has been moved.
+				}
+
+				LLVMValueRef objAlloca = findVariable(stackObjSymbol.getName());
+				ClassSymbol classSymbol = ((ClassType) stackObjSymbol.getType()).classSymbol;
+
+				for (Symbol memberSymbol : classSymbol.getClassScope().getSymbols().values())
+				{
+					if (memberSymbol instanceof VariableSymbol fieldSymbol && isHeapAllocated(fieldSymbol.getType()))
+					{
+						Debug.log("-> Releasing member '%s' of stack object '%s'", fieldSymbol.getName(), stackObjSymbol.getName());
+						int fieldIndex = classSymbol.getFieldIndex(fieldSymbol.getName());
+						LLVMTypeRef structType = definedStructs.get(classSymbol.getFqn());
+						LLVMValueRef fieldPtr = LLVMBuildStructGEP2(builder, structType, objAlloca, fieldIndex, fieldSymbol.getName() + "_ptr");
+						LLVMTypeRef fieldLLVMType = getLLVMType(fieldSymbol.getType());
+						LLVMValueRef heapPtr = LLVMBuildLoad2(builder, fieldLLVMType, fieldPtr, fieldSymbol.getName() + "_val");
+						buildRelease(heapPtr);
+					}
+				}
+			}
+			Debug.dedent();
+		}
+
 		scopes.pop();
 	}
+
 
 	private LLVMValueRef findVariable(String name)
 	{
@@ -436,6 +487,8 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		{
 			MethodSymbol methodSymbol = declaration.getResolvedSymbol();
 			this.currentMethodSymbol = methodSymbol;
+			this.returnedSymbol = null;
+
 			if (methodSymbol == null)
 			{
 				Debug.log("-> No resolved symbol. Skipping.");
@@ -549,30 +602,26 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			return LLVMConstReal(LLVMFloatTypeInContext(context), ((Number) value).doubleValue());
 		}
 
-		// --- START OF REVERTED CODE ---
 		if (type instanceof ClassType && ((ClassType) type).getFqn().equals("nebula.core.String"))
 		{
 			String strValue = (String) value;
 
-			// Create a C-string constant
+			// --- START OF FIX ---
+			// Create a global C-string constant.
 			LLVMValueRef cString = LLVMBuildGlobalStringPtr(builder, strValue, ".str_literal");
 
-			// Get the type for our Nebula String struct
-			LLVMTypeRef stringStructType = definedStructs.get("nebula.core.String");
+			// Find our runtime factory function.
+			LLVMValueRef factoryFunc = LLVMGetNamedFunction(module, "create_nebula_string");
 
-			// Allocate space for our struct on the stack. This is a temporary object.
-			LLVMValueRef stringObjPtr = LLVMBuildAlloca(builder, stringStructType, "temp_string_obj");
+			// Call the factory to create a new NebulaString object on the heap.
+			PointerPointer<LLVMValueRef> args = new PointerPointer<>(1);
+			args.put(0, cString);
+			LLVMTypeRef factoryFuncType = LLVMGlobalGetValueType(factoryFunc);
 
-			// Get a pointer to the first field (the i8* field) inside the struct.
-			LLVMValueRef fieldPtr = LLVMBuildStructGEP2(builder, stringStructType, stringObjPtr, 0, "data_field_ptr");
-
-			// Store the constant C-string pointer into our struct's field.
-			LLVMBuildStore(builder, cString, fieldPtr);
-
-			// Return the pointer to the temporary, stack-allocated struct.
-			return stringObjPtr;
+			// The factory returns a new object with a +1 reference count.
+			return LLVMBuildCall2(builder, factoryFuncType, factoryFunc, args, 1, "str_obj");
+			// --- END OF FIX ---
 		}
-		// --- END OF REVERTED CODE ---
 
 		if (type.equals(NullType.INSTANCE))
 		{
@@ -604,10 +653,24 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			{
 				Debug.log("-> Detected string concatenation.");
 
+				// --- START OF FIX ---
 				LLVMValueRef leftVal = expression.getLeft().accept(this);
-				LLVMValueRef rightVal = expression.getRight().accept(this);
+				// If the operand is a variable, its ref must be incremented because
+				// string_concat will consume a reference, but the variable must remain valid.
+				if (expression.getLeft() instanceof IdentifierExpression || expression.getLeft() instanceof DotExpression)
+				{
+					buildRetain(leftVal);
+				}
 
-				// Convert non-string operands to strings
+				LLVMValueRef rightVal = expression.getRight().accept(this);
+				// Do the same for the right operand.
+				if (expression.getRight() instanceof IdentifierExpression || expression.getRight() instanceof DotExpression)
+				{
+					buildRetain(rightVal);
+				}
+
+				// Convert non-string operands to strings. These toString calls already return
+				// a new object with a +1 ref count, so no retain is needed for them.
 				if (!leftType.equals(stringClass.getType()))
 				{
 					leftVal = callToString(leftVal, leftType);
@@ -616,6 +679,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				{
 					rightVal = callToString(rightVal, rightType);
 				}
+				// --- END OF FIX ---
 
 				if (leftVal == null || rightVal == null)
 				{
@@ -625,8 +689,14 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				// Call the C++ runtime helper for concatenation
 				LLVMValueRef concatFunc = LLVMGetNamedFunction(module, "string_concat");
 				LLVMTypeRef concatFuncType = LLVMGlobalGetValueType(concatFunc);
-				PointerPointer<LLVMValueRef> args = new PointerPointer<>(leftVal, rightVal);
+				// --- START OF FIX ---
+				// Use the safe, two-step PointerPointer creation.
+				PointerPointer<LLVMValueRef> args = new PointerPointer<>(2);
+				args.put(0, leftVal);
+				args.put(1, rightVal);
+				// --- END OF FIX ---
 
+				// This returns a new string with a +1 ref count.
 				return LLVMBuildCall2(builder, concatFuncType, concatFunc, args, 2, "concat_str");
 			}
 
@@ -751,7 +821,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			LLVMTypeRef rightLLVMType = LLVMTypeOf(right);
 
 			// Check if we are dealing with two different integer types.
-			if (LLVMGetTypeKind(leftLLVMType) == LLVMIntegerTypeKind && LLVMGetTypeKind(rightLLVMType) == LLVMIntegerTypeKind &&  !leftLLVMType.equals(rightLLVMType))
+			if (LLVMGetTypeKind(leftLLVMType) == LLVMIntegerTypeKind && LLVMGetTypeKind(rightLLVMType) == LLVMIntegerTypeKind && !leftLLVMType.equals(rightLLVMType))
 			{
 
 				Debug.log("-> Performing integer promotion for binary operation.");
@@ -929,6 +999,32 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 
 		try
 		{
+			// --- FIX 1: Handle Stack Object Reassignment ---
+			Type targetType = expression.getTarget().getResolvedType();
+			if (op.equals("=") && isStackAllocated(targetType) && expression.getValue() instanceof NewExpression)
+			{
+				Debug.log("-> Detected reassignment of stack-allocated object.");
+
+				// 1. Get pointer to the existing stack object.
+				this.isLValueContext = true;
+				LLVMValueRef targetPtr = expression.getTarget().accept(this);
+				this.isLValueContext = false;
+
+				// 2. Destruct the old object's contents before overwriting it.
+				Symbol targetSymbol = ((IdentifierExpression) expression.getTarget()).getResolvedSymbol();
+				if (targetSymbol instanceof VariableSymbol)
+				{
+					destructStackObject((VariableSymbol) targetSymbol);
+				}
+
+				// 3. Re-use the existing stack allocation for the new object.
+				this.currentAllocaForStackObject = targetPtr;
+				LLVMValueRef result = expression.getValue().accept(this);
+				this.currentAllocaForStackObject = null;
+				return result;
+			}
+			// --- END OF FIX ---
+
 			Symbol resolvedSymbol = expression.getResolvedSymbol();
 
 			// --- FIX START: Handle Property Setters ---
@@ -992,7 +1088,38 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 
 			if (op.equals("="))
 			{
-				finalValue = valueToAssign;
+				// --- START OF FIX: Evaluate value only once ---
+				LLVMValueRef newValue = expression.getValue().accept(this); // Evaluate the new value *once*
+
+				if (isHeapAllocated(expression.getTarget().getResolvedType()))
+				{
+					buildRetain(valueToAssign);
+
+					// --- THE CRITICAL FIX ---
+					// If we are inside a constructor, we are initializing, not re-assigning.
+					// There is no "old value" to release because the memory is uninitialized.
+					if (currentMethodSymbol != null && currentMethodSymbol.isConstructor())
+					{
+						LLVMBuildStore(builder, valueToAssign, targetPtr);
+					}
+					else
+					{
+						// This is a regular assignment, so we must release the old value.
+						LLVMTypeRef valueType = getLLVMType(expression.getTarget().getResolvedType());
+						LLVMValueRef oldValue = LLVMBuildLoad2(builder, valueType, targetPtr, "old_val");
+						LLVMBuildStore(builder, valueToAssign, targetPtr);
+						buildRelease(oldValue);
+					}
+					// --- END OF FIX ---
+
+					return valueToAssign;
+				}
+				else
+				{
+					LLVMBuildStore(builder, newValue, targetPtr);
+					return newValue;
+				}
+				// --- END OF FIX ---
 			}
 			else
 			{
@@ -1016,18 +1143,20 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				LLVMTypeRef leftLLVMType = LLVMTypeOf(currentValue);
 				LLVMTypeRef rightLLVMType = LLVMTypeOf(valueToAssign);
 
-				if (LLVMGetTypeKind(leftLLVMType) == LLVMIntegerTypeKind &&
-						LLVMGetTypeKind(rightLLVMType) == LLVMIntegerTypeKind &&
-						!leftLLVMType.equals(rightLLVMType)) {
+				if (LLVMGetTypeKind(leftLLVMType) == LLVMIntegerTypeKind && LLVMGetTypeKind(rightLLVMType) == LLVMIntegerTypeKind && !leftLLVMType.equals(rightLLVMType))
+				{
 
 					Debug.log("-> Performing integer promotion for compound assignment.");
 					int leftWidth = LLVMGetIntTypeWidth(leftLLVMType);
 					int rightWidth = LLVMGetIntTypeWidth(rightLLVMType);
 
-					if (leftWidth > rightWidth) {
+					if (leftWidth > rightWidth)
+					{
 						Debug.log("--> Promoting right operand from i%d to i%d.", rightWidth, leftWidth);
 						valueToAssign = LLVMBuildSExt(builder, valueToAssign, leftLLVMType, "promoted_rhs");
-					} else {
+					}
+					else
+					{
 						Debug.log("--> Promoting left operand from i%d to i%d.", leftWidth, rightWidth);
 						currentValue = LLVMBuildSExt(builder, currentValue, rightLLVMType, "promoted_lhs");
 					}
@@ -1439,85 +1568,67 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			}
 			MethodSymbol methodSymbol = (MethodSymbol) symbol;
 
-			// --- NEW: Handle wrapper methods directly ---
+			// --- START OF FIX: Reworked Wrapper and Println Logic ---
 			if (methodSymbol.isWrapper())
 			{
 				Debug.log("-> Call to WRAPPER method: %s", methodSymbol.getMangledName());
 
 				// Specific handler for Console.println overloads
-				if (methodSymbol.getOwnerClass().getFqn().equals("nebula.io.Console") && methodSymbol.getName().equals("println"))
+				if (methodSymbol.getOwnerClass().getFqn().equals("nebula.io.Console") &&
+						(methodSymbol.getName().equals("println") || methodSymbol.getName().equals("print")))
 				{
-					if (expression.getArguments().size() != 1)
-					{
-						return null; // Should be caught by analyzer
-					}
 
+					// 1. Get the value of the argument being passed to println.
 					Expression argExpr = expression.getArguments().get(0);
 					LLVMValueRef argValue = argExpr.accept(this);
 					Type argType = argExpr.getResolvedType();
 
-					LLVMValueRef valueToPrint;
-					String formatString = "";
+					LLVMValueRef stringToPrint;
+					boolean needsRelease = false;
 
+					// 2. If the argument is not already a string, convert it using a toString helper.
 					if (argType instanceof ClassType && ((ClassType) argType).getFqn().equals("nebula.core.String"))
 					{
-						formatString = "%s\n";
-						// argValue is now a POINTER to the String struct.
-						// We need to get the 'c_str' field from inside it.
-						LLVMTypeRef stringStructType = definedStructs.get("nebula.core.String");
-						LLVMValueRef fieldPtr = LLVMBuildStructGEP2(builder, stringStructType, argValue, 0, "data_ptr");
-
-						// The type of the field itself is a pointer to char (i8*).
-						LLVMTypeRef i8PtrType = LLVMPointerType(LLVMInt8TypeInContext(context), 0);
-						valueToPrint = LLVMBuildLoad2(builder, i8PtrType, fieldPtr, "raw_c_str");
-					}
-					else if (argType.equals(PrimitiveType.INT32))
-					{
-						formatString = "%d\n";
-						valueToPrint = argValue;
-					}
-					else if (argType.equals(PrimitiveType.DOUBLE))
-					{
-						formatString = "%f\n";
-						valueToPrint = argValue;
-					}
-					else if (argType.equals(PrimitiveType.BOOL))
-					{
-						formatString = "%s\n";
-						LLVMValueRef trueStr = LLVMBuildGlobalStringPtr(builder, "true", ".true");
-						LLVMValueRef falseStr = LLVMBuildGlobalStringPtr(builder, "false", ".false");
-						valueToPrint = LLVMBuildSelect(builder, argValue, trueStr, falseStr, "bool_str");
+						stringToPrint = argValue; // It's already a string, no conversion needed.
 					}
 					else
 					{
-						Debug.log("-> ERROR: Unhandled wrapper type for println: %s", argType.getName());
-						return null;
+						stringToPrint = callToString(argValue, argType); // Convert to string
+						needsRelease = true; // Mark this temporary string for release after use.
 					}
 
-					LLVMValueRef formatStrRef = LLVMBuildGlobalStringPtr(builder, formatString, ".fmt");
+					// 3. Get the raw C-string pointer from the NebulaString struct.
+					// The c_str field is at index 1. This is the critical fix.
+					LLVMTypeRef stringStructType = definedStructs.get("nebula.core.String");
+					LLVMValueRef fieldPtr = LLVMBuildStructGEP2(builder, stringStructType, stringToPrint, 1, "c_str_ptr");
+					LLVMTypeRef i8PtrType = LLVMPointerType(LLVMInt8TypeInContext(context), 0);
+					LLVMValueRef rawCString = LLVMBuildLoad2(builder, i8PtrType, fieldPtr, "raw_c_str");
 
-					// --- FIX START ---
-// When building the call, ensure you create the PointerPointer correctly.
-					PointerPointer<LLVMValueRef> printfArgs = new PointerPointer<>(formatStrRef, valueToPrint);
-// --- FIX END ---
+					// 4. Prepare and call the external C printf function.
+					String format = methodSymbol.getName().equals("println") ? "%s\n" : "%s";
+					LLVMValueRef formatStrRef = LLVMBuildGlobalStringPtr(builder, format, ".fmt");
+
+					// Use the safe, two-step PointerPointer creation.
+					PointerPointer<LLVMValueRef> printfArgs = new PointerPointer<>(2);
+					printfArgs.put(0, formatStrRef);
+					printfArgs.put(1, rawCString);
 
 					LLVMTypeRef printfFuncType = LLVMGlobalGetValueType(printfFunc);
+					LLVMValueRef callResult = LLVMBuildCall2(builder, printfFuncType, printfFunc, printfArgs, 2, "");
 
-					// --- START: ADD THIS DEBUGGING CODE ---
-					Debug.log("--- Preparing to call @printf ---");
-					Debug.log("  -> Function Type:  %s", LLVMPrintTypeToString(printfFuncType).getString());
-					Debug.log("  -> Function Value: %s", LLVMPrintValueToString(printfFunc).getString());
-					Debug.log("  -> Arg 0 (format): %s", LLVMPrintValueToString(formatStrRef).getString());
-					Debug.log("  -> Arg 1 (value):  %s", LLVMPrintValueToString(valueToPrint).getString());
-					Debug.log("---------------------------------");
-// --- END: ADD THIS DEBUGGING CODE ---
+					// 5. If we created a temporary string, release it now to prevent a leak.
+					if (needsRelease)
+					{
+						buildRelease(stringToPrint);
+					}
 
-					return LLVMBuildCall2(builder, printfFuncType, printfFunc, printfArgs, 2, "");
+					return callResult;
 				}
 
 				Debug.log("-> ERROR: Unhandled wrapper method call.");
 				return null;
 			}
+			// --- END OF FIX ---
 
 			// --- Existing logic for non-wrapper calls ---
 			String mangledName = methodSymbol.getMangledName();
@@ -1755,7 +1866,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		try
 		{
 			MethodSymbol constructorSymbol = (MethodSymbol) declaration.getResolvedSymbol();
-			this.currentMethodSymbol = (MethodSymbol) constructorSymbol;
+			this.currentMethodSymbol = constructorSymbol;
 			if (constructorSymbol == null)
 			{
 				return null;
@@ -1782,7 +1893,6 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				LLVMValueRef param = LLVMGetParam(function, i + 1);
 				String paramName = declaration.getParameters().get(i * 2 + 1).getLexeme();
 				LLVMSetValueName(param, paramName);
-
 				LLVMValueRef paramAlloca = LLVMBuildAlloca(builder, LLVMTypeOf(param), paramName + "_addr");
 				LLVMBuildStore(builder, param, paramAlloca);
 				scopes.peek().variables.put(paramName, paramAlloca);
@@ -1806,6 +1916,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			Debug.dedent();
 		}
 	}
+
 
 	//TODO: Implement
 	@Override
@@ -2079,74 +2190,60 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			VariableSymbol varSymbol = statement.getResolvedSymbol();
 			if (varSymbol == null)
 			{
-				Debug.log("-> ERROR: No resolved symbol for this variable. Skipping.");
 				return null;
 			}
 
 			Type nebulaType = varSymbol.getType();
-			LLVMTypeRef llvmType;
-
-			// --- FIX START ---
-// Check if the type is a class marked for stack allocation.
-			if (nebulaType instanceof ClassType && semanticAnalyzer.getStackAllocatedClasses().contains(((ClassType) nebulaType).getFqn()))
-			{
-				// If so, the variable's type is the struct itself, not a pointer to it.
-				llvmType = definedStructs.get(((ClassType) nebulaType).getFqn());
-			}
-			else
-			{
-				// Otherwise, use the existing logic (for primitives or heap pointers).
-				llvmType = getLLVMType(nebulaType);
-			}
-// --- FIX END ---
+			boolean isStackObj = isStackAllocated(nebulaType);
+			LLVMTypeRef llvmType = isStackObj ? definedStructs.get(((ClassType) nebulaType).getFqn()) : getLLVMType(nebulaType);
 
 			if (llvmType == null)
 			{
-				Debug.log("-> ERROR: Could not resolve LLVM type for Nebula type '%s'.", nebulaType.getName());
 				return null;
 			}
 
 			String varName = varSymbol.getName();
-			LLVMValueRef alloca = LLVMBuildAlloca(builder, llvmType, varSymbol.getName());
-			Debug.log("-> Allocated stack space (alloca) for '%s' of type %s", varName, LLVMPrintTypeToString(llvmType).getString());
-			scopes.peek().variables.put(varSymbol.getName(), alloca);
+			LLVMValueRef alloca = LLVMBuildAlloca(builder, llvmType, varName);
+			scopes.peek().variables.put(varName, alloca);
 
-			Debug.log("-> Stored variable pointer in the current scope.");
+			if (isStackObj)
+			{
+				scopes.peek().stackAllocatedObjects.add(varSymbol);
+			}
+			else if (isHeapAllocated(nebulaType))
+			{
+				scopes.peek().rcVariables.add(alloca);
+			}
 
 			if (statement.getInitializer() != null)
 			{
 				Debug.log("-> Generating code for initializer.");
-
-				// --- FIX START ---
-				// If it's a stack object, we need to tell 'new' where to construct it.
-				if (nebulaType instanceof ClassType && semanticAnalyzer.getStackAllocatedClasses().contains(((ClassType) nebulaType).getFqn()))
+				if (isStackObj)
 				{
-					// Use a temporary field to pass the stack address to the NewExpression visitor.
 					this.currentAllocaForStackObject = alloca;
 				}
-				// --- FIX END ---
-
 				LLVMValueRef initializerValue = statement.getInitializer().accept(this);
-
-				// --- FIX START ---
-				// Reset the temporary field immediately after.
 				this.currentAllocaForStackObject = null;
 
-				// For stack objects, 'new' already initialized the memory. For all other types, we must store the result.
-				if (!(nebulaType instanceof ClassType && semanticAnalyzer.getStackAllocatedClasses().contains(((ClassType) nebulaType).getFqn())))
+				if (initializerValue != null)
 				{
-					if (initializerValue != null)
+					if (isStackObj)
 					{
-						LLVMBuildStore(builder, initializerValue, alloca);
+						// --- FIX 2: Store the returned struct value ---
+						if (LLVMGetTypeKind(LLVMTypeOf(initializerValue)) == LLVMStructTypeKind)
+						{
+							LLVMBuildStore(builder, initializerValue, alloca);
+						}
+						// If it wasn't a struct, it was a 'new' expression, which already
+						// constructed in-place via currentAllocaForStackObject.
 					}
 					else
 					{
-						Debug.log("-> WARNING: Initializer expression yielded a null value.");
+						// This handles primitives and heap pointers
+						LLVMBuildStore(builder, initializerValue, alloca);
 					}
 				}
-				// --- FIX END ---
 			}
-
 			return alloca;
 		}
 		finally
@@ -2161,6 +2258,17 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		Debug.log("Visiting ExpressionStatement");
 		Debug.indent();
 		LLVMValueRef result = statement.getExpression().accept(this);
+
+		// **FIX FOR MEMORY LEAK**
+		// If the expression result is a heap-allocated object, it means we have
+		// an owning reference that is not being assigned to anything.
+		// We must release it to avoid a memory leak, UNLESS it came from an assignment.
+		if (result != null && isHeapAllocated(statement.getExpression().getResolvedType()) && !(statement.getExpression() instanceof AssignmentExpression)) // <-- ADD THIS CHECK
+		{
+			Debug.log("-> Expression result is an unassigned owned object. Releasing it.");
+			buildRelease(result);
+		}
+
 		Debug.dedent();
 		return result;
 	}
@@ -2174,21 +2282,36 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		{
 			if (statement.getValue() != null)
 			{
-				LLVMValueRef returnValue = statement.getValue().accept(this);
-				if (returnValue != null)
+				LLVMValueRef valueToReturn = statement.getValue().accept(this);
+				if (valueToReturn != null)
 				{
+					Type returnType = statement.getValue().getResolvedType();
+
+					if (statement.getValue() instanceof IdentifierExpression)
+					{
+						Symbol symbol = ((IdentifierExpression) statement.getValue()).getResolvedSymbol();
+						if (symbol instanceof VariableSymbol && isStackAllocated(symbol.getType()))
+						{
+							this.returnedSymbol = symbol;
+						}
+					}
+
+					if (isStackAllocated(returnType))
+					{
+						LLVMTypeRef structType = definedStructs.get(((ClassType) returnType).getFqn());
+						valueToReturn = LLVMBuildLoad2(builder, structType, valueToReturn, "ret_stack_obj_val");
+					}
+
 					Debug.log("-> Generating 'ret' with a value.");
-					return LLVMBuildRet(builder, returnValue);
+					return LLVMBuildRet(builder, valueToReturn);
 				}
 				else
 				{
-					Debug.log("-> ERROR: Return expression generated a null value.");
 					return null;
 				}
 			}
 			else
 			{
-				Debug.log("-> Generating 'ret void'.");
 				return LLVMBuildRetVoid(builder);
 			}
 		}
@@ -2243,17 +2366,14 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				if (classSymbol.getFqn().equals("nebula.core.String"))
 				{
 					Debug.log("-> Defining special struct body for nebula.core.String.");
+					// --- START OF FIX ---
+					// The struct is now { i32, i8* } for { ref_count, c_str }
+					LLVMTypeRef i32Type = LLVMInt32TypeInContext(context);
 					LLVMTypeRef i8PtrType = LLVMPointerType(LLVMInt8TypeInContext(context), 0);
 
-					// --- START OF FIX ---
-					// Use the reliable two-step process to create the PointerPointer.
-					// 1. Allocate a PointerPointer of size 1.
-					PointerPointer<LLVMTypeRef> fieldTypes = new PointerPointer<>(1);
-					// 2. Put the desired LLVM type into the first slot.
-					fieldTypes.put(0, i8PtrType);
+					PointerPointer<LLVMTypeRef> fieldTypes = new PointerPointer<>(i32Type, i8PtrType);
+					LLVMStructSetBody(structType, fieldTypes, 2, 0);
 					// --- END OF FIX ---
-
-					LLVMStructSetBody(structType, fieldTypes, 1, 0);
 					continue;
 				}
 
@@ -2309,21 +2429,25 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		{
 			Debug.log("Declaring C++ runtime helper functions...");
 			LLVMTypeRef stringPtrType = LLVMPointerType(definedStructs.get("nebula.core.String"), 0);
-
-			// Define the correct parameter types
 			LLVMTypeRef i32 = LLVMInt32TypeInContext(context);
 			LLVMTypeRef i1 = LLVMInt1TypeInContext(context);
 			LLVMTypeRef f64 = LLVMDoubleTypeInContext(context);
 			LLVMTypeRef i64 = LLVMInt64TypeInContext(context);
 			LLVMTypeRef objPtr = LLVMPointerType(LLVMInt8TypeInContext(context), 0);
 
-			// --- START OF DEFINITIVE FIX ---
-			// Create the PointerPointer first, then call put() on the next line.
+			// **FIX FOR CRASH**
+			// Declare NebulaString* create_nebula_string(const char*)
+			// This was the missing declaration causing the crash.
+			LLVMTypeRef i8PtrType = LLVMPointerType(LLVMInt8TypeInContext(context), 0);
+			PointerPointer<LLVMTypeRef> createStringParams = new PointerPointer<>(1);
+			createStringParams.put(0, i8PtrType);
+			LLVMAddFunction(module, "create_nebula_string", LLVMFunctionType(stringPtrType, createStringParams, 1, 0));
+
 
 			PointerPointer<LLVMTypeRef> i32Param = new PointerPointer<>(1);
 			i32Param.put(0, i32);
 			LLVMAddFunction(module, "int32_toString", LLVMFunctionType(stringPtrType, i32Param, 1, 0));
-			LLVMAddFunction(module, "char_toString", LLVMFunctionType(stringPtrType, i32Param, 1, 0)); // Re-use for char
+			LLVMAddFunction(module, "char_toString", LLVMFunctionType(stringPtrType, i32Param, 1, 0));
 
 			PointerPointer<LLVMTypeRef> i64Param = new PointerPointer<>(1);
 			i64Param.put(0, LLVMInt64TypeInContext(context));
@@ -2346,15 +2470,13 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			concatParams.put(1, stringPtrType);
 			LLVMAddFunction(module, "string_concat", LLVMFunctionType(stringPtrType, concatParams, 2, 0));
 
-			// --- ADD THIS DECLARATION ---
-			// Declare i32 @string_length(ptr)
 			PointerPointer<LLVMTypeRef> stringLengthParams = new PointerPointer<>(1);
 			stringLengthParams.put(0, stringPtrType);
 			LLVMAddFunction(module, "string_length", LLVMFunctionType(i32, stringLengthParams, 1, 0));
-			// --- END OF ADDITION ---
 
 			Debug.log("-> Runtime functions declared.");
 		}
+
 
 		private void declareFunctionSignature(MethodSymbol methodSymbol)
 		{
@@ -2811,5 +2933,82 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		LLVMBuildRetVoid(builder);
 
 		Debug.dedent();
+	}
+
+	private void buildRetain(LLVMValueRef objPtr)
+	{
+		if (objPtr == null)
+		{
+			return;
+		}
+		LLVMValueRef castedPtr = LLVMBuildBitCast(builder, objPtr, LLVMPointerType(LLVMInt8TypeInContext(context), 0), "rc_cast");
+
+		// --- START OF FIX ---
+		// Use the safe, two-step PointerPointer creation.
+		PointerPointer<LLVMValueRef> args = new PointerPointer<>(1);
+		args.put(0, castedPtr);
+		// --- END OF FIX ---
+
+		LLVMTypeRef retainFuncType = LLVMGlobalGetValueType(retainFunc);
+		LLVMBuildCall2(builder, retainFuncType, retainFunc, args, 1, "");
+	}
+
+	private void buildRelease(LLVMValueRef objPtr)
+	{
+		if (objPtr == null)
+		{
+			return;
+		}
+		LLVMValueRef castedPtr = LLVMBuildBitCast(builder, objPtr, LLVMPointerType(LLVMInt8TypeInContext(context), 0), "rc_cast");
+
+		// --- START OF FIX ---
+		// Use the safe, two-step PointerPointer creation.
+		PointerPointer<LLVMValueRef> args = new PointerPointer<>(1);
+		args.put(0, castedPtr);
+		// --- END OF FIX ---
+
+		LLVMTypeRef releaseFuncType = LLVMGlobalGetValueType(releaseFunc);
+		LLVMBuildCall2(builder, releaseFuncType, releaseFunc, args, 1, "");
+	}
+
+	// A helper to check if a type should be reference counted
+	private boolean isHeapAllocated(Type type)
+	{
+		return type instanceof ClassType && !semanticAnalyzer.getStackAllocatedClasses().contains(((ClassType) type).getFqn());
+	}
+
+	// This is the correct and safe way to check for stack-allocated objects.
+	private boolean isStackAllocated(Type type)
+	{
+		return type instanceof ClassType && semanticAnalyzer.getStackAllocatedClasses().contains(((ClassType) type).getFqn());
+	}
+
+	/**
+	 * Generates the destruction code for a single stack-allocated object.
+	 * This is extracted from exitScope() to be reusable for reassignments.
+	 */
+	private void destructStackObject(VariableSymbol stackObjSymbol)
+	{
+		LLVMValueRef objAlloca = findVariable(stackObjSymbol.getName());
+		if (objAlloca == null)
+		{
+			return;
+		}
+
+		ClassSymbol classSymbol = ((ClassType) stackObjSymbol.getType()).classSymbol;
+
+		for (Symbol memberSymbol : classSymbol.getClassScope().getSymbols().values())
+		{
+			if (memberSymbol instanceof VariableSymbol fieldSymbol && isHeapAllocated(fieldSymbol.getType()))
+			{
+				Debug.log("-> Releasing member '%s' of stack object '%s'", fieldSymbol.getName(), stackObjSymbol.getName());
+				int fieldIndex = classSymbol.getFieldIndex(fieldSymbol.getName());
+				LLVMTypeRef structType = definedStructs.get(classSymbol.getFqn());
+				LLVMValueRef fieldPtr = LLVMBuildStructGEP2(builder, structType, objAlloca, fieldIndex, fieldSymbol.getName() + "_ptr");
+				LLVMTypeRef fieldLLVMType = getLLVMType(fieldSymbol.getType());
+				LLVMValueRef heapPtr = LLVMBuildLoad2(builder, fieldLLVMType, fieldPtr, fieldSymbol.getName() + "_val");
+				buildRelease(heapPtr);
+			}
+		}
 	}
 }
