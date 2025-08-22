@@ -566,12 +566,28 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 	{
 		Debug.log("Visiting BlockStatement");
 		Debug.indent();
-		enterScope();
+
+		// --- START OF FIX ---
+		// Check if this is a "real" block that should introduce a new scope.
+		// A synthetic block (from a multi-variable declaration) should not.
+		boolean isRealScope = !statement.isSynthetic();
+
+		if (isRealScope)
+		{
+			enterScope();
+		}
+
 		for (Statement stmt : statement.getStatements())
 		{
 			stmt.accept(this);
 		}
-		exitScope();
+
+		if (isRealScope)
+		{
+			exitScope();
+		}
+		// --- END OF FIX ---
+
 		Debug.dedent();
 		return null;
 	}
@@ -669,26 +685,42 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			ClassSymbol stringClass = semanticAnalyzer.getDeclaredClasses().get("nebula.core.String");
 			if (op.equals("+") && (leftType.equals(stringClass.getType()) || rightType.equals(stringClass.getType())))
 			{
-				Debug.log("-> Detected string concatenation.");
-
 				// --- START OF FIX ---
 				LLVMValueRef leftVal = expression.getLeft().accept(this);
-				// If the operand is a variable, its ref must be incremented because
-				// string_concat will consume a reference, but the variable must remain valid.
-				if (expression.getLeft() instanceof IdentifierExpression || expression.getLeft() instanceof DotExpression)
+				LLVMValueRef rightVal = expression.getRight().accept(this);                // Retain-when-still-live (Option B):
+				// If an operand ultimately refers to an existing variable / field (not a temporary)
+				// that holds a heap-allocated string, retain it BEFORE passing to the consuming concat.
+				// We also unwrap any GroupingExpressions so `("("+x+")")` still gets retained.
+				java.util.function.Function<Expression, Expression> _unwrap = new java.util.function.Function<>()
+				{
+					@Override
+					public Expression apply(Expression e)
+					{
+						while (e instanceof GroupingExpression)
+						{
+							e = ((GroupingExpression) e).getExpression();
+						}
+						return e;
+					}
+				};
+				Expression leftSrc = _unwrap.apply(expression.getLeft());
+				Expression rightSrc = _unwrap.apply(expression.getRight());
+
+				boolean leftNeedsRetain = isHeapAllocated(leftType) && (leftSrc instanceof IdentifierExpression || leftSrc instanceof DotExpression);
+
+				boolean rightNeedsRetain = isHeapAllocated(rightType) && (rightSrc instanceof IdentifierExpression || rightSrc instanceof DotExpression);
+
+				if (leftNeedsRetain)
 				{
 					buildRetain(leftVal);
 				}
-
-				LLVMValueRef rightVal = expression.getRight().accept(this);
-				// Do the same for the right operand.
-				if (expression.getRight() instanceof IdentifierExpression || expression.getRight() instanceof DotExpression)
+				if (rightNeedsRetain)
 				{
 					buildRetain(rightVal);
 				}
 
-				// Convert non-string operands to strings. These toString calls already return
-				// a new object with a +1 ref count, so no retain is needed for them.
+				// Now, convert any non-string operands. These create NEW temporaries with ref_count=1.
+				// These create NEW temporaries with ref_count = 1.
 				if (!leftType.equals(stringClass.getType()))
 				{
 					leftVal = callToString(leftVal, leftType);
@@ -707,12 +739,9 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 				// Call the C++ runtime helper for concatenation
 				LLVMValueRef concatFunc = LLVMGetNamedFunction(module, "string_concat");
 				LLVMTypeRef concatFuncType = LLVMGlobalGetValueType(concatFunc);
-				// --- START OF FIX ---
-				// Use the safe, two-step PointerPointer creation.
 				PointerPointer<LLVMValueRef> args = new PointerPointer<>(2);
 				args.put(0, leftVal);
 				args.put(1, rightVal);
-				// --- END OF FIX ---
 
 				// This returns a new string with a +1 ref count.
 				return LLVMBuildCall2(builder, concatFuncType, concatFunc, args, 2, "concat_str");
@@ -2582,14 +2611,35 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		Debug.indent();
 		LLVMValueRef result = statement.getExpression().accept(this);
 
-		// **FIX FOR MEMORY LEAK**
 		// If the expression result is a heap-allocated object, it means we have
 		// an owning reference that is not being assigned to anything.
-		// We must release it to avoid a memory leak, UNLESS it came from an assignment.
-		if (result != null && isHeapAllocated(statement.getExpression().getResolvedType()) && !(statement.getExpression() instanceof AssignmentExpression)) // <-- ADD THIS CHECK
+		// We must release it to avoid a memory leak.
+		if (result != null && isHeapAllocated(statement.getExpression().getResolvedType()))
 		{
-			Debug.log("-> Expression result is an unassigned owned object. Releasing it.");
-			buildRelease(result);
+			boolean isAssignment = statement.getExpression() instanceof AssignmentExpression;
+
+			// --- START OF FIX ---
+			// Check if it's a call to a wrapper. If so, the wrapper has already handled the release.
+			boolean isWrapperCall = false;
+			if (statement.getExpression() instanceof CallExpression)
+			{
+				Symbol symbol = ((CallExpression) statement.getExpression()).getResolvedSymbol();
+				if (symbol instanceof MethodSymbol && ((MethodSymbol) symbol).isWrapper())
+				{
+					isWrapperCall = true;
+				}
+			}
+
+			if (!isAssignment && !isWrapperCall)
+			{ // <-- MODIFY THIS CONDITION
+				Debug.log("-> Expression result is an unassigned owned object. Releasing it.");
+				buildRelease(result);
+			}
+			else
+			{
+				Debug.log("-> Skipping release for assignment or consumed wrapper call result.");
+			}
+			// --- END OF FIX ---
 		}
 
 		Debug.dedent();
@@ -2776,9 +2826,15 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			i64Param.put(0, LLVMInt64TypeInContext(context));
 			LLVMAddFunction(module, "int64_toString", LLVMFunctionType(stringPtrType, i64Param, 1, 0));
 
+			LLVMAddFunction(module, "uint64_toString", LLVMFunctionType(stringPtrType, i64Param, 1, 0));
+
 			PointerPointer<LLVMTypeRef> f64Param = new PointerPointer<>(1);
 			f64Param.put(0, f64);
 			LLVMAddFunction(module, "double_toString", LLVMFunctionType(stringPtrType, f64Param, 1, 0));
+
+			PointerPointer<LLVMTypeRef> f32Param = new PointerPointer<>(1);
+			f32Param.put(0, LLVMFloatTypeInContext(context));
+			LLVMAddFunction(module, "float_toString", LLVMFunctionType(stringPtrType, f32Param, 1, 0));
 
 			PointerPointer<LLVMTypeRef> i1Param = new PointerPointer<>(1);
 			i1Param.put(0, i1);
@@ -3137,15 +3193,6 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			value = LLVMBuildSExt(builder, value, LLVMInt32TypeInContext(context), "promoted_to_i32");
 			type = PrimitiveType.INT32; // Treat it as an int32 from now on
 		}
-
-		// --- ADD THIS BLOCK ---
-		// Promote float to double to use the existing double_toString helper.
-		if (type.equals(PrimitiveType.FLOAT))
-		{
-			value = LLVMBuildFPExt(builder, value, LLVMDoubleTypeInContext(context), "promoted_to_double");
-			type = PrimitiveType.DOUBLE; // Treat it as a double from now on
-		}
-		// --- END OF FIX ---
 
 		String funcName = type.getName().replace('.', '_') + "_toString";
 		LLVMValueRef toStringFunc = LLVMGetNamedFunction(module, funcName);

@@ -14,10 +14,12 @@ import java.util.List;
 public class BlockStatement implements Statement
 {
 	private final List<Statement> statements;
+	private final boolean isSynthetic; // <-- ADD THIS FLAG
 
 	public BlockStatement()
 	{
 		this.statements = new ArrayList<>();
+		this.isSynthetic = false;
 	}
 
 	/**
@@ -25,9 +27,10 @@ public class BlockStatement implements Statement
 	 *
 	 * @param statements The list of statements to include in this block.
 	 */
-	public BlockStatement(List<Statement> statements)
+	public BlockStatement(List<Statement> statements, boolean isSynthetic)
 	{
 		this.statements = new ArrayList<>(statements); // Defensive copy
+		this.isSynthetic = isSynthetic;
 	}
 
 
@@ -41,11 +44,18 @@ public class BlockStatement implements Statement
 		return statements;
 	}
 
+	// ADD THIS GETTER
+	public boolean isSynthetic()
+	{
+		return isSynthetic;
+	}
+
+
 	@Override
 	public String toString()
 	{
 		StringBuilder sb = new StringBuilder("{\n");
-		for(Statement stmt : statements)
+		for (Statement stmt : statements)
 		{
 			// Indent statements within the block
 			sb.append(indent(stmt.toString(), 1));
@@ -65,7 +75,7 @@ public class BlockStatement implements Statement
 	{
 		StringBuilder indentedText = new StringBuilder();
 		String prefix = "  ".repeat(level);
-		for(String line : text.split("\n"))
+		for (String line : text.split("\n"))
 		{
 			indentedText.append(prefix).append(line).append("\n");
 		}

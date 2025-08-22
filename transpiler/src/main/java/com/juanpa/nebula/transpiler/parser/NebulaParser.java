@@ -622,7 +622,7 @@ public class NebulaParser
 			statements.add(statement());
 		}
 		consume(TokenType.RIGHT_BRACE, "Expected '}' after block statement.");
-		return new BlockStatement(statements);
+		return new BlockStatement(statements, false);
 	}
 
 	/**
@@ -914,25 +914,57 @@ public class NebulaParser
 	}
 
 	/**
-	 * Parses a variable declaration statement. This is the entry point
-	 * from `statement()` when modifiers are parsed *before* the type token.
+	 * Parses a variable declaration statement, which can now include multiple
+	 * comma-separated variables of the same type.
 	 * <p>
-	 * Grammar: `(MODIFIERS)* (TYPE | VAR) IDENTIFIER (= EXPRESSION)? ;`
+	 * Grammar: `(MODIFIERS)* (TYPE | VAR) IDENTIFIER (= EXPRESSION)? (, IDENTIFIER (= EXPRESSION)?)* ;`
 	 *
-	 * @return A VariableDeclarationStatement AST node.
+	 * @return A Statement node. If only one variable is declared, it's a
+	 * VariableDeclarationStatement. If multiple are declared, they are
+	 * wrapped in a BlockStatement.
 	 * @throws SyntaxError if a syntax error occurs.
 	 */
-	private VariableDeclarationStatement variableDeclarationStatement(List<Token> modifiers) throws SyntaxError
+	private Statement variableDeclarationStatement(List<Token> modifiers) throws SyntaxError
 	{
+		// 1. Parse the common parts that apply to all variables on this line.
 		TypeSpecifier typeSpec = parseTypeSpecifier();
-		Token name = consume(TokenType.IDENTIFIER, "Expected variable name.");
-		Expression initializer = null;
-		if (match(TokenType.ASSIGN))
+		List<Statement> declarations = new ArrayList<>();
+
+		// 2. Use a do-while loop to parse one or more comma-separated variables.
+		do
 		{
-			initializer = expression();
-		}
+			Token name = consume(TokenType.IDENTIFIER, "Expected variable name.");
+			Expression initializer = null;
+			if (match(TokenType.ASSIGN))
+			{
+				initializer = expression();
+			}
+
+			// 3. Create a standard declaration statement for each variable found.
+			declarations.add(new VariableDeclarationStatement(
+					modifiers,
+					typeSpec.baseType(),
+					typeSpec.rank(),
+					name,
+					initializer
+			));
+
+		} while (match(TokenType.COMMA)); // Continue looping if we find a comma.
+
+		// 4. After the last variable, we expect a semicolon to end the statement.
 		consume(TokenType.SEMICOLON, "Expected ';' after variable declaration.");
-		return new VariableDeclarationStatement(modifiers, typeSpec.baseType(), typeSpec.rank(), name, initializer);
+
+		// 5. Return the result.
+		if (declarations.size() == 1)
+		{
+			return declarations.get(0);
+		}
+		else
+		{
+			// --- THIS IS THE CHANGE ---
+			// Mark the block as synthetic so the analyzer doesn't create a new scope.
+			return new BlockStatement(declarations, true);
+		}
 	}
 
 	/**
@@ -1405,8 +1437,9 @@ public class NebulaParser
 				String literalPart = content.substring(lastIndex);
 				if (!literalPart.isEmpty())
 				{
-					Token partToken = new Token(TokenType.STRING_LITERAL, "\"" + literalPart + "\"", literalPart, token.getLine(), token.getColumn());
-					parts.add(new LiteralExpression(partToken));
+					String unescapedPart = unescapeStringPart(literalPart);
+					Token partToken = new Token(TokenType.STRING_LITERAL, "\"" + unescapedPart + "\"", unescapedPart, token.getLine(), token.getColumn());
+					parts.add(new LiteralExpression(unescapedPart, partToken));
 				}
 				break;
 			}
@@ -1415,12 +1448,13 @@ public class NebulaParser
 			if (openBrace > lastIndex)
 			{
 				String literalPart = content.substring(lastIndex, openBrace);
-				Token partToken = new Token(TokenType.STRING_LITERAL, "\"" + literalPart + "\"", literalPart, token.getLine(), token.getColumn());
-				parts.add(new LiteralExpression(partToken));
+				String unescapedPart = unescapeStringPart(literalPart);
+				Token partToken = new Token(TokenType.STRING_LITERAL, "\"" + unescapedPart + "\"", unescapedPart, token.getLine(), token.getColumn());
+				parts.add(new LiteralExpression(unescapedPart, partToken));
 			}
 
 			// Find the matching closing brace
-			int closeBrace = content.indexOf('}', openBrace);
+			int closeBrace = findMatchingBrace(content, openBrace);
 			if (closeBrace == -1)
 			{
 				throw error(token, "Unterminated expression in interpolated string.");
@@ -1439,17 +1473,21 @@ public class NebulaParser
 				throw error(token, "Invalid expression inside interpolated string: " + exprString);
 			}
 
-			// The token list from the lexer includes an EOF, remove it before parsing
-			if (!snippetTokens.isEmpty() && snippetTokens.get(snippetTokens.size() - 1).getType() == TokenType.EOF)
-			{
-				snippetTokens.remove(snippetTokens.size() - 1);
-			}
-
+			// ✅ Keep EOF token so the parser knows where the snippet ends
 			NebulaParser snippetParser = new NebulaParser(snippetTokens, this.errorReporter);
 			Expression embeddedExpr = snippetParser.expression();
 
-			// We need to wrap the result in a GroupingExpression to preserve precedence
-			parts.add(new GroupingExpression(new Token(TokenType.LEFT_PAREN, "(", null, -1, -1), embeddedExpr));
+			// Ensure the snippet consumed everything
+			if (!snippetParser.isAtEnd())
+			{
+				throw error(token, "Unexpected tokens inside interpolated expression: " + exprString);
+			}
+
+			// Wrap the result in a GroupingExpression to preserve precedence
+			parts.add(new GroupingExpression(
+					new Token(TokenType.LEFT_PAREN, "(", null, -1, -1),
+					embeddedExpr
+			));
 
 			lastIndex = closeBrace + 1;
 		}
@@ -1458,7 +1496,7 @@ public class NebulaParser
 		if (parts.isEmpty())
 		{
 			Token emptyToken = new Token(TokenType.STRING_LITERAL, "\"\"", "", token.getLine(), token.getColumn());
-			return new LiteralExpression(emptyToken);
+			return new LiteralExpression("", emptyToken);
 		}
 
 		// Chain all the parts together with the '+' operator
@@ -1471,6 +1509,7 @@ public class NebulaParser
 
 		return result;
 	}
+
 
 	/**
 	 * Consumes the current token if its type matches any of the given types.
@@ -1772,7 +1811,7 @@ public class NebulaParser
 				{
 					defaultBodyStatements.add(statement());
 				}
-				defaultBlock = new BlockStatement(defaultBodyStatements);
+				defaultBlock = new BlockStatement(defaultBodyStatements, false);
 			}
 			else
 			{
@@ -1929,4 +1968,116 @@ public class NebulaParser
 		}
 		return new AccessorDeclaration(keyword, modifiers, body, semicolon);
 	}
+
+	/**
+	 * Processes escape sequences within a raw string segment.
+	 * This is used to correctly interpret literals inside interpolated strings.
+	 *
+	 * @param rawPart The raw string segment (e.g., "Hello \\n world").
+	 * @return The string with escape sequences processed (e.g., "Hello \n world").
+	 */
+	private String unescapeStringPart(String rawPart)
+	{
+		StringBuilder value = new StringBuilder();
+		for (int i = 0; i < rawPart.length(); i++)
+		{
+			char c = rawPart.charAt(i);
+			if (c == '\\' && i + 1 < rawPart.length())
+			{
+				char escapeChar = rawPart.charAt(++i);
+				switch (escapeChar)
+				{
+					case 'n':
+						value.append('\n');
+						break;
+					case 't':
+						value.append('\t');
+						break;
+					case 'r':
+						value.append('\r');
+						break;
+					case 'b':
+						value.append('\b');
+						break;
+					case 'f':
+						value.append('\f');
+						break;
+					case '"':
+						value.append('"');
+						break;
+					case '\\':
+						value.append('\\');
+						break;
+					case '{':
+						value.append('{');
+						break; // Allow escaping the interpolation brace
+					case '0':
+						value.append('\0');
+						break;
+					default:
+						// If not a recognized escape, just append both characters
+						value.append('\\').append(escapeChar);
+						break;
+				}
+			}
+			else
+			{
+				value.append(c);
+			}
+		}
+		return value.toString();
+	}
+
+	/**
+	 * Finds the matching closing brace '}' for an opening brace at a given index,
+	 * correctly handling nested braces.
+	 *
+	 * @param content        The string to search within.
+	 * @param openBraceIndex The index of the opening brace '{'.
+	 * @return The index of the matching closing brace, or -1 if not found.
+	 */
+	private int findMatchingBrace(String content, int openBraceIndex)
+	{
+		int braceDepth = 1;
+		boolean inString = false;
+		char stringDelimiter = '\0';
+
+		for (int i = openBraceIndex + 1; i < content.length(); i++)
+		{
+			char c = content.charAt(i);
+
+			// Toggle string mode on quotes
+			if ((c == '"' || c == '\'') && (i == 0 || content.charAt(i - 1) != '\\'))
+			{
+				if (!inString)
+				{
+					inString = true;
+					stringDelimiter = c;
+				}
+				else if (c == stringDelimiter)
+				{
+					inString = false;
+				}
+				continue;
+			}
+
+			if (!inString)
+			{
+				if (c == '{')
+				{
+					braceDepth++;
+				}
+				else if (c == '}')
+				{
+					braceDepth--;
+					if (braceDepth == 0)
+					{
+						return i; // Found the matching brace
+					}
+				}
+			}
+		}
+		return -1; // No matching brace found
+	}
+
 }

@@ -214,20 +214,21 @@ public class PrimitiveType extends Type
 					other.equals(CHAR);
 		}
 
-		// Unsigned integer widening
+		// Allow signed -> unsigned widening if the target has larger or equal width
 		if (this.equals(UINT64) || this.equals(ULONG))
 		{
-			return other.equals(UINT32) || other.equals(UINT) ||
-					other.equals(UINT16) || other.equals(USHORT) ||
-					other.equals(UINT8) || other.equals(UBYTE) ||
-					other.equals(CHAR32) || other.equals(CHAR16) || other.equals(CHAR);
+			// uint64 can take any signed 32/64-bit value (all int32 values fit)
+			return other.equals(INT32) || other.equals(INT64) ||
+					other.equals(UINT32) || other.equals(UINT16) || other.equals(UINT8) ||
+					other.equals(CHAR) || other.equals(CHAR16) || other.equals(CHAR32);
 		}
 
 		if (this.equals(UINT32) || this.equals(UINT))
 		{
-			return other.equals(UINT16) || other.equals(USHORT) ||
-					other.equals(UINT8) || other.equals(UBYTE) ||
-					other.equals(CHAR16) || other.equals(CHAR);
+			// uint32 can take int16, int8, etc. (all their values fit)
+			return other.equals(INT16) || other.equals(INT8) ||
+					other.equals(UINT16) || other.equals(UINT8) ||
+					other.equals(CHAR) || other.equals(CHAR16);
 		}
 
 		if (this.equals(UINT16) || this.equals(USHORT))

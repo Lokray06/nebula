@@ -23,9 +23,22 @@ struct NebulaString {
     const char* c_str;
 };
 
+// Forward declare the function with C linkage so it matches the definition.
+extern "C" {
+    NebulaString* create_nebula_string(const char* initial_value);
+}
+
+// This is a new C++ template helper. Place it *before* the 'extern "C"' block.
+// It handles both floats and doubles cleanly.
+template<typename T>
+NebulaString* float_to_string_helper(T value) {
+    std::stringstream ss;
+    ss << value;
+    return create_nebula_string(ss.str().c_str());
+}
+
 // 'extern "C"' is crucial for linking with LLVM IR.
 extern "C" {
-
     // --- Core Memory Management Functions ---
 
     /**
@@ -62,13 +75,13 @@ extern "C" {
     /**
      * Creates a new NebulaString on the heap with a reference count of 1.
      * The caller "owns" this new reference.
-     */
+    */
     NebulaString* create_nebula_string(const char* initial_value) {
         if (initial_value == nullptr) {
             initial_value = "";
         }
         NebulaString* str_obj = new NebulaString();
-        str_obj->header.ref_count = 1; // Start with one reference
+        str_obj->header.ref_count = 1;
 
         char* str_data = new char[strlen(initial_value) + 1];
         strcpy(str_data, initial_value);
@@ -97,8 +110,20 @@ extern "C" {
         return create_nebula_string(std::to_string(value).c_str());
     }
 
+    NebulaString* uint64_toString(uint64_t value) {
+        char buffer[21]; // Enough for 18,446,744,073,709,551,615
+        snprintf(buffer, sizeof(buffer), "%llu", value);
+        return create_nebula_string(buffer);
+    }
+
+    // vvv REPLACE this function vvv
     NebulaString* double_toString(double value) {
-        return create_nebula_string(std::to_string(value).c_str());
+        return float_to_string_helper(value);
+    }
+
+    // vvv ADD this new function for floats vvv
+    NebulaString* float_toString(float value) {
+        return float_to_string_helper(value);
     }
 
     NebulaString* bool_toString(bool value) {

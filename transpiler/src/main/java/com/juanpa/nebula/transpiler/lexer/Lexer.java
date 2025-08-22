@@ -522,14 +522,17 @@ public class Lexer
 	private void scanStringLiteral(boolean isInterpolated)
 	{
 		StringBuilder value = new StringBuilder();
-		while (peek() != '"' && !isAtEnd())
+		int braceDepth = 0;
+
+		while (!isAtEnd())
 		{
 			char c = advance();
+
 			if (c == '\\')
 			{
+				// handle escapes as you already do...
 				if (isAtEnd())
 				{
-					error("Unterminated escape sequence in string literal.");
 					break;
 				}
 				char escapeChar = advance();
@@ -562,14 +565,38 @@ public class Lexer
 					default:
 						error("Invalid escape sequence '\\" + escapeChar + "' in string literal.");
 						value.append('\\').append(escapeChar);
-						break;
 				}
+				continue;
 			}
-			else if (c == '\n')
+
+			if (c == '{' && isInterpolated)
 			{
-				value.append('\n');
+				braceDepth++;
+				value.append(c);
+				continue;
+			}
+
+			if (c == '}' && isInterpolated)
+			{
+				if (braceDepth > 0)
+				{
+					braceDepth--;
+				}
+				value.append(c);
+				continue;
+			}
+
+			if (c == '"' && (!isInterpolated || braceDepth == 0))
+			{
+				// End of string
+				break;
+			}
+
+			if (c == '\n')
+			{
 				line++;
 				column = 0;
+				value.append(c);
 			}
 			else
 			{
@@ -584,19 +611,14 @@ public class Lexer
 			return;
 		}
 
-		// Consume the closing quote
-		advance();
-
-		// Get the raw string value (without the quotes)
-		String value2 = source.substring(start + (isInterpolated ? 2 : 1), current - 1);
-
+		String strVal = value.toString();
 		if (isInterpolated)
 		{
-			addToken(TokenType.INTERPOLATED_STRING_LITERAL, value2);
+			addToken(TokenType.INTERPOLATED_STRING_LITERAL, strVal);
 		}
 		else
 		{
-			addToken(TokenType.STRING_LITERAL, value.toString());
+			addToken(TokenType.STRING_LITERAL, strVal);
 		}
 	}
 
