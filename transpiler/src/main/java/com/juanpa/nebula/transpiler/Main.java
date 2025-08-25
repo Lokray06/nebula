@@ -451,7 +451,7 @@ public class Main
 	}
 
 	/**
-	 * NEW: Compiles the generated LLVM IR file into an executable and runs it.
+	 * Compiles the generated LLVM IR file into an executable using Link-Time Optimization (LTO) and runs it.
 	 *
 	 * @param outputDirPath The directory where the executable will be placed.
 	 * @param llvmIrFile    The path to the generated .ll file.
@@ -460,37 +460,40 @@ public class Main
 	private static void compileAndRunLLVM(Path outputDirPath, Path llvmIrFile, CompilerConfig config)
 	{
 		// 1. Define all necessary file paths
-		Path runtimeCppFile = Paths.get("transpiler/src/main/cpp/nebula_runtime.cpp"); // Assumes it's in the project root
+		Path runtimeCppFile = Paths.get("transpiler/src/main/cpp/nebula_runtime.cpp");
 		if (!Files.exists(runtimeCppFile))
 		{
 			System.err.println("FATAL: C++ runtime file not found at: " + runtimeCppFile.toAbsolutePath());
 			return;
 		}
-		Path runtimeObjectFile = outputDirPath.resolve("nebula_runtime.o");
-		Path mainObjectFile = outputDirPath.resolve(llvmIrFile.getFileName().toString().replace(".ll", ".o"));
+		Path runtimeBitcodeFile = outputDirPath.resolve("nebula_runtime.bc");
+		Path mainBitcodeFile = outputDirPath.resolve(llvmIrFile.getFileName().toString().replace(".ll", ".bc"));
 		Path executableFile = outputDirPath.resolve("main");
 
-		// 2. Compile your C++ runtime into an object file
-		System.out.println("\n--- Compiling C++ Runtime ---");
+		// 2. Compile C++ runtime to LLVM bitcode using clang++
+		System.out.println("\n--- Compiling C++ Runtime to LLVM Bitcode ---");
 		try
 		{
+			// *** FIX 1: Explicitly use clang++ from the LLVM compiler path for consistency ***
 			List<String> runtimeCompileCommand = List.of(
-					config.getCppCompilerPath(),
-					"-c", "-fPIC", "-O3",
+					config.getLlvmCompilerPath() + "++", // Use clang++
+					"-flto",
+					"-O3",
+					"-emit-llvm",
+					"-c",
 					runtimeCppFile.toAbsolutePath().toString(),
 					"-o",
-					runtimeObjectFile.toAbsolutePath().toString()
+					runtimeBitcodeFile.toAbsolutePath().toString()
 			);
 
 			System.out.println("Executing: " + String.join(" ", runtimeCompileCommand));
 			Process p = new ProcessBuilder(runtimeCompileCommand).inheritIO().start();
 			if (p.waitFor() != 0)
 			{
-				System.err.println("Failed to compile C++ runtime. Aborting.");
+				System.err.println("Failed to compile C++ runtime to bitcode. Aborting.");
 				return;
 			}
-			System.out.println("C++ runtime compiled successfully.");
-
+			System.out.println("C++ runtime compiled to bitcode successfully.");
 		}
 		catch (IOException | InterruptedException e)
 		{
@@ -499,27 +502,27 @@ public class Main
 			return;
 		}
 
-		// 3. Compile your generated LLVM IR into an object file
-		System.out.println("\n--- Compiling Generated LLVM IR ---");
+		// 3. Compile generated LLVM IR (.ll) to bitcode (.bc) using clang
+		System.out.println("\n--- Compiling Generated LLVM IR to Bitcode ---");
 		try
 		{
 			List<String> llvmCompileCommand = List.of(
-					config.getLlvmCompilerPath(), // Should be 'clang'
-					"-c", "-O3",
+					config.getLlvmCompilerPath(), // Use clang
+					"-emit-llvm",
+					"-c",
 					llvmIrFile.toAbsolutePath().toString(),
 					"-o",
-					mainObjectFile.toAbsolutePath().toString()
+					mainBitcodeFile.toAbsolutePath().toString()
 			);
 
 			System.out.println("Executing: " + String.join(" ", llvmCompileCommand));
 			Process p = new ProcessBuilder(llvmCompileCommand).inheritIO().start();
 			if (p.waitFor() != 0)
 			{
-				System.err.println("Failed to compile LLVM IR. Aborting.");
+				System.err.println("Failed to compile LLVM IR to bitcode. Aborting.");
 				return;
 			}
-			System.out.println("LLVM IR compiled successfully.");
-
+			System.out.println("LLVM IR compiled to bitcode successfully.");
 		}
 		catch (IOException | InterruptedException e)
 		{
@@ -528,8 +531,8 @@ public class Main
 			return;
 		}
 
-		// 4. Link everything together into the final executable
-		System.out.println("\n--- Linking Executable ---");
+		// 4. Link everything together using LTO with clang++
+		System.out.println("\n--- Linking Executable with LTO ---");
 		Path fullLibraryPath = Paths.get(config.getNdkLibraryPath());
 		Path libraryDir = fullLibraryPath.getParent();
 		String libraryName = fullLibraryPath.getFileName().toString().replaceAll("^lib|\\.(so|dylib)$", "");
@@ -537,9 +540,12 @@ public class Main
 		try
 		{
 			List<String> linkCommand = new ArrayList<>();
-			linkCommand.add(config.getCppCompilerPath()); // Use C++ compiler for linking
-			linkCommand.add(mainObjectFile.toAbsolutePath().toString());
-			linkCommand.add(runtimeObjectFile.toAbsolutePath().toString());
+			// *** FIX 2: Use clang++ for linking to correctly handle LLVM bitcode and LTO ***
+			linkCommand.add(config.getLlvmCompilerPath() + "++"); // CRITICAL: Use clang++ here, not c++
+			linkCommand.add("-flto");
+			linkCommand.add("-O3");
+			linkCommand.add(mainBitcodeFile.toAbsolutePath().toString());
+			linkCommand.add(runtimeBitcodeFile.toAbsolutePath().toString());
 			linkCommand.add("-L" + libraryDir.toAbsolutePath());
 			linkCommand.add("-l" + libraryName);
 			linkCommand.add("-Wl,-rpath," + libraryDir.toAbsolutePath());

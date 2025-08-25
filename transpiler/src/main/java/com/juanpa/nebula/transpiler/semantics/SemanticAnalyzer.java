@@ -2231,22 +2231,27 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	public Type visitAssignmentExpression(AssignmentExpression expression)
 	{
 		// --- START OF FIX ---
-
-		// 1. Visit the RIGHT-HAND side (the value) first.
-		// This correctly checks for uninitialized variables used in the value expression.
-		Type valueType = expression.getValue().accept(this);
-		this.expectedTypeForNextExpression = null; // Reset context after visiting value
-
-		// 2. Now, handle the LEFT-HAND side (the target) carefully.
-		// Instead of visiting it immediately (which would trigger the bad check),
-		// we visit it to get its type and resolved symbol.
+		// 1. Visit the LEFT-HAND side (the target) FIRST to determine its type.
 		Type targetType = expression.getTarget().accept(this);
-		expression.setResolvedType(targetType);
 
-		if (targetType instanceof ErrorType || valueType instanceof ErrorType)
+		// If the target couldn't be resolved, we can't proceed.
+		if (targetType instanceof ErrorType)
 		{
 			return ErrorType.INSTANCE;
 		}
+
+		// 2. Use the target's type as the "expected type" for the RIGHT-HAND side.
+		// This provides the necessary context for type inference, especially for empty array initializers.
+		this.expectedTypeForNextExpression = targetType;
+		Type valueType = expression.getValue().accept(this);
+		this.expectedTypeForNextExpression = null; // IMPORTANT: Reset context immediately after use.
+
+		// If the value has an error, propagate it.
+		if (valueType instanceof ErrorType)
+		{
+			return ErrorType.INSTANCE;
+		}
+		// --- END OF FIX ---
 
 		// 3. Get the symbol that was resolved for the target during the visit.
 		Symbol resolvedTargetSymbol = null;
