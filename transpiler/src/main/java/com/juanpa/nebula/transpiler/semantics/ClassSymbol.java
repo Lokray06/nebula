@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 public class ClassSymbol extends Symbol
 {
@@ -179,7 +178,7 @@ public class ClassSymbol extends Symbol
 		List<VariableSymbol> instanceFields = this.classScope.getSymbols().values().stream()
 				.filter(s -> s instanceof VariableSymbol && !s.isStatic())
 				.map(s -> (VariableSymbol) s)
-				.collect(Collectors.toList());
+				.toList();
 
 		for (int i = 0; i < instanceFields.size(); i++)
 		{

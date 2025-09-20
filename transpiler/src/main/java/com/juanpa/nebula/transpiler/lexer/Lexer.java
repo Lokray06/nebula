@@ -282,7 +282,16 @@ public class Lexer
 			default:
 				if (Character.isDigit(c))
 				{
-					scanNumber();
+					// Check for '0x' prefix to handle hexadecimal literals
+					if (c == '0' && (peek() == 'x' || peek() == 'X'))
+					{
+						advance(); // consume the 'x'
+						scanHexNumber();
+					}
+					else
+					{
+						scanNumber();
+					}
 				}
 				else if (Character.isLetter(c) || c == '_')
 				{
@@ -445,73 +454,94 @@ public class Lexer
 	/**
 	 * Scans a number literal (integer, float, or double).
 	 */
+	// In Lexer.java, replace the old scanNumber() method with this new one
 	private void scanNumber()
 	{
-		while (Character.isDigit(peek()))
+		// Consume the integer part, allowing for separators
+		while (Character.isDigit(peek()) || peek() == '_')
 		{
 			advance();
 		}
+
 		boolean isFloatingPoint = false;
+		// Check for a fractional part
 		if (peek() == '.' && Character.isDigit(peekNext()))
 		{
 			isFloatingPoint = true;
-			do
+			advance(); // consume the '.'
+			// Consume the fractional part
+			while (Character.isDigit(peek()) || peek() == '_')
 			{
 				advance();
-			} while (Character.isDigit(peek()));
+			}
 		}
-		String numberStr = source.substring(start, current);
+
+		String numberText = source.substring(start, current);
+		String cleanedText = numberText.replace("_", "");
+
 		if (isFloatingPoint)
 		{
 			if (peek() == 'f' || peek() == 'F')
 			{
-				advance();
+				advance(); // Consume 'f'
 				try
 				{
-					addToken(TokenType.FLOAT_LITERAL, Float.parseFloat(numberStr));
+					addToken(TokenType.FLOAT_LITERAL, Float.parseFloat(cleanedText));
 				}
 				catch (NumberFormatException e)
 				{
-					error("Invalid float literal: " + numberStr);
-					addToken(TokenType.ERROR, null);
-				}
-			}
-			else if (peek() == 'd' || peek() == 'D')
-			{
-				advance();
-				try
-				{
-					addToken(TokenType.DOUBLE_LITERAL, Double.parseDouble(numberStr));
-				}
-				catch (NumberFormatException e)
-				{
-					error("Invalid double literal: " + numberStr);
-					addToken(TokenType.ERROR, null);
+					error("Invalid float literal: " + numberText);
 				}
 			}
 			else
 			{
+				if (peek() == 'd' || peek() == 'D')
+				{
+					advance(); // Consume 'd'
+				}
 				try
 				{
-					addToken(TokenType.DOUBLE_LITERAL, Double.parseDouble(numberStr));
+					addToken(TokenType.DOUBLE_LITERAL, Double.parseDouble(cleanedText));
 				}
 				catch (NumberFormatException e)
 				{
-					error("Invalid double literal: " + numberStr);
-					addToken(TokenType.ERROR, null);
+					error("Invalid double literal: " + numberText);
 				}
 			}
 		}
 		else
-		{
+		{ // It's an integer type
+			boolean isLong = false;
+			if (peek() == 'L' || peek() == 'l')
+			{
+				isLong = true;
+				advance();
+			}
+
 			try
 			{
-				addToken(TokenType.INTEGER_LITERAL, Integer.parseInt(numberStr));
+				if (isLong)
+				{
+					addToken(TokenType.INTEGER_LITERAL, Long.parseLong(cleanedText));
+				}
+				else
+				{
+					// Try to parse as long first to check the range.
+					long value = Long.parseLong(cleanedText);
+					if (value >= Integer.MIN_VALUE && value <= Integer.MAX_VALUE)
+					{
+						addToken(TokenType.INTEGER_LITERAL, (int) value);
+					}
+					else
+					{
+						// Value is too big for int, so it's a long.
+						addToken(TokenType.INTEGER_LITERAL, value);
+					}
+				}
 			}
 			catch (NumberFormatException e)
 			{
-				error("Invalid integer literal: " + numberStr);
-				addToken(TokenType.ERROR, null);
+				error("Invalid integer literal: " + numberText + ". Value is out of range for a 64-bit integer.");
 			}
 		}
 	}
@@ -798,5 +828,58 @@ public class Lexer
 			}
 		}
 		return finalValue;
+	}
+
+	// Add this new helper method to Lexer.java
+	private boolean isHexDigit(char c)
+	{
+		return (c >= '0' && c <= '9') ||
+				(c >= 'a' && c <= 'f') ||
+				(c >= 'A' && c <= 'F');
+	}
+
+	// Add this new method to Lexer.java to parse hex literals
+	private void scanHexNumber()
+	{
+		int hexStart = current; // Position after '0x'
+
+		while (isHexDigit(peek()) || peek() == '_')
+		{
+			advance();
+		}
+
+		String cleanedHexStr = source.substring(hexStart, current).replace("_", "");
+
+		if (cleanedHexStr.isEmpty())
+		{
+			error("Invalid hexadecimal literal: no digits found after '0x'.");
+			addToken(TokenType.ERROR, null);
+			return;
+		}
+
+		boolean isLong = false;
+		if (peek() == 'L' || peek() == 'l')
+		{
+			isLong = true;
+			advance();
+		}
+
+		try
+		{
+			long value = Long.parseLong(cleanedHexStr, 16);
+			if (isLong || value > Integer.MAX_VALUE || value < Integer.MIN_VALUE)
+			{
+				addToken(TokenType.INTEGER_LITERAL, value);
+			}
+			else
+			{
+				addToken(TokenType.INTEGER_LITERAL, (int) value);
+			}
+		}
+		catch (NumberFormatException e)
+		{
+			error("Invalid hexadecimal literal: '" + cleanedHexStr + "' is out of range.");
+			addToken(TokenType.ERROR, null);
+		}
 	}
 }

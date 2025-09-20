@@ -61,8 +61,16 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		this.semanticAnalyzer = semanticAnalyzer;
 	}
 
+	// Add this new overloaded generate method
 	public void generate(Program program, String outputFilename)
 	{
+		// This version is for single-file mode where the main class is not specified.
+		generate(program, outputFilename, null);
+	}
+
+	public void generate(Program program, String outputFilename, String mainClassFqn)
+	{
+
 		Debug.log("Starting LLVM IR Generation...");
 		Debug.indent();
 
@@ -112,11 +120,39 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		Debug.log("Main AST traversal COMPLETE.");
 		exitScope();
 
-		// --- FIX START: Generate the C-compatible 'main' entry point ---
-		Debug.log("Generating LLVM 'main' entry point to call the Nebula program's main function...");
+		// --- MODIFIED main entry point generation ---
+		Debug.log("Generating LLVM 'main' entry point...");
+		LLVMValueRef nebulaMainFunc = null;
 
-		// 1. Find the main function generated from the Nebula code (it's currently named "main").
-		LLVMValueRef nebulaMainFunc = LLVMGetNamedFunction(module, "main");
+		if (mainClassFqn != null)
+		{
+			// PROJECT MODE: We know the exact main method to find.
+			// We construct its mangled name. Assumes main has no args and returns void.
+			String mainMethodMangledName = mainClassFqn.replace('.', '_') + "_main__void";
+			nebulaMainFunc = LLVMGetNamedFunction(module, mainMethodMangledName);
+		}
+		else
+		{
+			// SINGLE-FILE MODE: Search for any static void main().
+			for (ClassSymbol cs : semanticAnalyzer.getDeclaredClasses().values())
+			{
+				if (cs.methodsByName.containsKey("main"))
+				{
+					for (MethodSymbol ms : cs.methodsByName.get("main"))
+					{
+						if (ms.isStatic() && ms.getParameterTypes().isEmpty() && ms.getType().equals(PrimitiveType.VOID))
+						{
+							nebulaMainFunc = LLVMGetNamedFunction(module, ms.getMangledName());
+							break;
+						}
+					}
+				}
+				if (nebulaMainFunc != null)
+				{
+					break;
+				}
+			}
+		}
 
 		if (nebulaMainFunc != null && !nebulaMainFunc.isNull())
 		{
@@ -134,7 +170,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 			Debug.log("Adding call to 'nebula_program_main()' from the C 'main' function.");
 
 			LLVMTypeRef nebulaMainFuncType = LLVMGlobalGetValueType(nebulaMainFunc);
-			LLVMBuildCall2(builder, nebulaMainFuncType, nebulaMainFunc, (PointerPointer) null, 0, "");
+			LLVMBuildCall2(builder, nebulaMainFuncType, nebulaMainFunc, null, 0, "");
 
 			// 5. Add the standard C return code. "return 0;" means success.
 			LLVMBuildRet(builder, LLVMConstInt(LLVMInt32TypeInContext(context), 0, 0));
@@ -142,7 +178,7 @@ public class LLVMIRGenerator implements ASTVisitor<LLVMValueRef>
 		}
 		else
 		{
-			Debug.log("WARNING: Could not find the Nebula 'main' function to call. The program will do nothing.");
+			Debug.log("WARNING: Could not find a valid 'static void main()' entry point in the class " + mainClassFqn + ". The program will do nothing.");
 			// Still create a dummy main so it can link
 			LLVMTypeRef cMainFuncType = LLVMFunctionType(LLVMInt32TypeInContext(context), (PointerPointer) null, 0, 0);
 			LLVMValueRef cMainFunc = LLVMAddFunction(module, "main", cMainFuncType);

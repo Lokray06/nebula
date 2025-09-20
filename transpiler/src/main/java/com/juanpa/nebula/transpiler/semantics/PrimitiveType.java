@@ -344,4 +344,9 @@ public class PrimitiveType extends Type
 		return true;
 	}
 
+
+	public boolean isSigned()
+	{
+		return this.equals(INT8) || this.equals(INT16) || this.equals(INT32) || this.equals(INT64) || this.equals(FLOAT) || this.equals(DOUBLE);
+	}
 }

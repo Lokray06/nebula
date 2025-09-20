@@ -5,6 +5,9 @@ package com.juanpa.nebula.transpiler;
 import com.juanpa.nebula.transpiler.ast.Program;
 import com.juanpa.nebula.transpiler.codegen.CppGenerator;
 import com.juanpa.nebula.transpiler.codegen.LLVMIRGenerator;
+import com.juanpa.nebula.transpiler.lexer.Lexer;
+import com.juanpa.nebula.transpiler.lexer.Token;
+import com.juanpa.nebula.transpiler.parser.NebulaParser;
 import com.juanpa.nebula.transpiler.semantics.ClassSymbol;
 import com.juanpa.nebula.transpiler.semantics.SemanticAnalyzer;
 import com.juanpa.nebula.transpiler.serialization.SymbolSerializer;
@@ -18,6 +21,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -27,179 +31,166 @@ import java.util.stream.Stream;
 public class Main
 {
 
-	public static void main(String[] args)
-	{
+	// File: src/main/java/com/juanpa/nebula/transpiler/Main.java
+
+	public static void main(String[] args) {
 		// 1. Load Compiler Configuration
 		CompilerConfig config = loadConfiguration();
 
-		// 2. Argument parsing for flags like --use-llvm
+		// 2. Argument parsing for flags
 		boolean useLLVM = false;
-		List<String> filteredArgs = new ArrayList<>();
-		for (String arg : args)
-		{
-			if (arg.equals("--use-llvm"))
-			{
+		List<String> mainArgs = new ArrayList<>();
+		for (String arg : args) {
+			if (arg.equals("--use-llvm")) {
 				useLLVM = true;
-			}
-			else
-			{
-				filteredArgs.add(arg);
-			}
-		}
-		String[] mainArgs = filteredArgs.toArray(new String[0]);
-
-		// 3. Check for different compiler modes using the filtered arguments
-		if (mainArgs.length > 0)
-		{
-			if (mainArgs[0].equals("--compile-ndk"))
-			{
-				if (mainArgs.length < 7 || !mainArgs[1].equals("--ndk-source") || !mainArgs[3].equals("--output-symbols") || !mainArgs[5].equals("--output-cpp"))
-				{
-					System.err.println("Usage: nbcc --compile-ndk --ndk-source <ndk_src_dir> --output-symbols <file.nsf> --output-cpp <dir>");
-					return;
-				}
-				Path ndkSourceDir = Paths.get(mainArgs[2]);
-				Path nsfFile = Paths.get(mainArgs[4]);
-				Path cppDir = Paths.get(mainArgs[6]);
-				compileNdk(ndkSourceDir, nsfFile, cppDir, config);
-				return;
+			} else {
+				mainArgs.add(arg);
 			}
 		}
 
-		if (mainArgs.length == 0)
-		{
-			System.err.println("Usage: nbcc [--use-llvm] <entrypoint.neb>");
+		// 3. Handle distinct compiler modes
+		if (mainArgs.isEmpty()) {
+			System.err.println("Usage: nbcc [--use-llvm] <file.neb | project.nebproj>");
 			System.err.println("   or: nbcc --compile-ndk --ndk-source <ndk_src_dir> --output-symbols <file.nsf> --output-cpp <dir>");
 			return;
 		}
 
-		// --- Standard Compilation Flow ---
-		Path entryPointFile = Paths.get(mainArgs[0]);
-		if (!Files.exists(entryPointFile))
-		{
-			System.err.println("Error: Entry point file not found: " + entryPointFile);
+		String command = mainArgs.get(0);
+		if (command.equals("--compile-ndk")) {
+			// NDK compilation mode
+			if (mainArgs.size() < 7) {
+				System.err.println("Usage: nbcc --compile-ndk --ndk-source <ndk_src_dir> --output-symbols <file.nsf> --output-cpp <dir>");
+				return;
+			}
+			Path ndkSourceDir = Paths.get(mainArgs.get(2));
+			Path nsfFile = Paths.get(mainArgs.get(4));
+			Path cppDir = Paths.get(mainArgs.get(6));
+			compileNdk(ndkSourceDir, nsfFile, cppDir, config);
+			return;
+		}
+
+		// --- Standard Compilation Flow (Project or Single-File) ---
+		Path inputPath = Paths.get(command);
+		if (!Files.exists(inputPath)) {
+			System.err.println("Error: Input file or project not found: " + inputPath);
 			return;
 		}
 
 		ErrorReporter errorReporter = new ErrorReporter();
 		SemanticAnalyzer semanticAnalyzer = new SemanticAnalyzer(errorReporter, config);
+		Program fullProgramAST = null;
+		String mainClassFqn = null;
+		Path projectRoot; // The base directory for placing the 'out' folder
 
-		Map<String, ClassSymbol> preloadedSymbols = new HashMap<>();
-		Path symbolCacheFile = Paths.get("ndk.nsf");
-		if (Files.exists(symbolCacheFile))
-		{
-			System.out.println("--- Found NDK symbol cache (ndk.nsf). Loading... ---");
-			try (InputStream is = new BufferedInputStream(new FileInputStream(symbolCacheFile.toFile())))
-			{
-				SymbolSerializer serializer = new SymbolSerializer();
-				preloadedSymbols = serializer.readSymbols(is);
-				semanticAnalyzer.preloadSymbols(preloadedSymbols);
-				System.out.println("--- NDK symbols loaded successfully. ---");
-			}
-			catch (IOException e)
-			{
-				System.err.println("Warning: Could not read symbol cache file 'ndk.nsf'. Error: " + e.getMessage());
-			}
-		}
+		// --- MODE SELECTION ---
+		try {
+			if (command.endsWith(".nebproj")) {
+				// --- PROJECT MODE ---
+				System.out.println("--- Compiling in Project Mode ---");
+				Path projectFile = inputPath;
+				projectRoot = projectFile.getParent() != null ? projectFile.getParent() : Paths.get(".");
 
-		List<Path> sourceRoots = new ArrayList<>();
-		sourceRoots.add(entryPointFile.getParent());
-		sourceRoots.add(Paths.get("./sdk"));
+				Properties projectProps = new Properties();
+				projectProps.load(new FileInputStream(projectFile.toFile()));
 
-		Program fullProgramAST;
-		try
-		{
-			System.out.println("--- Loading project from entry point: " + entryPointFile.getFileName() + " ---");
-			ProjectLoader loader = new ProjectLoader(sourceRoots, errorReporter, preloadedSymbols);
-			fullProgramAST = loader.loadProjectFromEntryPoint(entryPointFile);
+				mainClassFqn = projectProps.getProperty("main_class");
+				if (mainClassFqn == null || mainClassFqn.isBlank()) {
+					errorReporter.report(0, 0, "Project file must specify a 'main_class'.");
+					return;
+				}
 
-			if (fullProgramAST == null || errorReporter.hasErrors())
-			{
-				System.err.println("Build failed due to parsing errors.");
+				String sourceRootsStr = projectProps.getProperty("source_roots", ".");
+				List<Path> sourceRoots = Arrays.stream(sourceRootsStr.split(","))
+						.map(String::trim)
+						.map(projectRoot::resolve)
+						.collect(Collectors.toList());
+
+				ProjectLoader loader = new ProjectLoader(sourceRoots, errorReporter, loadNdkSymbols(semanticAnalyzer));
+				fullProgramAST = loader.loadProjectFromSourceRoots();
+
+			} else if (command.endsWith(".neb")) {
+				// --- SINGLE-FILE MODE ---
+				System.out.println("--- Compiling in Single-File Mode ---");
+				Path singleFile = inputPath;
+				projectRoot = singleFile.getParent() != null ? singleFile.getParent() : Paths.get(".");
+
+				// In single-file mode, we don't need the project loader's discovery.
+				// We just parse the one file provided.
+				String sourceCode = Files.readString(singleFile, StandardCharsets.UTF_8);
+				Lexer lexer = new Lexer(sourceCode, errorReporter);
+				List<Token> tokens = lexer.scanTokens();
+				NebulaParser parser = new NebulaParser(tokens, errorReporter);
+				fullProgramAST = parser.parse();
+
+			} else {
+				System.err.println("Error: Invalid input. Must be a .neb file or a .nebproj project file.");
 				return;
 			}
 
-		}
-		catch (IOException e)
-		{
+			if (fullProgramAST == null || errorReporter.hasErrors()) {
+				System.err.println("Build failed during parsing phase.");
+				return;
+			}
+
+		} catch (IOException e) {
 			System.err.println("An I/O error occurred during project loading: " + e.getMessage());
 			return;
 		}
 
-		System.out.println("\n--- Semantic Analysis Phase (Entire Project) ---");
+		// --- ANALYSIS & CODEGEN (COMMON TO BOTH MODES) ---
+		semanticAnalyzer.preloadSymbols(loadNdkSymbols(semanticAnalyzer)); // Load NDK symbols before analysis
+		System.out.println("\n--- Semantic Analysis Phase ---");
 		semanticAnalyzer.analyze(fullProgramAST);
 
-		if (errorReporter.hasErrors())
-		{
-			System.out.println("Semantic analysis finished with errors.");
+		if (errorReporter.hasErrors()) {
+			System.out.println("Build failed due to semantic errors.");
 			return;
 		}
 		System.out.println("Semantic analysis completed successfully.");
 
 		System.out.println("\n--- Code Generation Phase ---");
-		Path projectRoot = entryPointFile.getParent();
 		Path outputDirPath = projectRoot.resolve("out");
-		try
-		{
+		try {
 			Files.createDirectories(outputDirPath);
-		}
-		catch (IOException e)
-		{
+		} catch (IOException e) {
 			System.err.println("Error creating output directory: " + e.getMessage());
 			return;
 		}
 
-		// --- DIVERGE BASED ON THE --use-llvm FLAG ---
-		if (useLLVM)
-		{
-			System.out.println("Using LLVM backend.");
+		if (useLLVM) {
 			LLVMIRGenerator llvmGenerator = new LLVMIRGenerator(semanticAnalyzer);
-			String outputName = entryPointFile.getFileName().toString().replace(".neb", ".ll");
+			String outputName = inputPath.getFileName().toString().replaceAll("\\.neb(proj)?$", ".ll");
 			Path llvmIrFile = outputDirPath.resolve(outputName);
 
-			// Generate the .ll file
-			llvmGenerator.generate(fullProgramAST, llvmIrFile.toString());
+			// Pass the main class FQN if available (from project mode), otherwise null
+			llvmGenerator.generate(fullProgramAST, llvmIrFile.toString(), mainClassFqn);
 
-			if (errorReporter.hasErrors())
-			{
-				System.out.println("LLVM IR generation finished with errors.");
-			}
-			else
-			{
+			if (!errorReporter.hasErrors()) {
 				System.out.println("\n--- Compiling and Running Generated LLVM IR ---");
 				compileAndRunLLVM(outputDirPath, llvmIrFile, config);
 			}
-		}
-		else
-		{
-			// --- ORIGINAL C++ FLOW ---
-			System.out.println("Using C++ backend.");
-			CppGenerator cppGenerator = new CppGenerator(semanticAnalyzer.getDeclaredClasses(), semanticAnalyzer);
-			Map<String, String> generatedCode = cppGenerator.generate(fullProgramAST);
-
-			if (errorReporter.hasErrors())
-			{
-				System.out.println("Code generation finished with errors.");
-			}
-			else
-			{
-				System.out.println("Code generation completed successfully.");
-			}
-
-			System.out.println("\n--- Saving Generated C++ Files to: " + outputDirPath.toAbsolutePath() + " ---");
-			for (Map.Entry<String, String> entry : generatedCode.entrySet())
-			{
-				saveToFile(outputDirPath.resolve(entry.getKey()), entry.getValue());
-			}
-
-			if (!generatedCode.isEmpty() && !errorReporter.hasErrors())
-			{
-				System.out.println("\n--- Compiling and Running Generated C++ Code ---");
-				compileAndRunCpp(outputDirPath, generatedCode, config);
-			}
+		} else {
+			System.err.println("C++ backend is deprecated. Please use the --use-llvm flag.");
 		}
 
 		System.out.println("\nTranspilation process finished.");
+	}
+
+	// --- NEW HELPER METHOD TO AVOID CODE DUPLICATION ---
+	private static Map<String, ClassSymbol> loadNdkSymbols(SemanticAnalyzer semanticAnalyzer) {
+		Path symbolCacheFile = Paths.get("ndk.nsf");
+		if (Files.exists(symbolCacheFile)) {
+			System.out.println("--- Found NDK symbol cache (ndk.nsf). Loading... ---");
+			try (InputStream is = new BufferedInputStream(new FileInputStream(symbolCacheFile.toFile()))) {
+				SymbolSerializer serializer = new SymbolSerializer();
+				Map<String, ClassSymbol> preloadedSymbols = serializer.readSymbols(is);
+				System.out.println("--- NDK symbols loaded successfully. ---");
+				return preloadedSymbols;
+			} catch (IOException e) {
+				System.err.println("Warning: Could not read symbol cache file 'ndk.nsf'. Error: " + e.getMessage());
+			}
+		}
+		return new HashMap<>();
 	}
 
 	private static CompilerConfig loadConfiguration()
@@ -244,7 +235,7 @@ public class Main
 		Program ndkAst;
 		try
 		{
-			ndkAst = loader.loadAllFilesFromRoot(ndkSourceDir);
+			ndkAst = loader.loadProjectFromSourceRoots(); // Use the new unified method
 			if (ndkAst == null || errorReporter.hasErrors())
 			{
 				System.err.println("Failed to parse NDK source files.");

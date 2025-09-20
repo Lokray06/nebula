@@ -111,10 +111,11 @@ extern "C" {
     }
 
     NebulaString* uint64_toString(uint64_t value) {
-        char buffer[21]; // Enough for 18,446,744,073,709,551,615
-        snprintf(buffer, sizeof(buffer), "%llu", value);
-        return create_nebula_string(buffer);
-    }
+            char buffer[21]; // Enough for 18,446,744,073,709,551,615
+            // CHANGE THIS LINE:
+            snprintf(buffer, sizeof(buffer), "%lu", value); // Use %lu instead of %llu
+            return create_nebula_string(buffer);
+        }
 
     // vvv REPLACE this function vvv
     NebulaString* double_toString(double value) {

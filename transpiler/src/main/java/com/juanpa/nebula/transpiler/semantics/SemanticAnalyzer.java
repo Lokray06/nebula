@@ -323,49 +323,38 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		System.out.println("--- Semantic Analysis: Third Pass - Name Mangling ---");
 		for (ClassSymbol cs : declaredClasses.values())
 		{
-			// cs.methodsByName groups all methods (and constructors) by their simple name.
+			// Sanitize the class's fully qualified name for use in the mangled name.
+			String sanitizedClassName = cs.getFqn().replace('.', '_');
+
+			// Iterate through all method groups (grouped by simple name).
 			for (List<MethodSymbol> overloads : cs.methodsByName.values())
 			{
-				// We need to mangle names if there is more than one method with the same simple name,
-				// which indicates any kind of overloading (by parameter or return type).
-				if (overloads.size() > 1)
+				// *** FIX: Process EVERY method, not just overloads, to ensure global uniqueness. ***
+				for (MethodSymbol ms : overloads)
 				{
-					for (MethodSymbol ms : overloads)
+					// Start the mangled name with the sanitized Class FQN and the method's simple name.
+					// This guarantees that MyClass.main() and YourClass.main() get different names.
+					StringBuilder mangledName = new StringBuilder(sanitizedClassName)
+							.append("_")
+							.append(ms.getName());
+
+					// Append sanitized parameter type names to handle overloading by parameters.
+					for (Type paramType : ms.getParameterTypes())
 					{
-						StringBuilder mangledName = new StringBuilder(ms.getName());
-
-						// Append sanitized parameter type names to the mangled name.
-						for (Type paramType : ms.getParameterTypes())
-						{
-							String sanitizedParamName = paramType.getName().replace('.', '_').replace("[]", "Arr");
-							mangledName.append("_").append(sanitizedParamName);
-						}
-
-						// For non-constructors, append the return type to uniquely handle
-						// return-type overloading. We use a distinct separator.
-						if (!ms.isConstructor())
-						{
-							String sanitizedReturnName = ms.getType().getName().replace('.', '_').replace("[]", "Arr");
-							mangledName.append("__").append(sanitizedReturnName);
-						}
-
-						ms.setMangledName(mangledName.toString());
+						String sanitizedParamName = paramType.getName().replace('.', '_').replace("[]", "Arr");
+						mangledName.append("_").append(sanitizedParamName);
 					}
-				}
-				// Also, separately handle single constructors that have parameters, so they get a unique name.
-				else if (overloads.size() == 1)
-				{
-					MethodSymbol ms = overloads.get(0);
-					if (ms.isConstructor() && !ms.getParameterTypes().isEmpty())
+
+					// For non-constructors, append the return type to handle overloading by return type.
+					// A double underscore is used to clearly separate parameters from the return type.
+					if (!ms.isConstructor())
 					{
-						StringBuilder mangledName = new StringBuilder(ms.getName());
-						for (Type paramType : ms.getParameterTypes())
-						{
-							String sanitizedParamName = paramType.getName().replace('.', '_').replace("[]", "Arr");
-							mangledName.append("_").append(sanitizedParamName);
-						}
-						ms.setMangledName(mangledName.toString());
+						String sanitizedReturnName = ms.getType().getName().replace('.', '_').replace("[]", "Arr");
+						mangledName.append("__").append(sanitizedReturnName);
 					}
+
+					// Set the newly generated unique name on the symbol.
+					ms.setMangledName(mangledName.toString());
 				}
 			}
 		}
@@ -1555,7 +1544,18 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			// *** MODIFIED ***: Corrected assignment check direction.
 			if (!initializerType.isAssignableTo(fieldType))
 			{
-				error(declaration.getName(), "Incompatible types in field initialization: cannot assign '" + initializerType.getName() + "' to '" + fieldType.getName() + "'.");
+				String initializerTypeName = getDisplayName(initializerType);
+				// If the initializer was a cast, be more specific.
+				if (declaration.getInitializer() instanceof CastExpression)
+				{
+					initializerTypeName = ((CastExpression) declaration.getInitializer()).getTypeToken().getLexeme();
+				}
+
+				// Get the exact text the user wrote for the field's type.
+				String declaredTypeName = declaration.getType().getLexeme();
+
+				error(declaration.getName(), "Incompatible types in field initialization: cannot assign '"
+						+ initializerTypeName + "' to '" + declaredTypeName + "'.");
 			}
 			fieldSymbol.setInitialized(true); // Mark as initialized
 		}
@@ -1738,7 +1738,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 			if (!elementType.isAssignableTo(declaredVarType))
 			{
-				error(statement.getVariableName(), "Cannot convert from element type '" + elementType.getName() + "' to loop variable type '" + declaredVarType.getName() + "'.");
+				String elementTypeName = getDisplayName(elementType);
+
+				// Get the exact text the user wrote for the loop variable's type.
+				String declaredVarTypeName = statement.getTypeToken().getLexeme();
+
+				error(statement.getVariableName(), "Cannot convert from element type '" + elementTypeName + "' to loop variable type '" + declaredVarTypeName + "'.");
 			}
 
 			VariableSymbol loopVar = new VariableSymbol(statement.getVariableName().getLexeme(), declaredVarType, statement.getVariableName(), true, false, false, false);
@@ -1871,7 +1876,11 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			// *** MODIFIED ***: Corrected assignment check direction.
 			if (!actualReturnType.isAssignableTo(expectedReturnType))
 			{
-				error(statement.getKeyword(), "Cannot return value of type '" + actualReturnType.getName() + "'. Expected '" + expectedReturnType.getName() + "'.");
+				String actualReturnTypeName = getDisplayName(actualReturnType);
+				String expectedReturnTypeName = getDisplayName(expectedReturnType);
+
+				error(statement.getKeyword(), "Cannot return value of type '"
+						+ actualReturnTypeName + "'. Expected '" + expectedReturnTypeName + "'.");
 			}
 		}
 		return PrimitiveType.VOID;
@@ -1972,9 +1981,23 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 			if (!assignable)
 			{
+				// For the initializer, use our new helper to get a nice name (e.g., "long").
+				String initializerTypeName = getDisplayName(initializerType);
+
+				// --- ADD THIS NEW BLOCK ---
+				// If the initializer was a cast, be more specific and use the exact token from the cast.
+				if (statement.getInitializer() instanceof CastExpression)
+				{
+					initializerTypeName = ((CastExpression) statement.getInitializer()).getTypeToken().getLexeme();
+				}
+				// --- END OF NEW BLOCK ---
+
+				// For the variable's declared type, get the EXACT text the user wrote from the token.
+				String declaredTypeName = statement.getTypeToken().getLexeme();
+
 				error(statement.getName(),
 						"Incompatible types in variable declaration: cannot assign '"
-								+ initializerType.getName() + "' to '" + declaredType.getName() + "'.");
+								+ initializerTypeName + "' to '" + declaredTypeName + "'.");
 			}
 		}
 
@@ -2057,44 +2080,47 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 	@Override
 	public Type visitLiteralExpression(LiteralExpression expression)
 	{
-		Type resultType = ErrorType.INSTANCE; // Default to error
+		Type resultType = ErrorType.INSTANCE;
+		Object literalValue = expression.getValue(); // The actual parsed value (e.g., an Integer or Long)
+		TokenType tokenType = expression.getLiteralToken().getType();
 
-		if (expression.getLiteralToken().getType() == TokenType.INTEGER_LITERAL)
+		switch (tokenType)
 		{
-			resultType = PrimitiveType.INT;
+			case INTEGER_LITERAL:
+				// This is the key change: check if the parsed value is a Long
+				if (literalValue instanceof Long)
+				{
+					resultType = PrimitiveType.INT64; // This is your 'long' type
+				}
+				else
+				{
+					resultType = PrimitiveType.INT32; // This is your 'int' type
+				}
+				break;
+			case DOUBLE_LITERAL:
+				resultType = PrimitiveType.DOUBLE;
+				break;
+			case FLOAT_LITERAL:
+				resultType = PrimitiveType.FLOAT;
+				break;
+			case STRING_LITERAL:
+				resultType = declaredClasses.get("nebula.core.String").getType();
+				break;
+			case CHAR_LITERAL:
+				resultType = PrimitiveType.CHAR;
+				break;
+			case BOOLEAN_LITERAL:
+				resultType = PrimitiveType.BOOL;
+				break;
+			case NULL:
+				resultType = NullType.INSTANCE;
+				break;
+			default:
+				error(expression.getLiteralToken(), "Unknown literal type.");
+				break;
 		}
-		if (expression.getLiteralToken().getType() == TokenType.DOUBLE_LITERAL)
-		{
-			resultType = PrimitiveType.DOUBLE;
-		}
-		if (expression.getLiteralToken().getType() == TokenType.FLOAT_LITERAL)
-		{
-			resultType = PrimitiveType.FLOAT;
-		}
-		if (expression.getLiteralToken().getType() == TokenType.STRING_LITERAL)
-		{
-			resultType = declaredClasses.get("nebula.core.String").getType();
-		}
-		if (expression.getLiteralToken().getType() == TokenType.CHAR_LITERAL)
-		{
-			resultType = PrimitiveType.CHAR;
-		}
-		if (expression.getLiteralToken().getType() == TokenType.BOOLEAN_LITERAL)
-		{
-			resultType = PrimitiveType.BOOL;
-		}
-		if (expression.getLiteralToken().getType() == TokenType.NULL)
-		{
-			resultType = NullType.INSTANCE;
-		}
-
 
 		expression.setResolvedType(resultType);
-
-		if (resultType instanceof ErrorType)
-		{
-			error(expression.getLiteralToken(), "Unknown literal type.");
-		}
 		return resultType;
 	}
 
@@ -2257,11 +2283,11 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		Symbol resolvedTargetSymbol = null;
 		if (expression.getTarget() instanceof IdentifierExpression)
 		{
-			resolvedTargetSymbol = ((IdentifierExpression) expression.getTarget()).getResolvedSymbol();
+			resolvedTargetSymbol = (expression.getTarget()).getResolvedSymbol();
 		}
 		else if (expression.getTarget() instanceof DotExpression)
 		{
-			resolvedTargetSymbol = ((DotExpression) expression.getTarget()).getResolvedSymbol();
+			resolvedTargetSymbol = (expression.getTarget()).getResolvedSymbol();
 		}
 		// Note: ArrayAccessExpression doesn't resolve to a single symbol in the same way,
 		// so we handle it based on the validity of the expression itself.
@@ -2324,7 +2350,12 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 		{
 			if (!targetType.isAssignableFrom(valueType))
 			{
-				error(expression.getOperator(), "Incompatible types in assignment: cannot assign '" + valueType.getName() + "' to '" + targetType.getName() + "'.");
+				// Use the helper for both types to get user-friendly names.
+				String valueTypeName = getDisplayName(valueType);
+				String targetTypeName = getDisplayName(targetType);
+
+				error(expression.getOperator(), "Incompatible types in assignment: cannot assign '"
+						+ valueTypeName + "' to '" + targetTypeName + "'.");
 				return ErrorType.INSTANCE;
 			}
 		}
@@ -3338,7 +3369,8 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 
 		if (paramMatchingMethods.isEmpty())
 		{
-			String args = actualArgumentTypes.stream().map(Type::getName).collect(Collectors.joining(", "));
+			// Use the getDisplayName helper for a cleaner argument list.
+			String args = actualArgumentTypes.stream().map(this::getDisplayName).collect(Collectors.joining(", "));
 			error(errorToken, "No matching method found for '" + methodName + "' with arguments: (" + args + ") in class '" + ownerClass.getName() + "'.");
 			return null;
 		}
@@ -4216,5 +4248,66 @@ public class SemanticAnalyzer implements ASTVisitor<Type>
 			}
 			return null;
 		}
+	}
+
+	/**
+	 * Gets a user-friendly display name for a type, preferring common aliases.
+	 *
+	 * @param type The canonical Type object.
+	 * @return A string like "int", "long", "string", etc.
+	 */
+	private String getDisplayName(Type type)
+	{
+		if (type.equals(PrimitiveType.INT64))
+		{
+			return "long";
+		}
+		if (type.equals(PrimitiveType.INT32))
+		{
+			return "int";
+		}
+		if (type.equals(PrimitiveType.INT16))
+		{
+			return "short";
+		}
+		if (type.equals(PrimitiveType.INT8))
+		{
+			return "byte";
+		}
+		if (type.equals(PrimitiveType.UINT64))
+		{
+			return "ulong";
+		}
+		if (type.equals(PrimitiveType.UINT32))
+		{
+			return "uint";
+		}
+		if (type.equals(PrimitiveType.UINT16))
+		{
+			return "ushort";
+		}
+		if (type.equals(PrimitiveType.UINT8))
+		{
+			return "ubyte";
+		}
+		if (type.equals(PrimitiveType.BOOL))
+		{
+			return "bool";
+		}
+		if (type.equals(PrimitiveType.DOUBLE))
+		{
+			return "double";
+		}
+		if (type.equals(PrimitiveType.FLOAT))
+		{
+			return "float";
+		}
+		if (type instanceof ClassType && ((ClassType) type).getFqn().equals("nebula.core.String"))
+		{
+			return "string";
+		}
+
+		// Fallback for types without a common alias (like class names or canonical names)
+		return type.getName();
 	}
 }
